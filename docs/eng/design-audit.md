@@ -1,0 +1,234 @@
+# Full Design Audit (2026-09-14)
+
+**Target:** the complete text of [`architecture.md`](architecture.md), [`spec.md`](spec.md), [`roadmap.md`](roadmap.md)
+**Point in time:** before implementation starts, at commit `5807a8b`
+**Reason:** three consecutive diff reviews each produced blockers, which raised the question of how much of the design was trustworthy
+
+> Korean version: [`../kor/design-audit.md`](../kor/design-audit.md)
+
+---
+
+## 1. Method
+
+The target was the **complete finished documents**, not a diff. Three independent reviews with different lenses ran in parallel.
+
+| Lens | Question |
+|------|----------|
+| Mechanism | If this is implemented exactly as written, where does it break at runtime? Where must the implementer invent something? |
+| Platform | What Windows/Wintun/firewall/privilege/AWS realities does the document ignore or get wrong? |
+| Viability | As a one-semester solo project, do the schedule and success criteria hold up logically? |
+
+Result: **20 blockers, 25 warnings.**
+
+## 2. Root Cause
+
+These were not independent bugs. They come from two structural causes.
+
+**Cause 1. No scenario was ever traced end to end.**
+The documents recorded "which components exist" and "how it is verified", but never traced "where one packet goes and what must be true at each point". So every review that actually traced something found a new hole.
+
+**Cause 2. Fixing findings introduced new defects.**
+Applying earlier review findings locally meant the fixes themselves created new contradictions or unachievable criteria.
+
+| Added earlier | Problem surfaced now |
+|---|---|
+| NFR-9 "STUN and tunnel share one socket" | Receive ownership and demultiplexing for that socket were never defined, so two readers steal each other's packets |
+| "Supported condition = two STUN servers agree" | Only mapping behavior was considered, not filtering behavior. The condition can hold and hole punching still fail |
+| Phase 7 "counters match capture exactly, no tolerance" | Capture placement, offload, and capture loss mean a correct implementation cannot pass |
+| Phase 8 "F3 latency within ±30 ms" | Different sampling means a correct tunnel fails momentarily |
+| Phase 4 "measure mapping lifetime with external probes" | That external vantage point component exists nowhere in the design |
+| A-2 "controlled failure scenario required" | Firewall blocking is not a NAT traversal failure and cannot support conclusions about mapping behavior |
+
+Lesson: **an over-tightened criterion is as bad as a loose one.** A criterion a correct implementation fails is not a criterion.
+
+---
+
+## 3. The 20 Blockers
+
+Status: `fixed` = resolved in this pass, `open` = tracked to a follow-up step.
+
+### A. The wire protocol was unspecified (root blocker)
+
+| # | Problem | Status |
+|---|---------|--------|
+| 1 | magic/version/type values, nonce width, payload layouts, and byte offsets all undefined. No code can be written from the document | fixed, [`protocol.md`](protocol.md) sections 2 to 4 |
+| 2 | No session instance identifier, so a restart lets delayed packets from the previous process into the new session | fixed, `protocol.md` 3.2 (new `session_epoch`, header 16 -> 20 bytes) |
+| 3 | Receive ownership of the single socket and STUN/tunnel demultiplexing undefined. The STUN reader and the receive loop consume each other's packets | fixed, `protocol.md` sections 5 and 6 |
+| 4 | Four threads mutate session state, timers, and sequence values without synchronization, producing data races | partly fixed. Socket ownership is settled; the full concurrency model is follow-up 2 |
+| 5 | Telemetry upload shares the timer thread. During a control plane outage a blocking TCP upload stops keepalives, violating NFR-3 | open, follow-up 2 |
+
+### B. The hole punching algorithm was not actually designed
+
+| # | Problem | Status |
+|---|---------|--------|
+| 6 | No punch start synchronization, so if one side starts first the peer's NAT discards everything and the sends never overlap | fixed, `protocol.md` 8.2 (`punch_start_ms` rendezvous) |
+| 7 | No candidate nomination, so receiving HELLO on a LAN candidate while sending ACK to a public candidate yields an asymmetric dead session | fixed, `protocol.md` 8.4 |
+| 8 | Duplicate and early `HELLO_ACK` handling undefined. An ACK arriving before the peer's HELLO is discarded and both sides time out | fixed, `protocol.md` 9.2 and 9.3 (two-flag condition, full transition table) |
+
+### C. Injection safety and MTU
+
+| # | Problem | Status |
+|---|---------|--------|
+| 9 | Anything matching the magic can inject arbitrary inner source and destination addresses into Wintun under any `peer_id` | fixed, `protocol.md` section 7 checks 10 to 15 |
+| 10 | Fixed MTU with no PMTU response. A smaller path MTU leaves inner TCP in a retransmission blackhole (login works, world loading hangs) | fixed, `protocol.md` section 11 (DF unset, 1400 default, limitation stated) |
+
+### D. Windows platform realities
+
+This entire area was absent from the design.
+
+| # | Problem | Status |
+|---|---------|--------|
+| 11 | Adapter creation and route configuration need administrator privileges; the document never mentions it | open, follow-up 3 |
+| 12 | A new adapter is classified Public and the firewall blocks inbound ICMP and TCP 25565. The client's UDP is also blocked if the first-run prompt is dismissed | open, follow-up 3 |
+| 13 | An abnormal termination leaves the adapter, address, and route behind, so the next run creates duplicates | open, follow-up 3 |
+| 14 | Wintun DLL/driver packaging, architecture, and signing. Installation can fail on the demo PC | open, follow-up 3 |
+| 15 | If `server-ip` is set in `server.properties`, connections to `10.100.0.1:25565` are refused | open, follow-up 3 |
+| 16 | No EC2 security group inbound rule, binding to `127.0.0.1`, public IP changing on restart | open, follow-up 3 |
+| 17 | `10.100.0.0/24` colliding with a real LAN, Hyper-V, or another VPN sends traffic out the wrong interface | open, follow-up 3 |
+
+There is also a goal-level contradiction here. The project's central claim is that an ordinary user configures nothing, yet in practice it requires administrator privileges, a driver install, and firewall rules. **It removes port forwarding and demands different configuration in its place.** This belongs in the final report as an honest limitation.
+
+### E. Project viability
+
+| # | Problem | Status |
+|---|---------|--------|
+| 18 | The C-5 priority order does not protect the minimum deliverable. Dropping P1 removes M-6; dropping P3 removes the analysis the course requires. The only thing actually droppable is P2 (Minecraft) | open, follow-up 4 |
+| 19 | The traceability table assigns M-5 to Phase 4, but `DATA` does not exist until Phase 5 | open, follow-up 4 |
+| 20 | If both available home networks show destination-dependent mapping, minimum success is impossible and there is no alternative. Relay is a stretch goal after Phase 9 and cannot rescue it | open, follow-up 5 |
+
+**Number 20 is the most dangerous.** The others can be fixed, but this one leaves no time to recover if it surfaces mid-semester. The whole project is hostage to an external condition outside the student's control.
+
+---
+
+## 4. The 25 Warnings
+
+| Area | Item | Status |
+|------|------|--------|
+| Protocol | Whether the `sequence` space is global, per type, per direction, or per session was undefined | fixed, `protocol.md` 3.3 |
+| Protocol | `PING`/`PONG` timestamp representation, units, matching, and replay protection undefined | fixed, `protocol.md` 4.5 (`ping_id` approach) |
+| Protocol | No graceful close packet, so shutdown is indistinguishable from a crash | fixed, `protocol.md` 4.6 (`CLOSE`) |
+| Protocol | Punch/handshake/keepalive/idle deadlines given as "roughly" or ranges, preventing interoperability | fixed, `protocol.md` section 10 (all fixed values) |
+| Protocol | Candidate pair scheduling, multi-interface local address selection, and retry cadence undefined | fixed, `protocol.md` 8.1 and 8.3 |
+| Protocol | Source validation and NAT rebinding policy undefined | fixed, `protocol.md` 8.5 |
+| Protocol | Handling of a restarted peer's HELLO in `CONNECTED` undefined, and `FAILED` had no exit | fixed, `protocol.md` 9.3 and 9.4 |
+| Protocol | Inner address family undeclared, so IPv6 packets get parsed at IPv4 offsets | fixed, `protocol.md` section 1 and check 11 |
+| Protocol | Behavior for oversized inner packets undefined | fixed, `protocol.md` 11.4 |
+| Platform | Without handling `SIO_UDP_CONNRESET`, `WSAECONNRESET` kills the receive loop | fixed, `protocol.md` section 5 |
+| Platform | Calling `connect()` filters out datagrams from other candidates | fixed, `protocol.md` section 5 |
+| Platform | `SO_REUSEADDR` makes delivery nondeterministic | fixed, `protocol.md` section 5 |
+| Platform | Local candidates advertising Wintun/Hyper-V/VPN addresses | fixed, `protocol.md` 8.1 |
+| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | open, follow-up 3 |
+| Platform | Without waiting on the read event and releasing packets, the loop spins or exits | open, follow-up 3 |
+| Platform | The on-link `/24` route already exists, so creating it again errors | open, follow-up 3 |
+| Platform | Starting tests while the address is still tentative causes intermittent failures | open, follow-up 3 |
+| Platform | EC2 public IP changes on restart | open, follow-up 3 |
+| Platform | Minecraft LAN discovery uses multicast and cannot work over a unicast tunnel | open, follow-up 3 |
+| Platform | A Java update invalidates a path-scoped firewall exception | open, follow-up 3 |
+| Platform | SmartScreen/Defender quarantines the unsigned client | open, follow-up 3 |
+| Viability | M1 (Phases 1-4) and M2 (Phases 5-8) workloads are unbalanced at five weeks each | open, follow-up 4 |
+| Viability | The external UDP vantage point required by Phase 4 keepalive verification does not exist in the design | open, follow-up 4 |
+| Viability | The HTTPS IP lookup in M-2 verification may use a different egress path than the UDP socket | open, follow-up 4 |
+| Viability | Phase 7 exact counter equality, Phase 8 ±30 ms, and the A-2 controlled failure scenario are over-tightened | open, follow-up 6 |
+| Viability | Phase 9 statistical design (trial duration, independence, uncertainty reporting) undefined | open, follow-up 6 |
+
+---
+
+## 5. Follow-up Plan
+
+| # | Work | Resolves | Status |
+|---|------|----------|--------|
+| 1 | Write the fixed `protocol.md` | blockers 1,2,3,6,7,8,9,10 plus 13 warnings | **done (2026-09-14)** |
+| 2 | Settle the concurrency model. A single event loop is recommended | blockers 4,5 | open |
+| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 8 warnings | open |
+| 4 | Fix the spec logic errors: C-5 priorities, M-5 traceability, milestone rebalancing | blockers 18,19 plus 3 warnings | open |
+| 5 | Contingency for direct connection being impossible: a NAT emulation testbed, or promote a minimal relay to P1 | blocker 20 | open |
+| 6 | Loosen the over-tightened verification criteria | 2 warnings | open |
+
+Step 1 covers 40% of the blockers and half the warnings. Step 2 is next.
+
+---
+
+## 6. Preventing Recurrence
+
+Rules taken from this audit.
+
+1. **Trace one scenario end to end before declaring a document finished.** One packet, one failure, one restart. A component list and a verification checklist do not reveal the holes.
+2. **Diff review only catches local defects.** Run a separate full-document audit at every milestone.
+3. **Check that a correct implementation passes a criterion before adding it.** A criterion nothing can pass gets loosened later, and real defects pass along with it.
+4. **When applying a finding, define the new contract that fix creates.** Adding the constraint "they share one socket" required settling that socket's ownership and demultiplexing at the same time.
+
+---
+
+## 7. Second Review of protocol.md (same day)
+
+The first draft of `protocol.md`, written as follow-up 1, was re-reviewed under two lenses.
+
+| Lens | Result |
+|------|--------|
+| Implementability ("implement it in your head and find where you must still guess") | 20 blockers |
+| Adversarial (an attacker and real network conditions) | 10 blockers |
+
+**The first draft did not deserve to be called a fixed specification.** The main defects and their fixes:
+
+| Severity | Defect | Fix |
+|----------|--------|-----|
+| blocker | `is_newer(a,b)` returned true for `a == b`, classifying duplicates as newer | added the `a != b` condition (4.4) |
+| blocker | "an early `HELLO_ACK` is normal" contradicted the epoch check, timing both sides out in a normal situation | 8.2 lets `HELLO`/`HELLO_ACK` pass before epoch pinning on the strength of the nonce |
+| blocker | The text said `HELLO` was exempt from the source check while the check table had no exemption | split per-type rules into the 8.2 table |
+| blocker | Classifying on magic left `drop_magic`/`drop_version` permanently zero and hid malicious traffic in `drop_unclassified` | section 7 now classifies on the top two bits; magic moved into validation |
+| blocker | No duplicate suppression algorithm, so a replayed `DATA` was injected twice and a replayed `KEEPALIVE` kept a dead session alive | 4.5 specifies `highest` plus a 64-bit bitmap, decided ahead of every side effect |
+| blocker | Nomination deadlocks behind the same NAT or on asymmetric paths, and offers no NAT rebinding recovery trigger | replaced with endpoint learning (10.4) |
+| blocker | Unclear whether `punch_start_ms` was per response or per room, and absolute timestamps were vulnerable to clock skew | 10.2 fixes it once per room and switches to relative time (`elapsed_since_ready_ms`) |
+| blocker | On an epoch change, `got_ack`/`sent_ack` persisted and drove the new session to `CONNECTED` without evidence | the eight reset steps of 9.5 |
+| blocker | Epoch lifecycle contradiction (3.2 "per process" versus 9.4 "new on retry") | unified as per session attempt, with a 2-minute retired list |
+| blocker | `peer_id` allocation rules and uniqueness undefined | 4.2 |
+| blocker | An unbounded, unverified candidate list turns the client into a reflection tool firing at a third party every 200 ms | 10.1 hygiene rules made mandatory |
+| blocker | No stated security model, and inner validation was overstated as "the only injection defense" | new section 2 enumerating everything not provided, overstatement withdrawn |
+| warn | A 45 s keepalive timeout races the last send | changed to 50 s with the rationale stated (section 11) |
+| warn | IPv4 header checksum never validated | 8.4 check 12 |
+| warn | Sequence numbers consumed punching multiple candidates were miscounted as loss | loss accounting resets on entering `CONNECTED` |
+| warn | No send-side validation rules | new section 8.5 |
+| warn | The `virtual_ip` field had no consumer | validation rule added in 5.1 |
+| warn | STUN procedures and control plane schema undefined | section 13 fixes the STUN scope; section 14 states the six contracts the control plane must honor |
+
+### What this confirms
+
+Thirty blockers against the first draft is not bad news in itself, **because they surfaced before implementation.** The same defects found during Phase 4 would have cost days of diagnosis, and the missing duplicate suppression and the nomination deadlock in particular would have appeared as "it sometimes fails to connect", which is barely reproducible.
+
+It does also mean the root cause named in section 2 is still active. Writing that first draft, I again did not trace a scenario to the end. I built a state machine table but never substituted concrete situations such as "two peers behind the same NAT" or "a previous-epoch packet arriving right after a restart". Rule 1 in section 6 has to be genuinely applied to every document.
+
+### Third and fourth reviews
+
+The second revision was reviewed twice more. It is converging.
+
+| Round | Blockers | Character |
+|-------|----------|-----------|
+| First draft | 30 | gaps in the design itself |
+| Third | 5 | mostly side effects of the endpoint learning introduced in the second revision |
+| Fourth | 4 | pseudocode branch precision and interactions among the third-round fixes |
+
+Third-round blockers:
+
+| Defect | Fix |
+|--------|-----|
+| On renegotiation both sides drew a new local epoch, producing an **infinite epoch ping-pong** in which the two peers never connect | 9.5 keeps the local epoch/nonce; it changes only when we start a new attempt from `IDLE` |
+| Clearing the bitmap at `shift == 64` let the previous `highest` be accepted again despite being a duplicate | clear only when `shift > 64`; `shift == 64` sets bit 63 |
+| An older packet accepted inside the reordering window dragged the endpoint back to a previous path | 10.4 (b): only packets that advance `highest` are used for learning |
+| Spoofing the source could redirect the entire game traffic stream at an arbitrary victim, contradicting the section 2 promise to block third-party harm | 10.4 (c): addresses outside the candidate set switch only after nonce path validation |
+| Cumulative subtraction on 32-bit sequences breaks after a full cycle | introduced the non-wrapping 64-bit `position` and a `baseline` |
+
+Fourth-round blockers:
+
+| Defect | Fix |
+|--------|-----|
+| `seq == highest` fell into the "older" branch with `back == 0`, giving the undefined `uint64_t{1} << (0-1)` | explicit duplicate check placed first |
+| Written as `if / if / else`, a `shift > 64` cleared the bitmap and then also entered the `else`, shifting by more than 64 | mutually exclusive `if / else if / else` |
+| Reordered packets had no computed position, so using the state variable `position` underflowed `accepted > expected` | defined a per-packet `pkt_pos` (`position` when advancing, `position - back` when reordered) |
+| Renegotiation learned an off-candidate source directly, bypassing the 10.4 path validation | reply `HELLO_ACK` to the datagram source without changing `peer_endpoint`; a single reply and a bulk switch are different things |
+| The path validation nonce conflicted with the "one per attempt" rule | probe nonces moved to a separate table (5.1, 8.2) |
+
+### Current status
+
+The fourth round of fixes is applied. No fifth review was run, so **no claim is made that nothing remains.** One more pass runs the next time this document is touched.
+
+The convergence trend (30 -> 5 -> 4) and the change in the character of the defects (design gaps -> side effects -> pseudocode precision) suggest the structural problems are resolved. That every fourth-round finding was a side effect of a third-round fix does show that rule 4 in section 6, defining the new contract a fix creates, is still not being followed closely enough.

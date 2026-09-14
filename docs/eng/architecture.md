@@ -85,7 +85,9 @@ The client is a single process. The initial version assumes the following thread
 
 In Phases 1 through 5 there is no `[tun_rx]`; `[main]` feeds console input instead.
 
-**All UDP sends and receives share one local socket.** If the STUN Binding Request, `HELLO`, `HELLO_ACK`, `KEEPALIVE`, `PING`/`PONG`, and `DATA` use different sockets, the NAT maps a different public port for each, so the endpoint discovered through STUN does not apply to the tunnel. This constraint must hold from Phase 2 onward.
+**All UDP sends and receives share one local socket, and that socket is owned exclusively by a single receive loop.** Using different sockets makes the NAT map a different public port for each, so the endpoint discovered through STUN does not apply to the tunnel. This constraint must hold from Phase 2 onward.
+
+Sharing the socket means STUN responses and tunnel packets arrive in the same queue. If the STUN client calls `recvfrom` itself, the two readers steal each other's packets. The STUN client only registers a request and receives the response from the receive loop. The classification rule and the required socket options (`SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, never calling `connect()`) are in sections 5 and 6 of [`protocol.md`](protocol.md).
 
 ### 3.2 Control Plane (Python)
 
@@ -139,8 +141,8 @@ The tunnel header reduces the available payload size.
 1500 (assumed path MTU)
  - 20 (outer IPv4 header)
  -  8 (outer UDP header)
- - 16 (TunnelHeader)
-= 1456 bytes (maximum inner IP packet)
+ - 20 (TunnelHeader)
+= 1452 bytes (maximum inner IP packet)
 ```
 
 Set the virtual adapter MTU down to around 1400 to avoid fragmentation.
@@ -153,34 +155,35 @@ Note that the calculation above depends on the **assumption that the outer path 
 
 ### 5.1 Header
 
-```cpp
-struct TunnelHeader
-{
-    uint32_t magic;           // protocol identifier, rejects misdelivered packets
-    uint8_t  version;         // protocol version
-    uint8_t  type;            // PacketType
-    uint32_t peer_id;         // sending peer identifier
-    uint32_t sequence;        // for loss/reordering measurement
-    uint16_t payload_length;  // payload bytes that follow
-};                            // wire format 16 bytes, network byte order
+```text
+ offset  size  field             description
+   0      4   magic             0x53414E47 ("SANG")
+   4      1   version           0x01
+   5      1   type              PacketType
+   6      2   payload_length    bytes following the header
+   8      4   peer_id           sending peer identifier
+  12      4   session_epoch     sender's process instance
+  16      4   sequence          per-direction monotonic counter
+  = 20 bytes, network byte order
 ```
 
-The wire format is 16 bytes, but `sizeof(TunnelHeader)` is not 16. Under MSVC default alignment, 2 bytes of padding are inserted after `type`, making it 20. Do not `memcpy` the struct as-is and do not use `sizeof` as the header length. **Serialize field by field** and fix the header length as a constant.
+Without `session_epoch`, delayed packets from a previous instance are accepted into the new session after a restart. The receiver pins the peer's epoch during the handshake and drops packets carrying a different one afterwards.
 
-The actual values of `magic` and `version`, and the field widths and layout of the `HELLO` / `HELLO_ACK` payloads, are fixed at the start of Phase 4 and recorded in [`protocol.md`](protocol.md), which is therefore created in Phase 4 and extended in Phase 5. Without them the packet capture verification in Phase 4 has no basis.
+Field order places every 4-byte field on a multiple-of-4 offset, so no padding appears even under MSVC default alignment. Even so, never `memcpy` the struct directly: byte order conversion is still required, and relying on the alignment happening to work breaks silently. **Serialize field by field** and fix the header length as a constant.
 
-`payload_length` is used for receiver-side validation. If it disagrees with the actual byte count received, the packet is dropped and a counter is incremented.
+> **The detail lives in [`protocol.md`](protocol.md).** Constant values, payload layouts, the receive validation pipeline, candidate nomination, the full transition table, and the fixed timer values have that document as their single source. This section is a summary; where they conflict, `protocol.md` wins.
 
 ### 5.2 Packet Types
 
 | Type | Direction | Payload | Purpose |
 |------|-----------|---------|---------|
-| `HELLO` | both | peer ID, virtual IP, session nonce | Hole punching attempt and handshake initiation |
-| `HELLO_ACK` | both | echo of the peer's `HELLO` nonce | Proves the peer actually received my packet |
-| `KEEPALIVE` | both | none | Maintains the NAT mapping (interval: 15-25 s) |
-| `DATA` | both | original IP packet | Carries game traffic |
-| `PING` | both | send timestamp | RTT measurement |
-| `PONG` | both | echo of the original timestamp | RTT measurement reply |
+| `HELLO` `0x01` | both | nonce(16) + virtual IP(4) | Hole punching attempt and handshake initiation |
+| `HELLO_ACK` `0x02` | both | echo nonce(16) + virtual IP(4) | Proves the peer actually received my packet |
+| `KEEPALIVE` `0x03` | both | none | Maintains the NAT mapping (15 s interval) |
+| `DATA` `0x04` | both | inner IPv4 packet | Carries game traffic |
+| `PING` `0x05` | both | ping_id(8) | RTT measurement. No timestamp goes on the wire |
+| `PONG` `0x06` | both | echoed ping_id(8) | RTT measurement reply |
+| `CLOSE` `0x07` | both | reason(1) | Graceful shutdown notice. Without it the peer holds a dead session until the 50 s idle timeout |
 
 ### 5.3 Session State Machine
 
@@ -202,8 +205,10 @@ FAILED(TUNNEL_DROPPED)
 
 A successful UDP `sendto` does not guarantee delivery. Both transitions are therefore decided **only by packets received**.
 
-- `HANDSHAKING -> CONNECTED`: requires a `HELLO_ACK` carrying the nonce from my own `HELLO`. The fact that I sent a `HELLO` and received the peer's `HELLO` says nothing about whether the peer received mine. Hole punching can open in one direction only.
-- `CONNECTED -> FAILED`: decided not by keepalive send failure, but by receiving no valid packet from the peer for a set interval (roughly 3x the keepalive period).
+- `HANDSHAKING -> CONNECTED`: **two independent flags must both be set.** `got_ack` (a `HELLO_ACK` echoing a nonce we sent, confirming our -> peer path) and `sent_ack` (we sent a `HELLO_ACK` for a valid peer `HELLO`, confirming peer -> our path). Which one is set first is not determined. Assuming an order either misreads a one-directional opening as connected, or times both sides out on a normal ordering.
+- `CONNECTED -> FAILED`: decided not by keepalive send failure, but by receiving no valid packet from the peer for 50 s. Keepalive runs at 15 s with one sent immediately on entering `CONNECTED`, so three losses are tolerated.
+
+Transitions for every state crossed with every received packet are in the 9.3 transition table of [`protocol.md`](protocol.md). In particular, `HELLO_ACK` arriving first in `PUNCHING` and re-answering `HELLO` in `CONNECTED` are both normal behavior; omitting either times both sides out.
 
 ---
 
@@ -328,7 +333,8 @@ Sangtachi/
 |   |   +-- roadmap.md           phased development plan
 |   |   +-- plan.md              checklist for the current work unit
 |   |   +-- first_design.md      initial proposal (reference only)
-|   |   +-- protocol.md          tunnel protocol detail (started in Phase 4, completed in Phase 5)
+|   |   +-- protocol.md          fixed tunnel protocol (written before implementation)
+|   |   +-- design-audit.md      full design audit record
 |   |   +-- experiments.md       experiment design and results (written in Phase 9)
 |   |   +-- decisions/           design decision records
 |   |   +-- commit_history/      per-work-unit change records

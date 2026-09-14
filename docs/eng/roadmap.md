@@ -3,7 +3,7 @@
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
 **Term:** CSP 400, Fall 2026
 **Reference document:** [`first_design.md`](first_design.md)
-**Requirements:** [`spec.md`](spec.md) / **Design:** [`architecture.md`](architecture.md)
+**Requirements:** [`spec.md`](spec.md) / **Design:** [`architecture.md`](architecture.md) / **Protocol:** [`protocol.md`](protocol.md)
 
 > Korean version: [`../kor/roadmap.md`](../kor/roadmap.md)
 
@@ -163,21 +163,26 @@ Two clients on different networks obtain each other's endpoint through AWS.
 
 ### Tasks
 
-- Define the tunnel packet header (magic, version, type, peer_id, sequence, payload_length) and start [`protocol.md`](protocol.md) with the chosen constants
-- Implement header serialization and deserialization (network byte order)
-- Design the peer handshake
-- Configure STUN, hole punching, and the tunnel to share **one local UDP socket**
-- Send `HELLO` simultaneously to the peer endpoint (carrying a session nonce)
-- Confirm the peer actually received it via `HELLO_ACK`
-- Retry and timeout logic
-- Confirm bidirectional traffic
-- Add `KEEPALIVE` packets and idle-timeout-based disconnect detection
-- Measure RTT with `PING` / `PONG`
+Follow the section 12 implementation checklist in [`protocol.md`](protocol.md) exactly. This phase is implementation, not design.
+
+- Header serialization/deserialization (field by field, network byte order)
+- Exclusive socket ownership by a single receive loop, STUN/tunnel demultiplexing (`protocol.md` sections 5 and 6)
+- Required socket options: `SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, never call `connect()`
+- Receive validation pipeline steps 1 to 9 with dedicated drop counters (`protocol.md` section 7)
+- `session_epoch` generation and pinning
+- Candidate gathering (local and server-reflexive) and control plane rendezvous polling (`protocol.md` 8.2)
+- `HELLO` retransmission every 200 ms to **every** peer candidate, 10 s punch deadline
+- `HELLO_ACK`-based nomination rule (`protocol.md` 8.4)
+- The two-flag `CONNECTED` condition and the full 9.3 transition table
+- `KEEPALIVE` at 15 s (one sent immediately on entering `CONNECTED`), disconnect by 50 s idle timeout
+- `PING`/`PONG` RTT measurement via `ping_id`
+- `CLOSE` send and receive
 - Record success or the failure reason
 
-> **Why the header is defined in this phase**
-> Hole punching has to distinguish `HELLO`, `HELLO_ACK`, `KEEPALIVE`, `PING`, and `PONG`, so a header with a `type` field is already required here. Building a temporary format and replacing it in Phase 5 means throwing away Phase 4 code. Defining and serializing a 16-byte header costs little at this point.
-> What stays in Phase 5 is the `DATA` type, robustness validation, loss accounting, and state machine cleanup. Phase 4 owns the **base** header; Phase 5 owns the **complete** one.
+> **The protocol is already fixed**
+> The 2026-09-14 full audit ([`design-audit.md`](design-audit.md)) found the unspecified wire protocol to be a blocker at the level of "nothing can be implemented". [`protocol.md`](protocol.md) was therefore written as a fixed specification before implementation starts.
+> Phase 4 does **not** design the protocol. It implements `protocol.md`. If a missing value is discovered during implementation, fix `protocol.md` first rather than choosing a value in code.
+> What stays in Phase 5 is the `DATA` type, inner packet validation (section 7, checks 10 to 15), loss accounting, and fuzz defenses.
 
 ### Deliverable
 
@@ -192,7 +197,11 @@ Established without any router port forwarding in supported environments. The pa
 - Two PCs on different home networks communicate bidirectionally with no port forwarding rules
 - Packet capture confirms the traffic does not pass through AWS
 - Header serialization followed by deserialization reproduces the original (round-trip test)
-- The byte layout of captured packets matches the defined header layout and byte order
+- The byte layout of captured packets matches the offsets and byte order in `protocol.md` 3.1 exactly, with the first four bytes reading `53 41 4E 47`
+- A `HELLO_ACK` arriving first while in `PUNCHING` is accepted normally (`protocol.md` 9.3)
+- Re-transmitting `HELLO` while the peer is `CONNECTED` produces another `HELLO_ACK`
+- After a client restart, delayed packets from the previous instance are dropped as `drop_stale_epoch`
+- Continuously sending to non-responding candidates does not kill the receive loop with `WSAECONNRESET`
 - A session where only one side received a `HELLO` does not transition to `CONNECTED` (a one-directional opening is not misreported as success)
 - Keepalive interval measurement: create an idle window with **all** UDP sends on that socket stopped (including `PING` and `DATA`), and measure mapping lifetime with periodic probes from an external vantage point. Stopping only keepalive is invalid because game and `PING` traffic also refresh the mapping
 - On hole punching failure, `HOLE_PUNCH_TIMEOUT` is recorded and the process exits cleanly
@@ -210,7 +219,7 @@ There are NAT environments where this phase fails. Do not hide the failures; rec
 **Goal:** Build game traffic transport and robustness on top of the base header from Phase 4.
 **Priority:** P1
 **Requirements:** FR-8, FR-13
-**Prerequisite:** Phase 4 already has the header definition, serialization, and working `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`PING`/`PONG`.
+**Prerequisite:** the section 12 checklist in [`protocol.md`](protocol.md) is fully complete from Phase 4.
 
 ### Tasks
 
@@ -221,7 +230,7 @@ There are NAT environments where this phase fails. Do not hide the failures; rec
 - Add per-reason drop counters
 - Clean up the session state machine (`IDLE` / `PUNCHING` / `HANDSHAKING` / `CONNECTED` / `FAILED`)
 - Secure long-duration connection stability
-- Complete [`protocol.md`](protocol.md), started in Phase 4
+- Fold the `DATA` sections into [`protocol.md`](protocol.md) (an addition, not a structural change)
 
 ### Deliverable
 

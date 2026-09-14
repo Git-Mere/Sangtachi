@@ -2,7 +2,7 @@
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
 **참고 문서:** [`first_design.md`](first_design.md)
-**설계 상세:** [`architecture.md`](architecture.md)
+**설계 상세:** [`architecture.md`](architecture.md) / **프로토콜 확정본:** [`protocol.md`](protocol.md)
 **개발 계획:** [`roadmap.md`](roadmap.md)
 
 > English version: [`../eng/spec.md`](../eng/spec.md)
@@ -29,7 +29,7 @@
 - **자체 STUN 클라이언트**: Binding Request 생성, 트랜잭션 ID, 응답 파싱, `XOR-MAPPED-ADDRESS` 디코드, 타임아웃 처리
 - **Python 제어 평면 (AWS EC2)**: 방 생성/참가, 피어 등록, 가상 IP 할당, 후보 엔드포인트 교환, 텔레메트리 수집
 - **UDP 홀펀칭**: 양방향 동시 송신, 재시도, keepalive, 실패 사유 분류
-- **자체 터널 프로토콜**: 16바이트 와이어 헤더, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`, 직렬화 및 손상 패킷 검증
+- **자체 터널 프로토콜**: 20바이트 와이어 헤더, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`/`CLOSE`, 직렬화 및 손상 패킷 검증
 - **Windows 가상 네트워크 어댑터 연동**: Wintun을 통한 어댑터 생성과 패킷 read/inject, Windows IP Helper API를 통한 가상 IP 주소 및 라우트 설정
 - **가상 IP 라우팅**: 목적지 가상 IP에서 피어 세션 결정, 캡슐화 및 역캡슐화
 - **텔레메트리와 진단**: 연결 성공률, 수립 시간, RTT, 패킷 손실, 지터, 세션 지속 시간, 단계별 실패 코드
@@ -76,10 +76,10 @@
 | FR-5 | 제어 평면은 각 피어의 후보 엔드포인트(로컬, 공인)를 등록받아 같은 방의 다른 피어에게 전달한다. 로컬 후보는 두 피어가 같은 LAN에 있을 때 쓰인다. |
 | FR-6 | 클라이언트들은 교환받은 엔드포인트로 UDP 홀펀칭을 시도하고, 수동 포트 포워딩 없이 직접 UDP 경로를 수립한다. 연결 수립은 상대가 보낸 `HELLO_ACK` 수신으로 확인하며, 자신의 송신 성공만으로 판정하지 않는다. |
 | FR-7 | 수립된 세션은 keepalive로 NAT 매핑을 유지하고, `PING`/`PONG`으로 RTT를 측정한다. 단절은 송신 실패가 아니라 유휴 타임아웃(상대 패킷 무수신)으로 판정한다. |
-| FR-8 | 터널 프로토콜은 magic, version, type, peer_id, sequence, payload_length를 갖는 16바이트 와이어 헤더를 사용하며, 필드 단위로 직렬화하고 손상 패킷을 검증해 폐기한다. |
+| FR-8 | 터널 프로토콜은 [`protocol.md`](protocol.md)가 확정한 20바이트 와이어 헤더(magic, version, type, payload_length, peer_id, session_epoch, sequence)를 사용하며, 필드 단위로 직렬화하고 수신 검증 파이프라인을 통과하지 못한 패킷을 폐기한다. |
 | FR-9 | 클라이언트는 Wintun으로 가상 어댑터를 생성하고, Windows IP Helper API로 할당받은 가상 IP와 `10.100.0.0/24` 경로를 설정한다. |
 | FR-10 | 클라이언트는 가상 어댑터에서 읽은 IP 패킷을 목적지 가상 IP 기준으로 라우팅해 `DATA` 패킷으로 캡슐화하고 직접 UDP 경로로 전송한다. |
-| FR-11 | 수신 측은 `DATA` 패킷을 역캡슐화해 원본 IP 패킷을 가상 어댑터에 주입한다. |
+| FR-11 | 수신 측은 `DATA` 패킷을 역캡슐화해 원본 IP 패킷을 가상 어댑터에 주입한다. 주입 전에 내부 IPv4 유효성, 내부 출발지 IP가 송신 피어의 가상 IP와 일치하는지, 내부 목적지 IP가 자신의 가상 IP인지를 검증한다. |
 | FR-12 | 플레이어가 Minecraft 서버 주소란에 `10.100.0.1:25565`를 입력하면 원격 호스트의 서버에 접속된다. |
 | FR-13 | 모든 연결 시도는 성공/실패와, 실패 시 단계별 코드(`STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED`)를 기록한다. |
 | FR-14 | 클라이언트는 연결 수립 시간, RTT, 패킷 손실, 지터, 전송량, 세션 지속 시간을 수집해 제어 평면에 보고한다. |

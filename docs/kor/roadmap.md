@@ -3,7 +3,7 @@
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
 **학기:** CSP 400, 2026년 가을
 **참고 문서:** [`first_design.md`](first_design.md)
-**요구사항:** [`spec.md`](spec.md) / **설계:** [`architecture.md`](architecture.md)
+**요구사항:** [`spec.md`](spec.md) / **설계:** [`architecture.md`](architecture.md) / **프로토콜:** [`protocol.md`](protocol.md)
 
 > English version: [`../eng/roadmap.md`](../eng/roadmap.md)
 
@@ -163,21 +163,26 @@ Public endpoint: x.x.x.x:xxxxx
 
 ### 작업
 
-- 터널 패킷 헤더 정의 (magic, version, type, peer_id, sequence, payload_length) 및 확정한 상수로 [`protocol.md`](protocol.md) 착수
-- 헤더 직렬화 및 역직렬화 (네트워크 바이트 오더)
-- 피어 핸드셰이크 설계
-- STUN, 홀펀칭, 터널이 **동일한 로컬 UDP 소켓**을 공유하도록 구성
-- 상대 엔드포인트로 `HELLO` 동시 송신 (세션 nonce 포함)
-- `HELLO_ACK`으로 상대의 수신 사실 확인
-- 재시도 및 타임아웃 로직
-- 양방향 트래픽 확인
-- `KEEPALIVE` 패킷 추가 및 유휴 타임아웃 기반 단절 판정
-- `PING` / `PONG` 으로 RTT 측정
+[`protocol.md`](protocol.md) 12장 구현 체크리스트를 그대로 따른다. 이 Phase는 설계가 아니라 구현이다.
+
+- 헤더 직렬화/역직렬화 (필드 단위, 네트워크 바이트 오더)
+- 단일 수신 루프의 배타적 소켓 소유, STUN/터널 역다중화 (`protocol.md` 5~6장)
+- 필수 소켓 옵션: `SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, `connect()` 미호출
+- 수신 검증 파이프라인 1~9번과 전용 폐기 카운터 (`protocol.md` 7장)
+- `session_epoch` 생성과 고정
+- 후보 수집(로컬/서버 반사)과 제어 평면 랑데부 폴링 (`protocol.md` 8.2)
+- 상대의 **모든** 후보로 `HELLO` 200ms 재전송, 펀치 마감 10초
+- `HELLO_ACK` 기반 지명 규칙 (`protocol.md` 8.4)
+- 이중 플래그 `CONNECTED` 조건과 9.3 전이표 전체
+- `KEEPALIVE` 15초(`CONNECTED` 진입 즉시 1회), 유휴 타임아웃 50초 기반 단절 판정
+- `PING`/`PONG` `ping_id` 방식 RTT 측정
+- `CLOSE` 송수신
 - 성공 또는 실패 사유 기록
 
-> **헤더를 이 단계에서 정의하는 이유**
-> 홀펀칭은 `HELLO`, `HELLO_ACK`, `KEEPALIVE`, `PING`, `PONG`을 구분해 주고받아야 하므로 `type` 필드가 있는 헤더가 이미 필요하다. 임시 포맷으로 만들었다가 Phase 5에서 교체하면 Phase 4 코드를 버리게 된다. 헤더 정의와 직렬화는 16바이트 구조체 수준이라 여기서 만드는 비용이 낮다.
-> Phase 5로 남기는 것은 `DATA` 타입, 견고성 검증, 손실 집계, 상태 머신 정리다. 즉 Phase 4는 헤더의 **기본형**, Phase 5는 **완성형**을 담당한다.
+> **프로토콜은 이미 확정되어 있다**
+> 2026-09-14 전면 점검([`design-audit.md`](design-audit.md))에서 와이어 프로토콜 미확정이 구현 불가 수준의 blocker로 드러났다. 그래서 [`protocol.md`](protocol.md)를 구현 착수 전에 확정본으로 작성했다.
+> Phase 4에서 프로토콜을 **설계하지 않는다.** `protocol.md`를 구현할 뿐이다. 구현 중 문서에 빠진 값이 발견되면 코드에서 임의로 정하지 말고 `protocol.md`를 먼저 고친다.
+> Phase 5로 남기는 것은 `DATA` 타입, 내부 패킷 검증(7장 10~15), 손실 집계, 퍼즈 방어다.
 
 ### 산출물
 
@@ -192,7 +197,11 @@ PC A <========== Direct UDP ==========> PC B
 - 포트 포워딩 규칙이 없는 상태에서 서로 다른 가정망의 두 PC가 양방향 통신 성공
 - 패킷 캡처로 트래픽이 AWS를 경유하지 않음을 확인
 - 헤더 직렬화 후 역직렬화 결과가 원본과 동일 (라운드트립 테스트)
-- 캡처한 패킷의 바이트 배열이 정의한 헤더 레이아웃 및 바이트 오더와 일치
+- 캡처한 패킷의 바이트 배열이 `protocol.md` 3.1의 오프셋과 바이트 오더에 정확히 일치. 첫 4바이트가 `53 41 4E 47`
+- `PUNCHING` 상태에서 `HELLO_ACK`이 먼저 도착해도 정상 수용됨 (`protocol.md` 9.3)
+- `CONNECTED` 상태에서 상대가 `HELLO`를 재전송하면 `HELLO_ACK`을 다시 보냄
+- 클라이언트 재시작 후 이전 인스턴스의 지연 패킷이 `drop_stale_epoch`로 폐기됨
+- 응답 없는 후보로 계속 송신해도 `WSAECONNRESET`로 수신 루프가 죽지 않음
 - 한쪽만 `HELLO`를 받은 상태에서는 `CONNECTED`로 전이하지 않음 (한 방향만 뚫린 경우를 성공으로 오판하지 않는다)
 - keepalive 주기 측정: 해당 소켓의 **모든** UDP 송신(`PING`, `DATA` 포함)을 멈춘 유휴 구간을 만들고, 외부 관측점에서 주기적 probe로 매핑 수명을 측정. 게임/`PING` 트래픽이 매핑을 갱신하므로 keepalive만 끄는 시험은 무효다
 - 홀펀칭 실패 시 `HOLE_PUNCH_TIMEOUT`이 기록되고 프로세스는 정상 종료
@@ -210,7 +219,7 @@ PC A <========== Direct UDP ==========> PC B
 **목표:** Phase 4의 헤더 기본형 위에 게임 트래픽 운반 능력과 견고성을 얹는다.
 **우선순위:** P1
 **관련 요구사항:** FR-8, FR-13
-**선행:** Phase 4에서 헤더 정의, 직렬화, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`PING`/`PONG`이 이미 동작한다.
+**선행:** [`protocol.md`](protocol.md) 12장 체크리스트가 Phase 4에서 전부 완료되어 있다.
 
 ### 작업
 
@@ -221,7 +230,7 @@ PC A <========== Direct UDP ==========> PC B
 - 폐기 사유별 카운터 추가
 - 세션 상태 머신 정리 (`IDLE` / `PUNCHING` / `HANDSHAKING` / `CONNECTED` / `FAILED`)
 - 장시간 연결 안정성 확보
-- Phase 4에서 착수한 [`protocol.md`](protocol.md) 완성
+- `DATA` 관련 절을 [`protocol.md`](protocol.md)에 반영 (구조 변경이 아니라 보완)
 
 ### 산출물
 

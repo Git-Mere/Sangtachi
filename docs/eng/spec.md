@@ -2,7 +2,7 @@
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
 **Reference document:** [`first_design.md`](first_design.md)
-**Design detail:** [`architecture.md`](architecture.md)
+**Design detail:** [`architecture.md`](architecture.md) / **Fixed protocol:** [`protocol.md`](protocol.md)
 **Development plan:** [`roadmap.md`](roadmap.md)
 
 > Korean version: [`../kor/spec.md`](../kor/spec.md)
@@ -29,7 +29,7 @@ One-sentence definition:
 - **Custom STUN client**: Binding Request construction, transaction IDs, response parsing, `XOR-MAPPED-ADDRESS` decoding, timeout handling
 - **Python control plane (AWS EC2)**: room creation/joining, peer registration, virtual IP assignment, candidate endpoint exchange, telemetry collection
 - **UDP hole punching**: simultaneous bidirectional send, retries, keepalive, failure classification
-- **Custom tunnel protocol**: 16-byte wire header, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`, serialization and malformed packet validation
+- **Custom tunnel protocol**: 20-byte wire header, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`/`CLOSE`, serialization and malformed packet validation
 - **Windows virtual network adapter integration**: adapter creation and packet read/inject through Wintun, virtual IP address and route configuration through the Windows IP Helper API
 - **Virtual IP routing**: resolving the peer session from the destination virtual IP, encapsulation and decapsulation
 - **Telemetry and diagnostics**: connection success rate, establishment time, RTT, packet loss, jitter, session duration, per-stage failure codes
@@ -76,10 +76,10 @@ Started only if the direct connection work finishes early. Never pursued at the 
 | FR-5 | The control plane accepts each peer's candidate endpoints (local, public) and forwards them to the other peers in the same room. Local candidates are used when both peers are on the same LAN. |
 | FR-6 | Clients attempt UDP hole punching toward the exchanged endpoints and establish a direct UDP path without manual port forwarding. Establishment is confirmed by receiving the peer's `HELLO_ACK`, never by a successful local send alone. |
 | FR-7 | An established session maintains the NAT mapping with keepalive and measures RTT with `PING`/`PONG`. Disconnection is decided by an idle timeout (no packets from the peer), not by send failure. |
-| FR-8 | The tunnel protocol uses a 16-byte wire header carrying magic, version, type, peer_id, sequence, and payload_length; it serializes field by field and validates and drops malformed packets. |
+| FR-8 | The tunnel protocol uses the 20-byte wire header fixed by [`protocol.md`](protocol.md) (magic, version, type, payload_length, peer_id, session_epoch, sequence); it serializes field by field and drops any packet that fails the receive validation pipeline. |
 | FR-9 | The client creates the virtual adapter with Wintun and configures the assigned virtual IP and the `10.100.0.0/24` route through the Windows IP Helper API. |
 | FR-10 | The client routes IP packets read from the virtual adapter by destination virtual IP, encapsulates them in `DATA` packets, and sends them over the direct UDP path. |
-| FR-11 | The receiving side decapsulates `DATA` packets and injects the original IP packet into the virtual adapter. |
+| FR-11 | The receiving side decapsulates `DATA` packets and injects the original IP packet into the virtual adapter. Before injection it validates inner IPv4 well-formedness, that the inner source IP equals the sending peer's virtual IP, and that the inner destination IP is our own virtual IP. |
 | FR-12 | When a player enters `10.100.0.1:25565` in the Minecraft server address field, they connect to the server on the remote host. |
 | FR-13 | Every connection attempt records success/failure and, on failure, the per-stage code (`STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED`). |
 | FR-14 | The client collects establishment time, RTT, packet loss, jitter, transfer volume, and session duration, and reports them to the control plane. |

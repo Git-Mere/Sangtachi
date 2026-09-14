@@ -85,7 +85,9 @@
 
 Phase 1~5에서는 `[tun_rx]`가 없고 `[main]`이 콘솔 입력을 대신 넣는다.
 
-**모든 UDP 송수신은 하나의 로컬 소켓을 공유한다.** STUN Binding Request, `HELLO`, `HELLO_ACK`, `KEEPALIVE`, `PING`/`PONG`, `DATA`가 서로 다른 소켓을 쓰면 NAT가 각각 다른 공인 포트를 매핑하므로, STUN으로 발견한 엔드포인트가 터널에 적용되지 않는다. 이 제약은 Phase 2 시점부터 지켜야 한다.
+**모든 UDP 송수신은 하나의 로컬 소켓을 공유하고, 그 소켓은 하나의 수신 루프가 배타적으로 소유한다.** 서로 다른 소켓을 쓰면 NAT가 각각 다른 공인 포트를 매핑하므로 STUN으로 발견한 엔드포인트가 터널에 적용되지 않는다. 이 제약은 Phase 2 시점부터 지켜야 한다.
+
+소켓을 공유한다는 것은 STUN 응답과 터널 패킷이 같은 큐로 들어온다는 뜻이다. STUN 클라이언트가 직접 `recvfrom`을 부르면 두 읽기가 서로의 패킷을 훔친다. STUN 클라이언트는 요청만 등록하고 응답은 수신 루프에서 전달받는다. 분류 규칙과 필수 소켓 옵션(`SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, `connect()` 미호출)은 [`protocol.md`](protocol.md) 5~6장에 있다.
 
 ### 3.2 제어 평면 (Python)
 
@@ -139,8 +141,8 @@ Minecraft Java Edition은 게임플레이에 TCP를 쓰지만, 터널 자체는 
 1500 (경로 MTU 가정)
  - 20 (외부 IPv4 헤더)
  -  8 (외부 UDP 헤더)
- - 16 (TunnelHeader)
-= 1456 바이트 (내부 IP 패킷 최대치)
+ - 20 (TunnelHeader)
+= 1452 바이트 (내부 IP 패킷 최대치)
 ```
 
 가상 어댑터의 MTU를 1400 정도로 낮춰 잡아 조각화를 피한다.
@@ -153,34 +155,35 @@ Minecraft Java Edition은 게임플레이에 TCP를 쓰지만, 터널 자체는 
 
 ### 5.1 헤더
 
-```cpp
-struct TunnelHeader
-{
-    uint32_t magic;           // 프로토콜 식별자, 오배달 패킷 차단
-    uint8_t  version;         // 프로토콜 버전
-    uint8_t  type;            // PacketType
-    uint32_t peer_id;         // 송신 피어 식별자
-    uint32_t sequence;        // 손실/재정렬 측정용
-    uint16_t payload_length;  // 뒤따르는 페이로드 바이트 수
-};                            // 와이어 포맷 16 바이트, 네트워크 바이트 오더
+```text
+ 오프셋  크기  필드              설명
+   0      4   magic             0x53414E47 ("SANG")
+   4      1   version           0x01
+   5      1   type              PacketType
+   6      2   payload_length    헤더 뒤 바이트 수
+   8      4   peer_id           송신 피어 식별자
+  12      4   session_epoch     송신 피어의 이번 실행 인스턴스
+  16      4   sequence          방향별 단조 증가 카운터
+  = 20 바이트, 네트워크 바이트 오더
 ```
 
-와이어 포맷은 16바이트지만 `sizeof(TunnelHeader)`는 16이 아니다. MSVC 기본 정렬에서 `type` 뒤에 2바이트 패딩이 들어가 20바이트가 된다. 구조체를 그대로 `memcpy` 하거나 `sizeof`를 헤더 길이로 쓰면 안 된다. **필드 단위로 직접 직렬화**하고 헤더 길이는 상수로 고정한다.
+`session_epoch`가 없으면 재시작 후 이전 인스턴스의 지연 패킷이 새 세션에 수용된다. 수신 측은 핸드셰이크에서 상대 epoch를 고정하고 이후 다른 epoch의 패킷을 폐기한다.
 
-`magic`과 `version`의 실제 값, `HELLO` / `HELLO_ACK` 페이로드의 필드 폭과 배치는 Phase 4 착수 시점에 확정하고 [`protocol.md`](protocol.md)에 기록한다. 따라서 `protocol.md`는 Phase 4에서 만들고 Phase 5에서 확장한다. 이 값들이 없으면 Phase 4의 패킷 캡처 검증 기준이 성립하지 않는다.
+4바이트 필드가 모두 4의 배수 오프셋에 오도록 배치해 MSVC 기본 정렬에서도 패딩이 생기지 않는다. 그래도 구조체를 그대로 `memcpy` 하지 않는다. 바이트 오더 변환이 필요하고, 정렬이 우연히 맞는 것에 의존하면 조용히 깨진다. **필드 단위로 직렬화**하고 길이는 상수로 고정한다.
 
-`payload_length`는 수신 측 검증에 쓴다. 실제 수신 바이트 수와 다르면 패킷을 버리고 카운터를 올린다.
+> **상세는 [`protocol.md`](protocol.md)에 있다.** 상수 값, 페이로드 레이아웃, 수신 검증 파이프라인, 후보 지명, 전이표 전체, 확정 타이머 값은 그 문서가 유일한 출처다. 이 절은 요약이며 충돌하면 `protocol.md`가 우선한다.
 
 ### 5.2 패킷 타입
 
 | 타입 | 방향 | 페이로드 | 용도 |
 |------|------|----------|------|
-| `HELLO` | 양방향 | 피어 ID, 가상 IP, 세션 nonce | 홀펀칭 시도 및 핸드셰이크 개시 |
-| `HELLO_ACK` | 양방향 | 상대 `HELLO`의 nonce 에코 | 상대가 내 패킷을 실제로 받았음을 증명 |
-| `KEEPALIVE` | 양방향 | 없음 | NAT 매핑 유지 (주기: 15~25초) |
-| `DATA` | 양방향 | 원본 IP 패킷 | 게임 트래픽 전달 |
-| `PING` | 양방향 | 송신 타임스탬프 | RTT 측정 |
-| `PONG` | 양방향 | 원본 타임스탬프 에코 | RTT 측정 응답 |
+| `HELLO` `0x01` | 양방향 | nonce(16) + 가상 IP(4) | 홀펀칭 시도 및 핸드셰이크 개시 |
+| `HELLO_ACK` `0x02` | 양방향 | echo nonce(16) + 가상 IP(4) | 상대가 내 패킷을 실제로 받았음을 증명 |
+| `KEEPALIVE` `0x03` | 양방향 | 없음 | NAT 매핑 유지 (주기 15초) |
+| `DATA` `0x04` | 양방향 | 내부 IPv4 패킷 | 게임 트래픽 전달 |
+| `PING` `0x05` | 양방향 | ping_id(8) | RTT 측정. 타임스탬프는 와이어에 싣지 않는다 |
+| `PONG` `0x06` | 양방향 | ping_id 에코(8) | RTT 측정 응답 |
+| `CLOSE` `0x07` | 양방향 | reason(1) | 정상 종료 통지. 없으면 상대가 50초 유휴 타임아웃까지 죽은 세션을 붙든다 |
 
 ### 5.3 세션 상태 머신
 
@@ -202,8 +205,10 @@ FAILED(TUNNEL_DROPPED)
 
 UDP `sendto`의 성공은 전달을 보장하지 않는다. 따라서 두 전이 모두 **수신한 패킷**으로만 판정한다.
 
-- `HANDSHAKING -> CONNECTED`: 자신이 보낸 `HELLO`의 nonce가 담긴 `HELLO_ACK`을 받아야 한다. 내가 `HELLO`를 보냈고 상대 `HELLO`를 받았다는 사실만으로는 상대가 내 패킷을 받았는지 알 수 없다. 홀펀칭은 한쪽 방향만 뚫릴 수 있다.
-- `CONNECTED -> FAILED`: keepalive 송신 실패가 아니라, 일정 시간(keepalive 주기의 3배 정도) 동안 상대로부터 유효 패킷을 하나도 받지 못한 것으로 판정한다.
+- `HANDSHAKING -> CONNECTED`: **두 개의 독립적인 플래그가 모두 서야 한다.** `got_ack`(우리가 보낸 nonce를 echo한 `HELLO_ACK` 수신, 우리 -> 상대 경로 확인)와 `sent_ack`(상대의 유효한 `HELLO`에 `HELLO_ACK` 송신, 상대 -> 우리 경로 확인)이다. 어느 쪽이 먼저 서는지는 정해져 있지 않다. 순서를 가정하면 한쪽만 뚫린 경로를 연결로 오판하거나 정상 순서에서 양쪽이 타임아웃한다.
+- `CONNECTED -> FAILED`: keepalive 송신 실패가 아니라, 50초 동안 상대로부터 유효 패킷을 하나도 받지 못한 것으로 판정한다. keepalive는 15초 간격이고 `CONNECTED` 진입 즉시 1회 보내므로 3회 손실을 견딘다.
+
+모든 상태 x 모든 수신 패킷의 전이는 [`protocol.md`](protocol.md) 9.3절 전이표에 있다. 특히 `PUNCHING`에서 `HELLO_ACK`이 먼저 도착하는 것과 `CONNECTED`에서 `HELLO`에 다시 응답하는 것은 정상 동작이며, 이를 빠뜨리면 양쪽이 타임아웃한다.
 
 ---
 
@@ -328,7 +333,8 @@ Sangtachi/
 |   |   +-- roadmap.md           단계별 개발 계획
 |   |   +-- plan.md              현재 작업 단위 체크리스트
 |   |   +-- first_design.md      초기 기획서 (참고용)
-|   |   +-- protocol.md          터널 프로토콜 상세 (Phase 4에서 착수, Phase 5에서 완성)
+|   |   +-- protocol.md          터널 프로토콜 확정본 (구현 전 작성 완료)
+|   |   +-- design-audit.md      전면 설계 점검 기록
 |   |   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)
 |   |   +-- decisions/           설계 결정 기록
 |   |   +-- commit_history/      작업 단위 변경 기록

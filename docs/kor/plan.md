@@ -5,3 +5,5 @@
 | # | 단계 | 검증 | 상태 |
 |---|------|------|------|
 | 1 |      |      | todo |
+
+> English version: [`../eng/plan.md`](../eng/plan.md)

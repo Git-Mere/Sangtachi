@@ -4,6 +4,8 @@
 **참고 문서:** [`first_design.md`](first_design.md)
 **대상 플랫폼:** Windows 10 / 11 x64 (클라이언트), Linux/AWS EC2 (제어 서버)
 
+> English version: [`../eng/architecture.md`](../eng/architecture.md)
+
 ---
 
 ## 1. 설계 원칙
@@ -68,7 +70,7 @@
 | `tunnel/packet` | 터널 헤더 직렬화/역직렬화, 손상 패킷 검증 | 없음 |
 | `tunnel/tunnel` | 패킷 타입별 디스패치, 캡슐화/역캡슐화, 시퀀스 관리 | 없음 |
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
-| `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 필요)**, IP Helper |
+| `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 제어 평면 전송 | 없음 |
 | `control/control_client` | 제어 평면 REST/JSON 호출 | Winsock2 |
 
@@ -143,7 +145,7 @@ Minecraft Java Edition은 게임플레이에 TCP를 쓰지만, 터널 자체는 
 
 가상 어댑터의 MTU를 1400 정도로 낮춰 잡아 조각화를 피한다.
 
-다만 위 계산은 **외부 경로 MTU가 1500이라는 가정**에 의존한다. PPPoE 회선이나 다른 터널을 경유하는 경로는 이보다 작고, 그 경우 외부 UDP 패킷이 조각화된다. 정확한 값은 Phase 7에서 실측으로 확정하며, 보수적 고정값을 쓴다면 그 한계를 `docs/experiments.md`에 명시한다.
+다만 위 계산은 **외부 경로 MTU가 1500이라는 가정**에 의존한다. PPPoE 회선이나 다른 터널을 경유하는 경로는 이보다 작고, 그 경우 외부 UDP 패킷이 조각화된다. 정확한 값은 Phase 7에서 실측으로 확정하며, 보수적 고정값을 쓴다면 그 한계를 [`experiments.md`](experiments.md)에 명시한다.
 
 ---
 
@@ -165,7 +167,7 @@ struct TunnelHeader
 
 와이어 포맷은 16바이트지만 `sizeof(TunnelHeader)`는 16이 아니다. MSVC 기본 정렬에서 `type` 뒤에 2바이트 패딩이 들어가 20바이트가 된다. 구조체를 그대로 `memcpy` 하거나 `sizeof`를 헤더 길이로 쓰면 안 된다. **필드 단위로 직접 직렬화**하고 헤더 길이는 상수로 고정한다.
 
-`magic`과 `version`의 실제 값, `HELLO` / `HELLO_ACK` 페이로드의 필드 폭과 배치는 Phase 4 착수 시점에 확정하고 `docs/protocol.md`에 기록한다. 이 값들이 없으면 Phase 4의 패킷 캡처 검증 기준이 성립하지 않는다.
+`magic`과 `version`의 실제 값, `HELLO` / `HELLO_ACK` 페이로드의 필드 폭과 배치는 Phase 4 착수 시점에 확정하고 [`protocol.md`](protocol.md)에 기록한다. 따라서 `protocol.md`는 Phase 4에서 만들고 Phase 5에서 확장한다. 이 값들이 없으면 Phase 4의 패킷 캡처 검증 기준이 성립하지 않는다.
 
 `payload_length`는 수신 측 검증에 쓴다. 실제 수신 바이트 수와 다르면 패킷을 버리고 카운터를 올린다.
 
@@ -270,7 +272,7 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 | `PEER_HANDSHAKE_FAILED` | 핸드셰이크 | 상대 `HELLO`는 왔으나 제한 시간 내 `HELLO_ACK` 미수신 |
 | `TUNNEL_DROPPED` | 유지 | 수립 후 유휴 타임아웃 동안 상대 패킷 무수신 |
 
-각 실패에는 NAT 환경 정보(로컬 대역, 공인 엔드포인트, STUN 서버별 매핑 차이)를 함께 남긴다.
+각 실패에는 확보 가능한 NAT 환경 정보(로컬 대역, 공인 엔드포인트, STUN 서버별 매핑 차이)를 함께 남긴다. `STUN_DISCOVERY_FAILED`는 발견 자체가 실패한 경우라 공인 엔드포인트가 없다. 모든 필드를 요구하지 말고 존재하는 것만 기록한다.
 
 **NAT 유형을 단정하지 않는다.** RFC 5389 Binding 결과와 포트 변화만으로는 NAT 유형이나 필터링 거동을 판별할 수 없다. Phase 9의 분석은 "NAT 유형"이 아니라 **관측된 매핑 거동**(목적지에 따라 공인 포트가 바뀌는가)과 **연결 성공 여부**로 분류한다. 유형 판별이 필요해지면 RFC 5780 지원 서버나 통제된 다중 목적지 시험이 추가로 필요하며, 이는 초기 범위 밖이다.
 
@@ -285,7 +287,8 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 | RTT | `PING`/`PONG` 주기 측정 | 지연 분석 |
 | 패킷 손실률 | `sequence` 간격 누락 집계 | 품질 분석 |
 | 지터 | 연속 RTT 편차 | 품질 분석 |
-| keepalive 실패 횟수 | 타이머 스레드 | 안정성 분석 |
+| keepalive 로컬 송신 오류 | 타이머 스레드 | 안정성 분석. 로컬 `sendto` 오류만 세며 전달 실패의 근거가 아니다. 그래서 단절 판정은 유휴 타임아웃으로 한다 |
+| 유휴 타임아웃 발생 횟수 | 수신 경로 | 안정성 분석 |
 | 직접 연결 유지 시간 | `CONNECTED` 지속 구간 | 안정성 분석 |
 | 터널 처리량 | 송수신 바이트 카운터 | 성능 분석 |
 | 세션 지속 시간 | 게임 세션 전체 | Minecraft 안정성 |
@@ -319,16 +322,21 @@ Sangtachi/
 +-- tests/
 +-- scripts/
 +-- docs/
-|   +-- architecture.md      이 문서
-|   +-- spec.md              요구사항과 성공 기준
-|   +-- roadmap.md           단계별 개발 계획
-|   +-- plan.md              현재 작업 단위 체크리스트
-|   +-- protocol.md          터널 프로토콜 상세 (Phase 5에서 작성)
-|   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)
-|   +-- decisions/           설계 결정 기록
-|   +-- commit_history/      작업 단위 변경 기록
+|   +-- kor/                 한국어 문서 (이 트리)
+|   |   +-- architecture.md      이 문서
+|   |   +-- spec.md              요구사항과 성공 기준
+|   |   +-- roadmap.md           단계별 개발 계획
+|   |   +-- plan.md              현재 작업 단위 체크리스트
+|   |   +-- first_design.md      초기 기획서 (참고용)
+|   |   +-- protocol.md          터널 프로토콜 상세 (Phase 4에서 착수, Phase 5에서 완성)
+|   |   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)
+|   |   +-- decisions/           설계 결정 기록
+|   |   +-- commit_history/      작업 단위 변경 기록
+|   +-- eng/                 영어 문서, 동일 구조
 +-- README.md
 ```
+
+두 언어 트리는 같은 파일을 갖는다. 문서를 고칠 때는 같은 커밋에서 양쪽을 함께 수정한다.
 
 ### 현재 상태와의 차이
 
@@ -352,7 +360,7 @@ Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, 
 
 ## 12. 초기 범위 밖
 
-다음은 의도적으로 초기 아키텍처에 넣지 않는다. 필요해지면 `docs/decisions/`에 결정 기록을 남기고 도입한다.
+다음은 의도적으로 초기 아키텍처에 넣지 않는다. 필요해지면 [`decisions/`](decisions/)에 결정 기록을 남기고 도입한다.
 
 - **암호화 및 피어 인증**: 터널 페이로드는 평문이다. 스트레치 목표.
 - **릴레이 폴백 (TURN 유사)**: 직접 연결 실패 시 대안 경로 없음. 스트레치 목표.

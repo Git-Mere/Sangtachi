@@ -3,3 +3,5 @@
 설계 결정 기록(ADR)을 `NNNN-제목.md` 형식으로 남깁니다.
 
 각 문서 구성: 맥락 / 결정 / 대안 / 결과.
+
+> English version: [`../../eng/decisions/README.md`](../../eng/decisions/README.md)

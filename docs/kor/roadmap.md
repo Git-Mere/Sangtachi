@@ -5,6 +5,8 @@
 **참고 문서:** [`first_design.md`](first_design.md)
 **요구사항:** [`spec.md`](spec.md) / **설계:** [`architecture.md`](architecture.md)
 
+> English version: [`../eng/roadmap.md`](../eng/roadmap.md)
+
 이 문서는 Phase 단위의 큰 계획이다. 현재 진행 중인 작업의 세부 체크리스트는 [`plan.md`](plan.md)에서 관리한다.
 
 ---
@@ -37,9 +39,9 @@
 ```text
 P0: UDP + STUN + 엔드포인트 교환 + 홀펀칭 + 터널 헤더 기본형   (Phase 1-4)
 P1: DATA 운반 + 프로토콜 견고성 + 세션 상태 머신              (Phase 5)
-P2: Wintun + 가상 IP + Minecraft               (Phase 6-8)
-P3: 텔레메트리 + 진단 + 분석                    (Phase 9)
-P4: 암호화 + 릴레이 + GUI + 추가 플랫폼          (스트레치)
+P2: Wintun + 가상 IP + Minecraft                              (Phase 6-8)
+P3: 텔레메트리 + 진단 + 분석                                   (Phase 9)
+P4: 암호화 + 릴레이 + GUI + 추가 플랫폼                         (스트레치)
 ```
 
 ---
@@ -161,7 +163,7 @@ Public endpoint: x.x.x.x:xxxxx
 
 ### 작업
 
-- 터널 패킷 헤더 정의 (magic, version, type, peer_id, sequence, payload_length)
+- 터널 패킷 헤더 정의 (magic, version, type, peer_id, sequence, payload_length) 및 확정한 상수로 [`protocol.md`](protocol.md) 착수
 - 헤더 직렬화 및 역직렬화 (네트워크 바이트 오더)
 - 피어 핸드셰이크 설계
 - STUN, 홀펀칭, 터널이 **동일한 로컬 UDP 소켓**을 공유하도록 구성
@@ -194,7 +196,7 @@ PC A <========== Direct UDP ==========> PC B
 - 한쪽만 `HELLO`를 받은 상태에서는 `CONNECTED`로 전이하지 않음 (한 방향만 뚫린 경우를 성공으로 오판하지 않는다)
 - keepalive 주기 측정: 해당 소켓의 **모든** UDP 송신(`PING`, `DATA` 포함)을 멈춘 유휴 구간을 만들고, 외부 관측점에서 주기적 probe로 매핑 수명을 측정. 게임/`PING` 트래픽이 매핑을 갱신하므로 keepalive만 끄는 시험은 무효다
 - 홀펀칭 실패 시 `HOLE_PUNCH_TIMEOUT`이 기록되고 프로세스는 정상 종료
-- `PING`/`PONG` RTT 20회 표본의 중앙값이 같은 경로 ICMP `ping` 20회 중앙값 대비 절대차 10ms 이내 또는 상대차 30% 이내 (사용자 공간 처리 오버헤드 감안)
+- RTT 기준선 비교는 ICMP가 아니라 **같은 소켓, 같은 엔드포인트 쌍에서의 타임스탬프 UDP 에코**로 한다. NAT 뒤 피어를 향한 ICMP는 차단되거나 피어의 공유기가 응답하는 경우가 많아 같은 경로를 재지 못한다. `PING`/`PONG` 20회 표본의 중앙값이 UDP 에코 20회 중앙값 대비 절대차 10ms 이내 또는 상대차 30% 이내 (사용자 공간 처리 오버헤드 감안). ICMP 비교는 참고 정보로만 기록할 수 있다
 - 실패 코드 강제 발생 시험: 제어 평면을 내린 상태 -> `CONTROL_PLANE_EXCHANGE_FAILED`, 응답 없는 엔드포인트 주입 -> `HOLE_PUNCH_TIMEOUT`, `HELLO_ACK` 응답을 차단 -> `PEER_HANDSHAKE_FAILED`. 각각 정확한 코드와 상태 전이가 기록됨
 
 ### 위험
@@ -207,8 +209,8 @@ PC A <========== Direct UDP ==========> PC B
 
 **목표:** Phase 4의 헤더 기본형 위에 게임 트래픽 운반 능력과 견고성을 얹는다.
 **우선순위:** P1
-**관련 요구사항:** FR-8
-**선행:** Phase 4에서 헤더 정의, 직렬화, `HELLO`/`KEEPALIVE`/`PING`/`PONG`이 이미 동작한다.
+**관련 요구사항:** FR-8, FR-13
+**선행:** Phase 4에서 헤더 정의, 직렬화, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`PING`/`PONG`이 이미 동작한다.
 
 ### 작업
 
@@ -219,7 +221,7 @@ PC A <========== Direct UDP ==========> PC B
 - 폐기 사유별 카운터 추가
 - 세션 상태 머신 정리 (`IDLE` / `PUNCHING` / `HANDSHAKING` / `CONNECTED` / `FAILED`)
 - 장시간 연결 안정성 확보
-- `docs/protocol.md` 작성
+- Phase 4에서 착수한 [`protocol.md`](protocol.md) 완성
 
 ### 산출물
 
@@ -235,6 +237,7 @@ PC A <========== Direct UDP ==========> PC B
 - 의도적으로 패킷을 누락시켰을 때 `sequence` 간격으로 손실률이 계산됨
 - 패킷 순서를 뒤바꿔 주입해도 손실로 집계되지 않음 (재정렬 윈도우 동작)
 - `sequence`가 32비트 경계를 넘어가도 손실률이 튀지 않음
+- 유휴 타임아웃 시험: 상대 송신을 완전히 끊으면 `TUNNEL_DROPPED`가 정확한 상태 전이와 함께 기록됨 (FR-13 실패 코드 집합 완성)
 - 장시간(1시간 이상) 연결 유지 중 세션 상태가 `CONNECTED`로 유지됨
 
 ---
@@ -258,8 +261,14 @@ PC A <========== Direct UDP ==========> PC B
 ### 산출물
 
 ```text
-10.100.0.1 <------ virtual network ------> 10.100.0.2
+Windows IP 스택
+      |  10.100.0.0/24 로 향하는 패킷
+      v
+Wintun Adapter  --- read ---> 클라이언트 (카운터 증가)
+Wintun Adapter  <-- inject -- 클라이언트 (직접 만든 응답)
 ```
+
+단일 호스트에서 가상 어댑터로부터 패킷을 읽고 다시 주입할 수 있다. 두 가상 IP 간 통신은 터널 통합이 필요하므로 Phase 7의 산출물이다.
 
 ### 검증
 
@@ -357,7 +366,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 성공한 NAT 통과 사례와 실패 사례 비교 (NAT 유형이 아니라 관측된 매핑 거동 기준)
 - 실험 결과 시각화
 - 한계 문서화
-- `docs/experiments.md` 작성
+- [`experiments.md`](experiments.md) 작성
 
 ### 테스트 환경
 
@@ -379,7 +388,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 실패 건 전부에 단계별 코드와 NAT 환경 정보가 기록됨
 - 성공률이 관측된 매핑 거동별로 집계됨. RFC 5389 Binding 결과만으로 NAT 유형을 단정한 서술이 없음
 - 제3자가 문서만 보고 동일 실험을 재현 가능
-- 그래프와 한계 서술이 `docs/experiments.md`에 포함됨
+- 그래프와 한계 서술이 [`experiments.md`](experiments.md)에 포함됨
 
 ---
 

@@ -41,7 +41,8 @@ cp .env.example .env
 ## 레포 구조
 
 ```
-docs/       스펙, 계획, 설계 결정, 커밋 기록
+docs/kor/   스펙, 계획, 설계 결정, 커밋 기록 (한국어)
+docs/eng/   같은 문서의 영어판
 src/        소스 코드
 tests/      테스트
 scripts/    빌드 및 배포 스크립트

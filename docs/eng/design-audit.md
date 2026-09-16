@@ -82,17 +82,17 @@ This entire area was absent from the design.
 | 12 | A new adapter is classified Public and the firewall blocks inbound ICMP and TCP 25565. The client's UDP is also blocked if the first-run prompt is dismissed | open, follow-up 3 |
 | 13 | An abnormal termination leaves the adapter, address, and route behind, so the next run creates duplicates | open, follow-up 3 |
 | 14 | Wintun DLL/driver packaging, architecture, and signing. Installation can fail on the demo PC | open, follow-up 3 |
-| 15 | If `server-ip` is set in `server.properties`, connections to `10.100.0.1:25565` are refused | open, follow-up 3 |
+| 15 | If `server-ip` in `server.properties` is set to **a different interface address**, connections to `10.100.0.1:25565` are refused. It must be blank or explicitly `10.100.0.1` | open, follow-up 3 |
 | 16 | No EC2 security group inbound rule, binding to `127.0.0.1`, public IP changing on restart | open, follow-up 3 |
 | 17 | `10.100.0.0/24` colliding with a real LAN, Hyper-V, or another VPN sends traffic out the wrong interface | open, follow-up 3 |
 
-There is also a goal-level contradiction here. The project's central claim is that an ordinary user configures nothing, yet in practice it requires administrator privileges, a driver install, and firewall rules. **It removes port forwarding and demands different configuration in its place.** This belongs in the final report as an honest limitation.
+There is also a usability limitation here. The claim in `spec.md` is "without manual port forwarding", and that claim itself holds. What it costs instead is administrator privileges, a driver install, and firewall rules. **The configuration burden did not disappear; it changed kind.** Whether that is easier than port forwarding has to be argued separately, and it belongs in the final report as an honest limitation.
 
 ### E. Project viability
 
 | # | Problem | Status |
 |---|---------|--------|
-| 18 | The C-5 priority order does not protect the minimum deliverable. Dropping P1 removes M-6; dropping P3 removes the analysis the course requires. The only thing actually droppable is P2 (Minecraft) | open, follow-up 4 |
+| 18 | The C-5 priority order does not protect the minimum deliverable. Dropping P1 removes M-5; dropping P3 removes M-6 along with the analysis the course requires. Within Phases 1-9 the only genuinely droppable tier is P2 (Wintun, virtual IP, and Minecraft, Phases 6-8); P4 is a stretch tier and never counted | open, follow-up 4 |
 | 19 | The traceability table assigns M-5 to Phase 4, but `DATA` does not exist until Phase 5 | open, follow-up 4 |
 | 20 | If both available home networks show destination-dependent mapping, minimum success is impossible and there is no alternative. Relay is a stretch goal after Phase 9 and cannot rescue it | open, follow-up 5 |
 

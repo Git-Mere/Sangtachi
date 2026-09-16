@@ -205,7 +205,7 @@ The second revision was reviewed twice more. It is converging.
 |-------|----------|-----------|
 | First draft | 30 | gaps in the design itself |
 | Third | 5 | mostly side effects of the endpoint learning introduced in the second revision |
-| Fourth | 4 | pseudocode branch precision and interactions among the third-round fixes |
+| Fourth | 5 | pseudocode branch precision and interactions among the preceding fixes |
 
 Third-round blockers:
 
@@ -231,7 +231,7 @@ Fourth-round blockers:
 
 The fourth round of fixes is applied. No fifth review was run, so **no claim is made that nothing remains.** One more pass runs the next time this document is touched.
 
-The convergence trend (30 -> 5 -> 4) and the change in the character of the defects (design gaps -> side effects -> pseudocode precision) suggest the structural problems are resolved. That every fourth-round finding was a side effect of a third-round fix does show that rule 4 in section 6, defining the new contract a fix creates, is still not being followed closely enough.
+The convergence trend (30 -> 5 -> 5) and the change in the character of the defects (design gaps -> side effects -> pseudocode precision) suggest the structural problems are resolved. That **all five fourth-round findings were side effects of preceding fixes** does show that rule 4 in section 6, defining the new contract a fix creates, is still not being followed closely enough. Four came from the third-round fixes; the `seq == highest` branch came from introducing the duplicate suppression algorithm in the second round. The first draft had no such algorithm at all.
 
 ---
 

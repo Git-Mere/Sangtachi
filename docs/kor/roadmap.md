@@ -67,7 +67,8 @@ P4: 암호화 + 릴레이 + GUI + 추가 플랫폼                         (스�
 - 레포를 목표 구조로 재배치 (`src/` -> `client/src/`, `control-server/` 생성)
 - CMake 기반 C++20 프로젝트 구성
 - Winsock2 초기화 및 해제 (`WSAStartup` / `WSACleanup`) 래핑
-- UDP 소켓 래퍼 구현 (`socket`, `bind`, `sendto`, `recvfrom`, `WSAPoll`)
+- UDP 소켓 래퍼 구현 (`socket`, `bind`, `sendto`, `recvfrom`, `WSAEventSelect` 이벤트 핸들)
+- 이벤트 루프 골격 구현. `WaitForMultipleObjects`, 타이머 마감 계산, drain 패턴 ([`architecture.md`](architecture.md) 3.2)
 - 엔드포인트 표현 타입 구현 (파싱, 비교, 출력)
 - 알려진 두 엔드포인트 간 UDP 패킷 송수신
 - 기본 로깅 추가
@@ -83,6 +84,8 @@ Client A <------ UDP ------> Client B
 - 같은 LAN의 두 머신(또는 한 머신의 두 프로세스)에서 양방향 메시지 송수신 성공
 - 수신 내용이 송신 내용과 바이트 단위로 일치
 - 소켓 오류 시 프로세스가 죽지 않고 오류 코드를 로그에 남김
+- 한 번의 신호로 도착한 데이터그램 여러 개가 같은 바퀴에 처리됨 (drain 패턴 동작)
+- 수신이 끊이지 않고 들어오는 동안에도 주기 타이머가 계속 만료됨 (drain 예산 동작). 예산 초과 부하를 인위적으로 만들어 확인한다
 - `cmake --build` 가 경고 없이 성공
 
 ---
@@ -371,6 +374,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 지터 추정
 - 터널 전송량 기록
 - 세션 지속 시간 기록
+- 텔레메트리 업로드를 전용 스레드와 유실 허용 큐로 분리 ([`architecture.md`](architecture.md) 3.2.6)
 - 복수 네트워크 환경 테스트
 - 성공한 NAT 통과 사례와 실패 사례 비교 (NAT 유형이 아니라 관측된 매핑 거동 기준)
 - 실험 결과 시각화
@@ -393,6 +397,8 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 
 ### 검증
 
+- 제어 평면 중단 시험 재실행: 텔레메트리가 켜진 상태에서 제어 서버를 내려도 10분간 터널이 유지됨 (NFR-3). Phase 5 시험을 텔레메트리 포함 구성으로 다시 돌린다
+- 큐가 가득 찬 상태에서 `[loop]`의 지표 기록이 블록되지 않고 유실 카운터가 증가함
 - 각 환경별로 최소 10회 반복 측정 데이터 확보
 - 실패 건 전부에 단계별 코드와 NAT 환경 정보가 기록됨
 - 성공률이 관측된 매핑 거동별로 집계됨. RFC 5389 Binding 결과만으로 NAT 유형을 단정한 서술이 없음

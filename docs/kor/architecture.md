@@ -61,7 +61,7 @@
 
 | 모듈 | 책임 | 외부 의존 |
 |------|------|-----------|
-| `network/udp_socket` | Winsock2 초기화/해제, UDP 소켓 생성, 논블로킹 송수신, `WSAPoll` 기반 대기 | Winsock2 |
+| `network/udp_socket` | Winsock2 초기화/해제, UDP 소켓 생성, 논블로킹 송수신, 이벤트 핸들 노출 (3.2) | Winsock2 |
 | `network/endpoint` | `IP:Port` 값 타입, 파싱, 비교, 직렬화 | 없음 |
 | `network/stun_client` | STUN Binding Request 생성, 트랜잭션 ID 관리, 응답 파싱, `XOR-MAPPED-ADDRESS` 디코드, 타임아웃/재시도 | 없음 (RFC 5389 직접 구현) |
 | `peer/peer` | 피어 식별자, 가상 IP, 후보 엔드포인트 목록 | 없음 |
@@ -74,22 +74,170 @@
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 제어 평면 전송 | 없음 |
 | `control/control_client` | 제어 평면 REST/JSON 호출 | Winsock2 |
 
-클라이언트는 단일 프로세스다. 초기 버전은 다음 스레드 구성을 가정한다.
-
-```text
-[main]        초기화, 상태 머신, 종료 처리
-[net_rx]      UDP 소켓 수신 루프 -> 터널 디스패치
-[tun_rx]      Wintun 읽기 루프 -> 라우팅 -> UDP 송신
-[timer]       keepalive, PING/PONG, 재시도, 텔레메트리 플러시
-```
-
-Phase 1~5에서는 `[tun_rx]`가 없고 `[main]`이 콘솔 입력을 대신 넣는다.
+클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 3.2에 있다.
 
 **모든 UDP 송수신은 하나의 로컬 소켓을 공유하고, 그 소켓은 하나의 수신 루프가 배타적으로 소유한다.** 서로 다른 소켓을 쓰면 NAT가 각각 다른 공인 포트를 매핑하므로 STUN으로 발견한 엔드포인트가 터널에 적용되지 않는다. 이 제약은 Phase 2 시점부터 지켜야 한다.
 
 소켓을 공유한다는 것은 STUN 응답과 터널 패킷이 같은 큐로 들어온다는 뜻이다. STUN 클라이언트가 직접 `recvfrom`을 부르면 두 읽기가 서로의 패킷을 훔친다. STUN 클라이언트는 요청만 등록하고 응답은 수신 루프에서 전달받는다. 분류 규칙과 필수 소켓 옵션(`SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, `connect()` 미호출)은 [`protocol.md`](protocol.md) 5~6장에 있다.
 
-### 3.2 제어 평면 (Python)
+### 3.2 동시성 모델
+
+**터널 상태를 건드리는 모든 코드는 한 스레드에서만 돈다.** 잠금을 걸어 공유하는 대신 공유하지 않는다.
+
+초기 안은 `[main]` / `[net_rx]` / `[tun_rx]` / `[timer]` 4스레드였다. 두 가지 이유로 폐기했다. 첫째, 네 스레드가 세션 상태와 송신 `sequence`를 동기화 없이 변경한다. 둘째, 텔레메트리 업로드가 타이머 스레드를 공유해 제어 평면 장애가 keepalive를 멈춘다. 후자는 NFR-3을 설계 단계에서 위반한다.
+
+#### 3.2.1 스레드
+
+| 스레드 | 책임 | 공유 상태 |
+|--------|------|-----------|
+| `[loop]` | UDP 수신, Wintun 수신, 콘솔 명령, 타이머, 세션 상태, 라우팅, 모든 송신 | **터널 상태 없음.** 텔레메트리 큐와 종료/정리 이벤트만 공유한다 |
+| `[telemetry]` | 지표 큐 소비, 제어 평면 업로드 | 큐 하나 |
+| `[console]` | 표준 입력 읽기. Phase 1~5 스캐폴딩 | 명령 큐 하나 |
+
+Phase 6 이후는 두 스레드, Phase 1~5는 세 스레드다. `[loop]`가 프로세스 주 스레드다. `[console]`은 Phase 1~5에만 있다. `[loop]`가 표준 입력에서 블록할 수 없으므로 별도 스레드가 읽어 큐에 넣는다. Phase 6에서 어댑터가 들어올 때는 Wintun 읽기 이벤트가 `[loop]`의 대기 집합에 직접 합류하므로 스레드가 늘지 않는다.
+
+#### 3.2.2 대기
+
+```text
+WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
+```
+
+| 순위 | 핸들 | 생성 | 유효 구간 |
+|------|------|------|-----------|
+| 0 | 종료 이벤트 | `CreateEvent` (수동 리셋) | 항상 |
+| 1 | UDP 소켓 이벤트 | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | 항상 |
+| 2 | Wintun 읽기 이벤트 | `WintunGetReadWaitEvent(session)` | Phase 6 이후 |
+| 3 | 콘솔 명령 이벤트 | `CreateEvent` (자동 리셋). `[console]`이 신호 | Phase 1~5 |
+
+**위 번호는 논리적 순위이지 배열 인덱스가 아니다.** `WaitForMultipleObjects`는 유효한 핸들이 빈틈없이 채워진 배열을 요구한다. 빈자리에 `NULL`을 넣으면 `WAIT_FAILED`가 난다. 구성이 바뀌는 시점마다 살아 있는 핸들만 모아 조밀한 배열을 만들고, 논리적 출처에서 실제 인덱스로 가는 대응표를 따로 둔다. Phase 1~5에는 Wintun 이벤트가 없어 배열 길이가 3이다.
+
+`timeout_ms`는 아래처럼 계산한다. **뺄셈을 먼저 하면 안 된다.** `GetTickCount64()`는 부호 없는 값이라 마감이 이미 지났을 때 뺄셈이 언더플로해 거대한 값이 되고, `DWORD`로 좁히면 `0xFFFFFFFF`, 즉 `INFINITE`에 착지할 수 있다. 그러면 루프가 영원히 깨지 않는다.
+
+```text
+next_timeout:
+    if 대기 중인 타이머 없음:  return INFINITE
+    t = now()                              # 한 번만 읽는다
+    d = next_deadline()
+    if d <= t:                return 0
+    return (DWORD) min(d - t, INFINITE - 1)
+```
+
+`now()`를 두 번 부르면 안 된다. 비교와 뺄셈 사이에 시계가 `d`를 지나가면 언더플로해서 타임아웃이 약 49.7일이 되고, 루프가 사실상 멈춘다.
+
+`WSAPoll`을 쓰지 않는 이유는 Wintun 읽기 대기가 소켓이 아니라 Win32 이벤트 핸들이기 때문이다. 소켓과 이벤트 핸들을 한 번의 대기에 섞으려면 `WaitForMultipleObjects`여야 한다. `WSAEventSelect`는 소켓을 자동으로 논블로킹 모드로 바꾸므로 `ioctlsocket(FIONBIO)`를 따로 부르지 않는다.
+
+#### 3.2.3 루프 한 바퀴
+
+```text
+busy = false
+loop:
+    r = WaitForMultipleObjects(n, handles, FALSE, busy ? 0 : next_timeout())
+
+    if r == WAIT_FAILED:                      # 복구 불가
+        로그 후 shutdown(); break             # 정상 경로와 같은 정리를 거친다
+    if r == WAIT_OBJECT_0 + idx(SHUTDOWN):
+        shutdown(); break
+
+    WSAEnumNetworkEvents(sock, udp_ev, &ne)   # 소켓 이벤트를 리셋한다. 필수
+    u = drain_udp(MAX_DRAIN)                  # r로 분기하지 않는다
+    w = drain_wintun(MAX_DRAIN)
+    if w == RESTART:
+        어댑터 세션 재생성 -> 실패하면 shutdown(); break
+        성공하면 살아 있는 핸들로 배열과 인덱스 대응표 재구성
+    drain_console()
+    run_expired_timers(now())
+    busy = (u == BUDGET) or (w == BUDGET)
+```
+
+`WAIT_FAILED`도 `shutdown()`을 거친다. 여기서 바로 빠져나가면 `CLOSE` 송신과 어댑터 정리를 건너뛰어 상대는 50초 동안 죽은 세션을 붙들고 어댑터와 라우트가 남는다. **비정상 종료야말로 정리가 필요한 경우다.**
+
+**`WSAEnumNetworkEvents`를 반드시 부른다.** `WSAEventSelect`가 만드는 이벤트는 수동 리셋이고, `recvfrom`은 `FD_READ` 통지를 재무장할 뿐 이미 신호된 이벤트 객체를 리셋하지 않는다. 이 호출을 빠뜨리면 첫 데이터그램 이후 이벤트가 계속 신호 상태로 남아 `WaitForMultipleObjects`가 매번 즉시 반환하고, 루프가 CPU를 태우며 스핀한다. 이 호출이 이벤트 리셋과 네트워크 이벤트 조회를 한 번에 처리한다.
+
+**`r`로 분기하지 않는다.** `bWaitAll = FALSE`인 `WaitForMultipleObjects`는 신호된 핸들 중 **가장 낮은 인덱스 하나만** 반환한다. 반환값으로 분기하면 UDP 이벤트가 계속 신호되는 동안 그보다 뒤에 놓인 Wintun 이벤트가 굶는다. 게임 트래픽이 많을 때가 정확히 그 상황이다. 매 바퀴 양쪽을 모두 비우면 인덱스 순서와 무관해지고, 비어 있을 때의 비용은 `WSAEWOULDBLOCK` 하나와 `ERROR_NO_MORE_ITEMS` 하나뿐이다.
+
+**두 drain은 예산을 가진다.** 예산 없이 비어질 때까지 돌면, 도착 속도가 처리 속도보다 빠를 때 `drain_udp`가 영원히 반환하지 않고 타이머가 한 번도 돌지 않는다. keepalive와 `HELLO` 재전송이 멈추고, 바로 위에서 세운 "수신 먼저, 타이머 나중" 순서가 "타이머는 절대 안 돈다"로 변한다. `MAX_DRAIN`은 한 바퀴당 소스별 64개다. 1472바이트 기준 94KB이고 파싱과 송신 비용이 1ms 미만이라, 가장 짧은 타이머(200ms `HELLO` 재전송) 대비 무시할 수 있다. 예산에 걸려 멈추면 `busy`가 참이 되어 다음 대기가 타임아웃 0으로 즉시 반환한다. 남은 데이터는 다음 바퀴에 처리되고 **그 사이에 타이머가 한 번 돈다.**
+
+```text
+drain_udp(budget) -> {EMPTY, BUDGET}:
+    budget회 반복:
+        n = recvfrom(sock, buf, MAX_DATAGRAM, &src)
+        if n < 0:
+            e = WSAGetLastError()
+            if e == WSAEWOULDBLOCK:  return EMPTY      # 소스가 비었다
+            카운터 증가 후 return EMPTY                 # 소켓은 계속 사용한다
+        classify(buf, n, src)                          # protocol.md 7장
+    return BUDGET                                      # 예산 소진. 아직 남았다
+```
+
+`FD_READ`는 레벨 성격이다. `recvfrom` 후에도 데이터가 남아 있으면 이벤트가 다시 신호되므로, 한 바퀴에 한 개만 읽어도 데이터그램을 잃지는 않는다. **비우는 이유는 정확성이 아니라 비용이다.** 데이터그램마다 대기와 `WSAEnumNetworkEvents`를 왕복하면 깨어남 횟수가 수신 패킷 수만큼 늘고 타이머 처리도 그만큼 밀린다. 정확성 요건은 위의 `WSAEnumNetworkEvents` 호출이고, 비우기는 그 위에 얹는 배칭 정책이다.
+
+```text
+drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
+    if session == NULL:  return EMPTY                  # Phase 1~5. 어댑터가 없다
+    budget회 반복:
+        p = WintunReceivePacket(session, &size)
+        if p == NULL:
+            e = GetLastError()
+            ERROR_NO_MORE_ITEMS -> return EMPTY         # 링이 비었다. 정상
+            ERROR_HANDLE_EOF    -> 종료 이벤트 신호 후 return EMPTY
+            ERROR_INVALID_DATA  -> return RESTART       # 링 손상. 아래 참조
+            그 외                -> 카운터 증가 후 return EMPTY
+        guard = 스코프 이탈 시 WintunReleaseReceivePacket(session, p)
+        route_and_send(p, size)
+    return BUDGET
+```
+
+`WintunReleaseReceivePacket`은 **스코프 가드로 건다.** 호출 순서상 `route_and_send` 뒤에 두면 그 안에서 조기 반환하거나 예외가 나갈 때 링 패킷이 샌다. 한 번 빠뜨릴 때마다 링 버퍼가 영구히 그만큼 줄고 결국 수신이 멈춘다.
+
+`RESTART`는 `[loop]`가 처리한다. 링이 손상되면 세션을 새로 만들어야 하는데, **새 세션은 새 읽기 이벤트 핸들을 준다.** 따라서 세션 재생성과 대기 배열 재구성이 한 묶음이다. `drain_wintun` 안에서 재시작하면 자기가 방금 무효화한 핸들을 호출자가 계속 기다리게 된다. 재생성이 실패하면 어댑터 없이 계속 도는 대신 `shutdown()`으로 간다. 배열은 조밀하게 다시 만들어지므로 Wintun 핸들이 그냥 빠질 뿐 대기 자체는 정상 동작한다. 그래서 더 위험하다. **터널이 죽은 채 살아 있는 척한다.** 세션은 `CONNECTED`로 남고 keepalive도 계속 나가지만 게임 패킷은 한 개도 흐르지 않는다.
+
+`drain_console`은 `[console]`이 큐에 넣은 명령 줄을 비운다. 이벤트가 자동 리셋이라 별도 리셋 호출이 필요 없다. Phase 6 이후에는 이 핸들도 스레드도 사라진다.
+
+Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀한 뒤 이벤트를 기다리라고 권한다. **스핀하지 않는다.** 이 루프는 타이머도 책임지므로 스핀이 keepalive와 `HELLO` 재전송을 그만큼 지연시킨다. 스핀은 처리량 최적화이고 우리 목표는 지연(NFR-1)이다. Phase 7 실측에서 수신이 병목으로 나오면 그때 재검토한다.
+
+#### 3.2.4 타이머
+
+- 단조 시계는 `GetTickCount64()`를 쓴다. 밀리초 단위 64비트라 실질적으로 랩어라운드가 없다(약 5.8억 년). RTT 측정만 `QueryPerformanceCounter`를 쓰고, **두 시계의 값을 서로 비교하지 않는다.**
+- 타이머 집합이 작다. 세션당 6개 내외이고 최소 범위에서 세션은 하나다. 매 바퀴 선형 주사로 가장 이른 마감을 구한다. 타이머 휠은 필요 없다.
+- [`protocol.md`](protocol.md) 11장은 마감 비교에 엄격 부등호를 쓰고, 우선순위를 **꺼낸 시각** 기준으로 정의한다. 같은 바퀴에 꺼낸 수신 이벤트가 그 바퀴의 타이머보다 먼저 처리된다. **수신을 먼저 비우고 타이머를 나중에 도는 이 루프 순서가 그 규칙의 구현이다.** 도착 시각 기준이 아닌 이유는 drain 예산 때문이고, 그 근거는 protocol.md 11장에 있다.
+
+#### 3.2.5 상태 소유
+
+다음은 전부 `[loop]`가 단독 소유한다. 뮤텍스도 원자 변수도 쓰지 않는다. 필요가 없어서다.
+
+세션 상태 머신, `session_epoch`, 송신 `sequence`, 재생 방지 비트맵, `peer_endpoint`, 마지막 수신 시각, 후보 목록, `pending_pings`, 모든 폐기 카운터.
+
+**송신 `sequence` 증가는 반드시 `[loop]`에서만 일어난다.** `DATA`와 `KEEPALIVE`가 같은 카운터를 쓰므로 두 스레드에서 증가시키면 같은 번호를 단 패킷 두 개가 나간다. 받는 쪽 중복 억제([`protocol.md`](protocol.md) 4.5)는 뒤엣것을 정확히 버린다. 자기가 만든 위조 중복이다.
+
+어떤 구조체에도 "스레드 안전"이라는 주석을 붙이지 않는다. 단일 소유가 유일한 규칙이고, 예외를 하나 허용하는 순간 규칙이 사라진다.
+
+#### 3.2.6 텔레메트리 격리
+
+`[telemetry]`가 별도 스레드인 이유는 병렬성이 아니라 **격리**다.
+
+- `[loop]`는 고정 크기 SPSC 링 버퍼에 레코드를 넣는다. 생산자 하나, 소비자 하나뿐이라 원자 head/tail만으로 **락 없이** 구현된다. 가득 차면 **새 레코드를 버리고** 유실 카운터를 올린다. 대기 없음, 실패 보고 없음.
+- 가장 오래된 것을 버리는 쪽이 지표 품질로는 낫지만, 그러려면 생산자가 소비자의 tail을 움직여야 해서 락이 필요하다. **지표 하나 더 살리자고 `[loop]`에 락을 들이지 않는다.** 뮤텍스로도 임계 구역이 짧아 실제로는 거의 안 막히겠지만, "거의"는 보장이 아니다. 소비자가 락을 쥔 채 스케줄에서 밀리면 `[loop]`가 그만큼 멈춘다.
+- **데이터 평면에 락이 하나도 없다.**
+- `[telemetry]`가 큐를 비워 제어 평면에 올린다. 업로드가 블록되든 실패하든 `[loop]`와 무관하다.
+- 텔레메트리는 제어 평면 TCP 소켓을 쓴다. [`protocol.md`](protocol.md) 6장의 단일 소켓 제약은 **UDP 데이터 평면에만** 적용된다.
+
+Phase 5의 "제어 서버 중단 10분" 시험(NFR-3)은 이 격리 없이는 통과할 수 없다. 4스레드 안에서는 응답하지 않는 제어 평면으로의 TCP 업로드가 타이머 스레드를 수십 초 막고, 그 사이 keepalive가 나가지 않아 NAT 매핑이 만료된다. 제어 평면 장애가 터널을 끊는다.
+
+#### 3.2.7 종료
+
+- `[telemetry]`는 `WaitForSingleObject(shutdown_ev, 1000)`으로 1초마다 깨어 큐를 비운다. push마다 이벤트를 신호하지 않는다. 종료 이벤트는 수동 리셋이라 신호되는 즉시 이 대기도 함께 깨운다.
+- `[telemetry]`는 업로드 소켓에 `SO_SNDTIMEO` / `SO_RCVTIMEO` 1.5초를 건다. 업로드와 업로드 사이마다 종료 이벤트를 확인한다. 3초로 잡으면 진행 중인 업로드 하나가 아래 2초 join 상한을 넘어설 수 있다.
+- `SetConsoleCtrlHandler`가 종료 이벤트를 신호한다. **핸들러는 `[loop]` 소유 상태를 절대 건드리지 않는다.** 다른 스레드 컨텍스트에서 실행되기 때문이다.
+- **제어 신호 종류에 따라 반환 시점이 다르다.** `CTRL_C_EVENT`와 `CTRL_BREAK_EVENT`는 이벤트를 신호하고 즉시 `TRUE`를 반환하면 된다. 그러나 `CTRL_CLOSE_EVENT`, `CTRL_LOGOFF_EVENT`, `CTRL_SHUTDOWN_EVENT`는 **핸들러가 반환하는 순간 Windows가 프로세스를 종료한다.** 신호만 하고 돌아오면 `CLOSE` 송신도 어댑터 정리도 실행되지 않는다. 이 세 경우에는 종료 이벤트를 신호한 뒤 정리 완료 이벤트를 OS 유예 시간 안쪽(3초)까지 기다렸다가 반환한다. 콘솔 창을 닫는 것은 이 프로그램의 정상적인 종료 방법이므로 예외 처리가 아니라 주 경로다.
+- `[loop]`의 `shutdown()`은 순서대로 (1) 종료 이벤트 신호(아직 안 됐으면), (2) 세션마다 `CLOSE` 1회 송신([`protocol.md`](protocol.md) 5.6), (3) 어댑터 세션 종료, (4) 어댑터/주소/라우트 정리, (5) **정리 완료 이벤트 신호**, (6) `[telemetry]` join을 수행한다.
+- **큐에 종료 표식을 넣지 않는다.** 큐는 가득 차면 새 항목을 버리므로 하필 그때 표식이 버려지면 `[telemetry]`가 종료를 영영 못 본다. 종료는 큐 밖의 이벤트로만 전달한다.
+- **정리가 join보다 먼저다.** 이 순서 덕분에 콘솔 핸들러는 텔레메트리를 기다리지 않고 반환할 수 있고, OS가 그 시점에 프로세스를 죽여도 잃는 것은 지표 몇 건뿐이다.
+- join 상한은 2초다. 넘기면 남은 레코드를 포기하고 join을 건너뛴 채 `_exit`로 즉시 끝낸다. 정리가 (5)에서 이미 끝났으므로 안전하다. **상한을 실제로 강제하는 것은 소켓 타임아웃이 아니라 이 `_exit`다.** 소켓 타임아웃은 흔한 경우를 깔끔하게 끝내줄 뿐이고, 어떤 경우에도 종료가 제어 평면 가용성에 인질 잡히지 않게 하는 것은 `_exit`다.
+- 어댑터, 가상 IP 주소, 라우트의 정리와 비정상 종료 후 잔존물 처리는 후속 3번에서 다룬다.
+
+---
+
+### 3.3 제어 평면 (Python)
 
 | 모듈 | 책임 |
 |------|------|
@@ -292,13 +440,13 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 | RTT | `PING`/`PONG` 주기 측정 | 지연 분석 |
 | 패킷 손실률 | `sequence` 간격 누락 집계 | 품질 분석 |
 | 지터 | 연속 RTT 편차 | 품질 분석 |
-| keepalive 로컬 송신 오류 | 타이머 스레드 | 안정성 분석. 로컬 `sendto` 오류만 세며 전달 실패의 근거가 아니다. 그래서 단절 판정은 유휴 타임아웃으로 한다 |
+| keepalive 로컬 송신 오류 | `[loop]` 송신 경로 | 안정성 분석. 로컬 `sendto` 오류만 세며 전달 실패의 근거가 아니다. 그래서 단절 판정은 유휴 타임아웃으로 한다 |
 | 유휴 타임아웃 발생 횟수 | 수신 경로 | 안정성 분석 |
 | 직접 연결 유지 시간 | `CONNECTED` 지속 구간 | 안정성 분석 |
 | 터널 처리량 | 송수신 바이트 카운터 | 성능 분석 |
 | 세션 지속 시간 | 게임 세션 전체 | Minecraft 안정성 |
 
-클라이언트는 로컬에 먼저 쌓고 주기적으로 제어 평면에 보낸다. 제어 평면 장애가 데이터 평면에 영향을 주지 않도록 전송 실패는 무시하고 다음 주기에 재시도한다.
+클라이언트는 로컬 링 버퍼에 먼저 쌓고 전용 스레드가 주기적으로 제어 평면에 보낸다. 업로드는 데이터 평면과 완전히 분리되어 있어 제어 평면 장애가 터널에 영향을 주지 않는다. 격리 구조는 3.2.6에 있다.
 
 ---
 

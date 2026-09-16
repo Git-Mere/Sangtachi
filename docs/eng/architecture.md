@@ -61,7 +61,7 @@ If the control plane goes down, **already established P2P tunnels must keep work
 
 | Module | Responsibility | External dependency |
 |--------|----------------|---------------------|
-| `network/udp_socket` | Winsock2 init/teardown, UDP socket creation, non-blocking send/receive, `WSAPoll`-based waiting | Winsock2 |
+| `network/udp_socket` | Winsock2 init/teardown, UDP socket creation, non-blocking send/receive, event handle exposure (3.2) | Winsock2 |
 | `network/endpoint` | `IP:Port` value type, parsing, comparison, serialization | none |
 | `network/stun_client` | STUN Binding Request construction, transaction ID management, response parsing, `XOR-MAPPED-ADDRESS` decoding, timeout/retry | none (RFC 5389 implemented directly) |
 | `peer/peer` | Peer identifier, virtual IP, candidate endpoint list | none |
@@ -74,22 +74,170 @@ If the control plane goes down, **already established P2P tunnels must keep work
 | `telemetry/telemetry` | Metric collection, local buffering, upload to control plane | none |
 | `control/control_client` | Control plane REST/JSON calls | Winsock2 |
 
-The client is a single process. The initial version assumes the following thread layout.
-
-```text
-[main]        initialization, state machine, shutdown
-[net_rx]      UDP socket receive loop -> tunnel dispatch
-[tun_rx]      Wintun read loop -> routing -> UDP send
-[timer]       keepalive, PING/PONG, retries, telemetry flush
-```
-
-In Phases 1 through 5 there is no `[tun_rx]`; `[main]` feeds console input instead.
+The client is a single process. The thread layout and state ownership are in 3.2.
 
 **All UDP sends and receives share one local socket, and that socket is owned exclusively by a single receive loop.** Using different sockets makes the NAT map a different public port for each, so the endpoint discovered through STUN does not apply to the tunnel. This constraint must hold from Phase 2 onward.
 
 Sharing the socket means STUN responses and tunnel packets arrive in the same queue. If the STUN client calls `recvfrom` itself, the two readers steal each other's packets. The STUN client only registers a request and receives the response from the receive loop. The classification rule and the required socket options (`SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, never calling `connect()`) are in sections 5 and 6 of [`protocol.md`](protocol.md).
 
-### 3.2 Control Plane (Python)
+### 3.2 Concurrency Model
+
+**All code that touches tunnel state runs on a single thread.** Rather than sharing state under a lock, we do not share it.
+
+The initial layout was four threads: `[main]`, `[net_rx]`, `[tun_rx]`, `[timer]`. It was discarded for two reasons. First, four threads mutate session state and the outbound `sequence` with no synchronization. Second, telemetry upload shares the timer thread, so a control-plane outage stops keepalives. The second violates NFR-3 at design time.
+
+#### 3.2.1 Threads
+
+| Thread | Responsibility | Shared state |
+|--------|----------------|--------------|
+| `[loop]` | UDP receive, Wintun receive, console commands, timers, session state, routing, all sends | **No tunnel state.** It shares only the telemetry queue and the shutdown/cleanup events |
+| `[telemetry]` | Drains the metrics queue, uploads to the control plane | One queue |
+| `[console]` | Reads standard input. Phase 1-5 scaffolding | One command queue |
+
+Phase 6 onward uses two threads; Phases 1-5 use three. `[loop]` is the process main thread. `[console]` exists only in Phases 1-5: `[loop]` cannot block on standard input, so a separate thread reads it and pushes into a queue. When the adapter arrives in Phase 6 the Wintun read event joins `[loop]`'s wait set directly, so no thread is added.
+
+#### 3.2.2 Waiting
+
+```text
+WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
+```
+
+| Rank | Handle | Created by | Valid during |
+|------|--------|------------|--------------|
+| 0 | Shutdown event | `CreateEvent` (manual reset) | Always |
+| 1 | UDP socket event | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | Always |
+| 2 | Wintun read event | `WintunGetReadWaitEvent(session)` | Phase 6 onward |
+| 3 | Console command event | `CreateEvent` (auto reset), signaled by `[console]` | Phases 1-5 |
+
+**These numbers are a logical rank, not array indices.** `WaitForMultipleObjects` requires an array of valid handles with no gaps; a `NULL` in an empty slot produces `WAIT_FAILED`. Whenever the set changes, build a compact array of the live handles only and keep a separate map from logical source to actual index. In Phases 1-5 there is no Wintun event, so the array length is 3.
+
+`timeout_ms` is computed as below. **Do not subtract first.** `GetTickCount64()` is unsigned, so if the deadline has already passed the subtraction underflows into a huge value, and narrowing it to `DWORD` can land on `0xFFFFFFFF`, which is `INFINITE`. The loop would then never wake again.
+
+```text
+next_timeout:
+    if no timer pending:  return INFINITE
+    t = now()                            # read once
+    d = next_deadline()
+    if d <= t:            return 0
+    return (DWORD) min(d - t, INFINITE - 1)
+```
+
+Do not call `now()` twice. If the clock passes `d` between the comparison and the subtraction, the subtraction underflows, the timeout becomes about 49.7 days, and the loop effectively stops.
+
+`WSAPoll` is not used because the Wintun read wait is a Win32 event handle, not a socket. Mixing a socket and an event handle into one wait requires `WaitForMultipleObjects`. `WSAEventSelect` puts the socket into non-blocking mode automatically, so `ioctlsocket(FIONBIO)` is not called separately.
+
+#### 3.2.3 One iteration
+
+```text
+busy = false
+loop:
+    r = WaitForMultipleObjects(n, handles, FALSE, busy ? 0 : next_timeout())
+
+    if r == WAIT_FAILED:                      # unrecoverable
+        log, shutdown(); break                # same cleanup as the normal path
+    if r == WAIT_OBJECT_0 + idx(SHUTDOWN):
+        shutdown(); break
+
+    WSAEnumNetworkEvents(sock, udp_ev, &ne)   # resets the socket event. required
+    u = drain_udp(MAX_DRAIN)                  # do not branch on r
+    w = drain_wintun(MAX_DRAIN)
+    if w == RESTART:
+        recreate the adapter session -> on failure shutdown(); break
+        on success rebuild the array and index map from the live handles
+    drain_console()
+    run_expired_timers(now())
+    busy = (u == BUDGET) or (w == BUDGET)
+```
+
+`WAIT_FAILED` goes through `shutdown()` too. Exiting directly there skips the `CLOSE` send and the adapter cleanup, so the peer holds a dead session for 50 seconds and the adapter and routes are left behind. **An abnormal exit is exactly the case that needs cleanup.**
+
+**`WSAEnumNetworkEvents` must be called.** The event `WSAEventSelect` creates is manual-reset, and `recvfrom` only re-arms the `FD_READ` notification; it does not reset an already-signaled event object. Omit this call and the event stays signaled after the first datagram, `WaitForMultipleObjects` returns immediately every time, and the loop spins burning CPU. This one call handles both the event reset and the network event lookup.
+
+**Do not branch on `r`.** With `bWaitAll = FALSE`, `WaitForMultipleObjects` returns **only the lowest signaled index**. Branching on the return value starves the Wintun event for as long as the UDP event, which ranks ahead of it, keeps signaling. That is exactly what happens under heavy game traffic. Draining both every iteration makes index order irrelevant, and the cost when both are empty is one `WSAEWOULDBLOCK` and one `ERROR_NO_MORE_ITEMS`.
+
+**Both drains carry a budget.** Without one, draining until empty means `drain_udp` never returns whenever arrival outpaces processing, and the timers never run at all. Keepalives and `HELLO` retransmits stop, and the "receives first, timers last" ordering established just above turns into "timers never run". `MAX_DRAIN` is 64 per source per iteration. At 1472 bytes that is 94 KB, and parsing plus sending costs under 1 ms, which is negligible against the shortest timer (the 200 ms `HELLO` retransmit). If a drain stops on its budget, `busy` becomes true and the next wait returns immediately with a zero timeout. The remaining data is handled on the next iteration, and **a timer pass happens in between.**
+
+```text
+drain_udp(budget) -> {EMPTY, BUDGET}:
+    repeat budget times:
+        n = recvfrom(sock, buf, MAX_DATAGRAM, &src)
+        if n < 0:
+            e = WSAGetLastError()
+            if e == WSAEWOULDBLOCK:  return EMPTY      # source is empty
+            count and return EMPTY                     # the socket stays in use
+        classify(buf, n, src)                          # protocol.md section 7
+    return BUDGET                                      # budget spent, more remains
+```
+
+`FD_READ` is level-like. If data remains after a `recvfrom`, the event is signaled again, so reading one datagram per iteration does not lose datagrams. **Draining is about cost, not correctness.** A wait plus a `WSAEnumNetworkEvents` round trip per datagram scales wakeups with the received packet count and pushes timer handling back by the same amount. The correctness requirement is the `WSAEnumNetworkEvents` call above; draining is a batching policy layered on top of it.
+
+```text
+drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
+    if session == NULL:  return EMPTY                  # Phases 1-5, no adapter
+    repeat budget times:
+        p = WintunReceivePacket(session, &size)
+        if p == NULL:
+            e = GetLastError()
+            ERROR_NO_MORE_ITEMS -> return EMPTY         # ring is empty, normal
+            ERROR_HANDLE_EOF    -> signal shutdown event and return EMPTY
+            ERROR_INVALID_DATA  -> return RESTART       # ring corrupt, see below
+            otherwise           -> count and return EMPTY
+        guard = release WintunReleaseReceivePacket(session, p) on scope exit
+        route_and_send(p, size)
+    return BUDGET
+```
+
+`WintunReleaseReceivePacket` goes in **a scope guard.** Placing the call after `route_and_send` leaks the ring packet whenever routing returns early or throws. Every miss permanently shrinks the ring buffer by that much, and receive eventually stops.
+
+`RESTART` is handled by `[loop]`. A corrupt ring requires a new session, and **a new session hands out a new read event handle.** Session recreation and wait-array rebuild are therefore one unit. Restarting inside `drain_wintun` would leave the caller waiting on a handle it just invalidated. If recreation fails, go to `shutdown()` rather than continue without an adapter. The array is rebuilt compactly, so the Wintun handle simply drops out and the wait keeps working normally. That is what makes it dangerous: **the tunnel is dead but pretends to be alive.** The session stays `CONNECTED` and keepalives keep flowing while not a single game packet moves.
+
+`drain_console` drains the command lines `[console]` pushed into the queue. The event is auto-reset, so no separate reset call is needed. Both the handle and the thread disappear from Phase 6 onward.
+
+The Wintun documentation suggests spinning on `ERROR_NO_MORE_ITEMS` for a while under heavy load before waiting on the event. **We do not spin.** This loop also owns the timers, so spinning delays keepalives and `HELLO` retransmits by that much. Spinning is a throughput optimization and our target is latency (NFR-1). Revisit if Phase 7 measurements show receive as the bottleneck.
+
+#### 3.2.4 Timers
+
+- The monotonic clock is `GetTickCount64()`: milliseconds, 64-bit, so no wraparound in practice (about 584 million years). Only RTT measurement uses `QueryPerformanceCounter`, and **values from the two clocks are never compared against each other.**
+- The timer set is small: roughly six per session, and the minimum scope has one session. A linear scan each iteration finds the earliest deadline. No timer wheel is needed.
+- Section 11 of [`protocol.md`](protocol.md) requires strict inequality on deadline comparisons and defines priority by **dequeue time**: a receive event dequeued in a given iteration is handled ahead of that iteration's timer expiry. **Draining receives first and running timers last is the implementation of that rule.** Why dequeue time rather than arrival time is the drain budget, and the reasoning is in protocol.md section 11.
+
+#### 3.2.5 State ownership
+
+All of the following is solely owned by `[loop]`. No mutex, no atomic. None is needed.
+
+The session state machine, `session_epoch`, the outbound `sequence`, the replay bitmap, `peer_endpoint`, the last-receive timestamp, the candidate list, `pending_pings`, and every drop counter.
+
+**Incrementing the outbound `sequence` must happen only on `[loop]`.** `DATA` and `KEEPALIVE` share the counter, so incrementing it from two threads sends two packets carrying the same number. The receiver's duplicate suppression ([`protocol.md`](protocol.md) 4.5) correctly discards the second one. It is a forged duplicate of our own making.
+
+No struct gets a "thread-safe" comment. Single ownership is the only rule, and the rule disappears the moment one exception is allowed.
+
+#### 3.2.6 Telemetry isolation
+
+`[telemetry]` is a separate thread for **isolation**, not parallelism.
+
+- `[loop]` pushes records into a fixed-size SPSC ring buffer. With exactly one producer and one consumer it is implemented **lock-free** with atomic head and tail. When it is full, **the new record is dropped** and a loss counter is incremented. No waiting, no failure reported.
+- Dropping the oldest would be better for metric quality, but that requires the producer to move the consumer's tail, which requires a lock. **We do not put a lock on `[loop]` to save one more metric.** A mutex would rarely block given how short the critical section is, but "rarely" is not a guarantee: if the consumer is descheduled holding the lock, `[loop]` stalls for that long.
+- **There is no lock anywhere in the data plane.**
+- `[telemetry]` drains the queue and uploads to the control plane. Whether the upload blocks or fails is irrelevant to `[loop]`.
+- Telemetry uses a control-plane TCP socket. The single-socket constraint in section 6 of [`protocol.md`](protocol.md) applies **to the UDP data plane only**.
+
+The Phase 5 "control server down for 10 minutes" test (NFR-3) cannot pass without this isolation. Under the four-thread layout, a TCP upload to an unresponsive control plane blocks the timer thread for tens of seconds; no keepalive goes out during that window and the NAT mapping expires. A control-plane outage takes the tunnel down with it.
+
+#### 3.2.7 Shutdown
+
+- `[telemetry]` wakes once a second via `WaitForSingleObject(shutdown_ev, 1000)` and drains the queue. No event is signaled per push. The shutdown event is manual-reset, so signaling it wakes this wait at the same time.
+- `[telemetry]` sets `SO_SNDTIMEO` and `SO_RCVTIMEO` to 1.5 seconds on the upload socket and checks the shutdown event between uploads. At 3 seconds a single in-flight upload could outlast the 2-second join bound below.
+- `SetConsoleCtrlHandler` signals the shutdown event. **The handler never touches `[loop]`-owned state**, because it runs on another thread's context.
+- **When the handler returns depends on the control signal.** For `CTRL_C_EVENT` and `CTRL_BREAK_EVENT` it may signal the event and return `TRUE` immediately. But for `CTRL_CLOSE_EVENT`, `CTRL_LOGOFF_EVENT`, and `CTRL_SHUTDOWN_EVENT`, **Windows terminates the process the moment the handler returns.** Signaling and returning would skip both the `CLOSE` send and adapter cleanup. In those three cases the handler signals the shutdown event, then waits on a cleanup-complete event within the OS grace period (3 seconds) before returning. Closing the console window is a normal way to stop this program, so this is the main path, not an edge case.
+- `[loop]`'s `shutdown()` performs, in order: (1) signal the shutdown event if it is not already signaled, (2) one `CLOSE` per session ([`protocol.md`](protocol.md) 5.6), (3) close the adapter session, (4) clean up the adapter, address, and routes, (5) **signal the cleanup-complete event**, (6) join `[telemetry]`.
+- **No sentinel is pushed into the queue.** A full queue drops new entries, so a sentinel dropped at exactly that moment would leave `[telemetry]` never seeing the shutdown. Shutdown travels only on the out-of-band event.
+- **Cleanup comes before the join.** That ordering lets the console handler return without waiting on telemetry, and if the OS kills the process at that point all that is lost is a few metric records.
+- The `[telemetry]` join has a 2-second bound. If it is exceeded, the remaining records are abandoned and the process exits immediately via `_exit`, skipping the join. This is safe because cleanup already finished at step (5). **What actually enforces the bound is this `_exit`, not the socket timeouts.** The socket timeouts only make the common case exit cleanly; `_exit` is what keeps shutdown from ever being held hostage to control-plane availability.
+- Cleanup of the adapter, virtual IP address, and routes, along with leftovers from an abnormal exit, is covered by follow-up 3.
+
+---
+
+### 3.3 Control Plane (Python)
 
 | Module | Responsibility |
 |--------|----------------|
@@ -292,13 +440,13 @@ Each failure also records whatever NAT environment information is available (loc
 | RTT | periodic `PING`/`PONG` | latency analysis |
 | Packet loss rate | missing `sequence` gaps | quality analysis |
 | Jitter | deviation between consecutive RTTs | quality analysis |
-| Keepalive local send errors | timer thread | stability analysis. This counts local `sendto` errors only; it is not evidence of delivery failure, which is why disconnection is decided by idle timeout instead |
+| Keepalive local send errors | `[loop]` send path | stability analysis. This counts local `sendto` errors only; it is not evidence of delivery failure, which is why disconnection is decided by idle timeout instead |
 | Idle timeout events | receive path | stability analysis |
 | Direct connection uptime | duration in `CONNECTED` | stability analysis |
 | Tunnel throughput | send/receive byte counters | performance analysis |
 | Session duration | full game session | Minecraft stability |
 
-The client buffers locally first and uploads to the control plane periodically. Upload failures are ignored and retried on the next cycle so that a control plane outage never affects the data plane.
+The client buffers into a local ring buffer first and a dedicated thread uploads to the control plane periodically. The upload is fully separated from the data plane, so a control plane outage never affects the tunnel. The isolation structure is in 3.2.6.
 
 ---
 

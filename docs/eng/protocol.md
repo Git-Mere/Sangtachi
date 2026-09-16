@@ -257,7 +257,7 @@ Without `CLOSE`, a normal exit is indistinguishable from a crash and the peer ho
 
 ## 6. Socket Ownership
 
-**One local UDP socket, owned exclusively by one receive loop.**
+**One local UDP socket, owned exclusively by one receive loop.** That loop's thread layout, wait mechanism, and state ownership are in section 3.2 of [`architecture.md`](architecture.md).
 
 - The STUN client never calls `recvfrom` itself. It registers a request and receives the response from the receive loop. Two readers would consume each other's packets.
 - The socket is bound once at process start and kept until shutdown. Rebinding changes the NAT mapping.
@@ -550,7 +550,9 @@ What remains unprotected: an attacker using an address they can actually receive
 | `PING` | every 5 s | entering `CONNECTED` | each send | session end |
 | `pending_pings` sweep | before every insertion | - | - | - |
 
-Deadline comparisons are **strict**. A receive event arriving at or before the deadline is processed before the timer expiry.
+Deadline comparisons are **strict**. Priority is by **dequeue time**: a receive event dequeued in a given iteration is processed before that iteration's timer expiry.
+
+Dequeue time rather than arrival time, because the receive loop caps how many datagrams it handles per iteration ([`architecture.md`](architecture.md) 3.2.3). Draining without a cap means the timers never run at all. The cost is that a datagram arriving just before a deadline can slip to the next iteration and lose to the timer. While the loop keeps up with the load, that delay is under 1 ms, two orders of magnitude below the shortest deadline (200 ms). If the loop falls persistently behind, the socket buffer overflows and packets are dropped. That is overload, not a timer ordering problem.
 
 The idle timeout is **50 s** rather than 45 s because a keepalive is sent immediately on entering `CONNECTED`, giving four send opportunities within 45 s (at 0, 15, 30, and 45 s). At 45 s the last send would race the timeout. 50 s tolerates three losses and leaves room to recover on the fourth.
 

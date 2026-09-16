@@ -54,8 +54,8 @@ Status: `fixed` = resolved in this pass, `open` = tracked to a follow-up step.
 | 1 | magic/version/type values, nonce width, payload layouts, and byte offsets all undefined. No code can be written from the document | fixed, [`protocol.md`](protocol.md) sections 2 to 4 |
 | 2 | No session instance identifier, so a restart lets delayed packets from the previous process into the new session | fixed, `protocol.md` 3.2 (new `session_epoch`, header 16 -> 20 bytes) |
 | 3 | Receive ownership of the single socket and STUN/tunnel demultiplexing undefined. The STUN reader and the receive loop consume each other's packets | fixed, `protocol.md` sections 5 and 6 |
-| 4 | Four threads mutate session state, timers, and sequence values without synchronization, producing data races | partly fixed. Socket ownership is settled; the full concurrency model is follow-up 2 |
-| 5 | Telemetry upload shares the timer thread. During a control plane outage a blocking TCP upload stops keepalives, violating NFR-3 | open, follow-up 2 |
+| 4 | Four threads mutate session state, timers, and sequence values without synchronization, producing data races | fixed, `architecture.md` 3.2. A single event loop removes the shared state |
+| 5 | Telemetry upload shares the timer thread. During a control plane outage a blocking TCP upload stops keepalives, violating NFR-3 | fixed, `architecture.md` 3.2.6. Isolated onto a dedicated thread with a lossy queue |
 
 ### B. The hole punching algorithm was not actually designed
 
@@ -117,8 +117,8 @@ There is also a goal-level contradiction here. The project's central claim is th
 | Platform | Calling `connect()` filters out datagrams from other candidates | fixed, `protocol.md` section 5 |
 | Platform | `SO_REUSEADDR` makes delivery nondeterministic | fixed, `protocol.md` section 5 |
 | Platform | Local candidates advertising Wintun/Hyper-V/VPN addresses | fixed, `protocol.md` 8.1 |
-| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | open, follow-up 3 |
-| Platform | Without waiting on the read event and releasing packets, the loop spins or exits | open, follow-up 3 |
+| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | fixed, `architecture.md` 3.2.3. DLL packaging remains follow-up 3 |
+| Platform | Without waiting on the read event and releasing packets, the loop spins or exits | fixed, `architecture.md` 3.2.3 |
 | Platform | The on-link `/24` route already exists, so creating it again errors | open, follow-up 3 |
 | Platform | Starting tests while the address is still tentative causes intermittent failures | open, follow-up 3 |
 | Platform | EC2 public IP changes on restart | open, follow-up 3 |
@@ -138,13 +138,13 @@ There is also a goal-level contradiction here. The project's central claim is th
 | # | Work | Resolves | Status |
 |---|------|----------|--------|
 | 1 | Write the fixed `protocol.md` | blockers 1,2,3,6,7,8,9,10 plus 13 warnings | **done (2026-09-14)** |
-| 2 | Settle the concurrency model. A single event loop is recommended | blockers 4,5 | open |
-| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 8 warnings | open |
+| 2 | Settle the concurrency model. A single event loop | blockers 4,5 plus 2 warnings | **done (2026-09-15)** |
+| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 6 warnings | open |
 | 4 | Fix the spec logic errors: C-5 priorities, M-5 traceability, milestone rebalancing | blockers 18,19 plus 3 warnings | open |
 | 5 | Contingency for direct connection being impossible: a NAT emulation testbed, or promote a minimal relay to P1 | blocker 20 | open |
 | 6 | Loosen the over-tightened verification criteria | 2 warnings | open |
 
-Step 1 covers 40% of the blockers and half the warnings. Step 2 is next.
+Step 1 covered 40% of the blockers and half the warnings, and step 2 covered the two remaining concurrency blockers. Step 5 is recommended next. The rest can be fixed whenever, but blocker 20 leaves no time to recover if it surfaces mid-semester.
 
 ---
 
@@ -232,3 +232,42 @@ Fourth-round blockers:
 The fourth round of fixes is applied. No fifth review was run, so **no claim is made that nothing remains.** One more pass runs the next time this document is touched.
 
 The convergence trend (30 -> 5 -> 4) and the change in the character of the defects (design gaps -> side effects -> pseudocode precision) suggest the structural problems are resolved. That every fourth-round finding was a side effect of a third-round fix does show that rule 4 in section 6, defining the new contract a fix creates, is still not being followed closely enough.
+
+---
+
+## 8. Follow-up 2: Concurrency Model Review (2026-09-15)
+
+Section 3.2 of `architecture.md` was written and put through six rounds. Rounds 1 to 4 each used a different lens; rounds 5 and 6 were convergence checks.
+
+| Round | Lens | Blockers | Warnings |
+|-------|------|----------|----------|
+| 1 | Windows API correctness | 2 | 2 (plus 1 nit) |
+| 2 | Internal consistency and completeness of the design | 3 | 2 |
+| 3 | Side effects of the fixes, pseudocode precision | 2 | 4 |
+| 4 | What the third-round fixes broke | 1 | 2 (plus 1 nit) |
+| 5 | Convergence check (focused on the newly changed points) | 1 | 1 |
+| 6 | Convergence check (final) | 0 | 0 |
+
+**The first draft took 2 blockers.** Not calling `WSAEnumNetworkEvents`, which makes the loop spin burning CPU after the first datagram; and the console handler returning immediately on window close, which skips the `CLOSE` send and adapter cleanup entirely. Both would have surfaced in Phase 1.
+
+The three blockers in round 2 were heavier.
+
+| Defect | Fix |
+|--------|-----|
+| The drain loops had no cap, so whenever arrival outpaces processing the timers never run at all. Keepalives stop | A 64-per-source-per-iteration budget. Hitting the budget sets `busy` and re-enters immediately with a zero timeout |
+| `drain_wintun` was called unconditionally although Phases 1-5 have no adapter. The console event sat in the wait set with nothing servicing it, spinning the loop | Added a NULL session guard, added `drain_console`, made the console event auto-reset |
+| A mutex-protected queue paired with the claim that `[loop]` never blocks. If the consumer is descheduled holding the lock, that is false, and the roadmap criterion becomes unpassable | Replaced with a lock-free SPSC ring. When full, the new record is dropped |
+
+The third is an instance of rule 3 in section 6. **I wrote another criterion that a correct implementation cannot pass.**
+
+Rounds 3 and 4 were entirely side effects of my own fixes: calling `now()` twice so an underflow turns the timeout into 49.7 days; the `ERROR_INVALID_DATA` branch with no return, letting a `NULL` pointer through; pushing the shutdown sentinel into a lossy queue where a full moment discards it; a 3-second socket timeout outlasting the 2-second join bound and rendering it meaningless.
+
+The round-5 blocker was a different kind. Round 4 changed the timer ordering rule in protocol.md section 11 to dequeue time, but the surviving "arrival time" wording in `architecture.md` 3.2.4 was not changed with it. **The two documents stated different rules.** Rule 4 in section 6, missed again.
+
+Round 6 returned `LGTM - no blockers`. Unlike protocol.md, this one was carried to a confirmed convergence.
+
+### What this round taught
+
+protocol.md stopped at round 4 and made no claim that nothing remained. This time the rounds continued until one came back clean, and **round 5 did in fact surface one more cross-document contradiction.** Stopping at round 4 would have left it in place.
+
+Changing the lens across rounds 1 to 4 is what made it work. Six runs of the same prompt would have kept re-confirming what round 1 already caught.

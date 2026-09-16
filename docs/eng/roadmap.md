@@ -67,7 +67,8 @@ P4: Encryption + relay + GUI + extra platforms                          (stretch
 - Relocate the repository to the target layout (`src/` -> `client/src/`, create `control-server/`)
 - Set up the C++20 project with CMake
 - Wrap Winsock2 initialization and teardown (`WSAStartup` / `WSACleanup`)
-- Implement a UDP socket wrapper (`socket`, `bind`, `sendto`, `recvfrom`, `WSAPoll`)
+- Implement a UDP socket wrapper (`socket`, `bind`, `sendto`, `recvfrom`, `WSAEventSelect` event handle)
+- Implement the event loop skeleton: `WaitForMultipleObjects`, deadline computation, drain pattern ([`architecture.md`](architecture.md) 3.2)
 - Implement the endpoint representation type (parsing, comparison, printing)
 - Send and receive UDP packets between two known endpoints
 - Add basic logging
@@ -83,6 +84,8 @@ Client A <------ UDP ------> Client B
 - Bidirectional message exchange succeeds between two machines on the same LAN (or two processes on one machine)
 - Received content matches sent content byte for byte
 - On socket error the process does not die and logs the error code
+- Several datagrams arriving on one signal are handled in the same iteration (drain pattern works)
+- A periodic timer keeps expiring while receives arrive without pause (drain budget works). Verified by generating load above the budget
 - `cmake --build` succeeds without warnings
 
 ---
@@ -371,6 +374,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - Estimate jitter
 - Record tunnel traffic volume
 - Record session duration
+- Separate telemetry upload onto a dedicated thread with a lossy queue ([`architecture.md`](architecture.md) 3.2.6)
 - Test multiple network environments
 - Compare successful and failed NAT traversal cases (by observed mapping behavior, not by NAT type)
 - Visualize experimental results
@@ -393,6 +397,8 @@ A repeatable experiment set and data suitable for the final report and presentat
 
 ### Verification
 
+- Control plane outage test re-run: with telemetry enabled, taking the control server down keeps the tunnel up for 10 minutes (NFR-3). The Phase 5 test is repeated in the telemetry-enabled configuration
+- Recording a metric on `[loop]` does not block when the queue is full, and the loss counter increments
 - At least 10 repeated measurements per environment
 - Every failure record carries a per-stage code and NAT environment information
 - Success rate is aggregated by observed mapping behavior. No statement asserts a NAT type from RFC 5389 Binding results alone

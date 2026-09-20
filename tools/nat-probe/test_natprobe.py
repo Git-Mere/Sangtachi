@@ -80,13 +80,22 @@ cases.append(("정의되지 않은 종류 거부",
 cases.append(("종류 0 거부",
               np.parse_punch(struct.pack(np.PUNCH_FMT, np.PUNCH_MAGIC, 0, 1, 1, 1)) is None, None))
 _v = np.unsolicited_verdict
-cases.append(("양방향 통과", _v(5, 5, 10) == (True, "allowed", "allowed"), _v(5, 5, 10)))
-cases.append(("내 쪽만 통과", _v(5, 0, 10) == (True, "allowed", "blocked"), _v(5, 0, 10)))
-cases.append(("상대 쪽만 통과", _v(0, 5, 10) == (True, "blocked", "allowed"), _v(0, 5, 10)))
-cases.append(("상대가 단계를 안 돌면 blocked 라고 하지 않는다",
-              _v(0, 0, 10) == (False, "unknown", "unknown"), _v(0, 0, 10)))
+# _v(recv, ack_recv, sent, peer_ready, peer_sent)
+cases.append(("양방향 통과", _v(5, 5, 10, True, 10) == (True, "allowed", "allowed"), _v(5, 5, 10, True, 10)))
+cases.append(("내 쪽만 통과", _v(5, 0, 10, True, 10) == (True, "allowed", "blocked"), _v(5, 0, 10, True, 10)))
+cases.append(("상대 쪽만 통과", _v(0, 5, 10, True, 10) == (True, "blocked", "allowed"), _v(0, 5, 10, True, 10)))
+cases.append(("동기화 성공 + 양방향 차단 -> blocked/blocked",
+              _v(0, 0, 10, True, 10) == (True, "blocked", "blocked"), _v(0, 0, 10, True, 10)))
+cases.append(("동기화 실패 + 아무것도 못 받음 -> unknown",
+              _v(0, 0, 10, False, 0) == (False, "unknown", "unknown"), _v(0, 0, 10, False, 0)))
+cases.append(("동기화 실패해도 탐침이 왔으면 증거가 된다",
+              _v(5, 0, 10, False, 0) == (True, "allowed", "blocked"), _v(5, 0, 10, False, 0)))
 cases.append(("내가 한 발도 못 쏘면 상대를 blocked 라고 하지 않는다",
-              _v(5, 0, 0) == (True, "allowed", "unknown"), _v(5, 0, 0)))
+              _v(5, 0, 0, True, 10) == (True, "allowed", "unknown"), _v(5, 0, 0, True, 10)))
+cases.append(("상대가 한 발도 못 쐈으면 내 쪽을 blocked 라고 하지 않는다",
+              _v(0, 5, 10, True, 0) == (True, "unknown", "allowed"), _v(0, 5, 10, True, 0)))
+cases.append(("양쪽 다 못 쐈으면 둘 다 unknown",
+              _v(0, 0, 0, True, 0) == (True, "unknown", "unknown"), _v(0, 0, 0, True, 0)))
 
 # 입력 검증
 def raises(fn, *a, **kw):

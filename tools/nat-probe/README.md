@@ -127,6 +127,8 @@ python natprobe.py punch --label home-A --unsolicited
 | `unsolicited.recv` | 상대의 요청하지 않은 패킷이 **나에게** 도달한 수 |
 | `unsolicited.ack_recv` | 내 요청하지 않은 패킷이 **상대에게** 도달했다는 확인 수 |
 | `unsolicited.probe_local_port` | 시험에 쓴 새 소켓의 로컬 포트. 본 소켓과 달라야 의미가 있다 |
+| `unsolicited.sync.peer_ready` | 상대의 READY 를 받았는지. **판정의 핵심 증거다.** 탐침이 전부 막혀도 이 경로는 열려 있다 |
+| `unsolicited.peer_sent_reported` | 상대가 성공적으로 쏜 탐침 수. 상대가 READY 에 실어 보낸다 |
 | `unsolicited.peer_ran_phase` | 상대가 이 단계를 실제로 돌았는지 |
 | `unsolicited.inbound_unsolicited` | **내 쪽** 판정 |
 | `unsolicited.peer_inbound_unsolicited` | **상대 쪽** 판정 |
@@ -137,7 +139,11 @@ python natprobe.py punch --label home-A --unsolicited
 |----|-----|------|
 | `allowed` | 통과한다 | 목적지 의존 매핑을 쓰는 상대와도 연결될 수 있다 |
 | `blocked` | 막힌다 | 상대가 예상과 다른 포트로 응답하면 실패한다. **클라이언트가 방화벽 규칙을 등록해야 한다** |
-| `unknown` | 상대가 이 단계를 돌지 않았다 | 판정 불가. 양쪽이 같이 다시 돌린다 |
+| `unknown` | 상대가 이 단계를 돌지 않았거나, **쏜 쪽이 한 발도 못 보냈다** | 판정 불가. 양쪽이 같이 다시 돌린다 |
+
+**`blocked` 는 두 조건이 다 있어야 쓴다.** 상대가 단계에 들어왔고(`sync.peer_ready`), 쏜 쪽이
+한 발이라도 성공했어야 한다. 하나라도 없으면 `unknown` 이다. **증거 없는 `blocked` 는 없는
+결함을 만들어 낸다.**
 
 **`blocked`는 원인을 분해하지 못한다.** 집 안 NAT, 상위 ISP 필터링, 경로 중간 장비,
 호스트 방화벽 중 무엇이든 될 수 있다.

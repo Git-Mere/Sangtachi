@@ -612,18 +612,35 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
     }
 
 
-def unsolicited_verdict(recv: int, ack_recv: int, sent: int) -> tuple:
+def unsolicited_verdict(recv: int, ack_recv: int, sent: int,
+                       peer_ready: bool, peer_sent: int) -> tuple:
     """(상대가 단계를 돌았는가, 내 쪽 판정, 상대 쪽 판정).
 
     **상대가 이 단계를 돌았다는 증거가 있어야 `blocked` 라고 말할 수 있다.**
     증거가 없으면 `unknown` 이다. 상대가 구판을 쓰거나 `--unsolicited` 를 안 줬을 수도
     있는데, 그것을 차단으로 기록하면 없는 결함을 만들어 낸다.
 
-    **내가 실제로 한 발이라도 보냈어야 상대 쪽을 `blocked` 라고 할 수 있다.** 송신이
-    전부 실패했으면 상대가 막은 것이 아니라 내가 쏘지 못한 것이다.
+      peer_ready  상대의 READY 를 받았다. 상대가 단계에 들어왔다는 직접 증거다
+      recv        상대의 탐침이 나에게 도달했다
+      ack_recv    내 탐침이 상대에게 도달했다
+
+    `peer_ready` 를 빼면 **양쪽이 다 막혔을 때 `unknown` 이 나온다.** 그것이 바로
+    우리가 찾는 `blocked` 인데 증거가 없다고 판단해 버린다. READY 는 펀치로 이미 열린
+    경로로 오가므로 탐침이 전부 막혀도 도착한다. 그래서 유효한 증거다.
+
+    **다만 들어왔다는 것과 실제로 쐈다는 것은 다르다.** 각 방향마다 "쏜 쪽이 한 발이라도
+    성공했는가" 를 따로 요구한다. 송신이 전부 실패한 것을 수신 차단으로 기록하면 안 된다.
+
+      mine   내 수신 판정   -> 상대가 쐈어야(peer_sent > 0) blocked 라고 할 수 있다
+      theirs 상대 수신 판정 -> 내가 쐈어야(sent > 0) blocked 라고 할 수 있다
     """
-    peer_ran = (recv > 0) or (ack_recv > 0)
-    mine = "allowed" if recv > 0 else ("blocked" if peer_ran else "unknown")
+    peer_ran = bool(peer_ready) or (recv > 0) or (ack_recv > 0)
+    if recv > 0:
+        mine = "allowed"
+    elif peer_ran and peer_sent > 0:
+        mine = "blocked"
+    else:
+        mine = "unknown"
     if ack_recv > 0:
         theirs = "allowed"
     elif peer_ran and sent > 0:
@@ -633,10 +650,16 @@ def unsolicited_verdict(recv: int, ack_recv: int, sent: int) -> tuple:
     return peer_ran, mine, theirs
 
 
-def _send_ready(main_sock, peer, my_session) -> None:
+def _send_ready(main_sock, peer, my_session, sent_count: int = 0) -> None:
+    """READY 를 보낸다. seq 자리에 **지금까지 성공한 탐침 송신 수**를 싣는다.
+
+    상대가 단계에 들어왔다는 것만으로는 부족하다. 상대의 송신이 전부 실패했다면 내가
+    못 받은 것은 내 쪽이 막혀서가 아니다. 그 구분을 하려면 상대가 몇 발 쐈는지 알아야
+    한다. READY 는 펀치로 이미 열린 경로로 오가므로 탐침이 전부 막혀도 도착한다.
+    """
     try:
         main_sock.sendto(
-            build_punch(PUNCH_PHASE_READY, my_session, 0, time.monotonic_ns()), peer)
+            build_punch(PUNCH_PHASE_READY, my_session, sent_count, time.monotonic_ns()), peer)
     except OSError:
         pass
 
@@ -718,6 +741,7 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
     rejected = 0
     sent_probes: dict = {}   # seq -> ts_ns. 내가 실제로 보낸 것
     acked: set = set()
+    peer_sent = 0            # 상대가 READY 로 알려온 성공 송신 수
     sources: dict = {}
     ack_sources: dict = {}
 
@@ -756,7 +780,7 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
                     print(f"  [warn] sendto 실패: {exc}")
                 # 측정 중에도 READY 를 계속 보낸다. 상대가 나보다 늦게 단계에 들어오면
                 # 이것을 보고 맞춘다. 멈추면 늦은 쪽이 영영 나를 못 본다.
-                _send_ready(main_sock, peer, my_session)
+                _send_ready(main_sock, peer, my_session, sent)
                 next_send += UNSOL_INTERVAL_S
                 if next_send < now:
                     next_send = now + UNSOL_INTERVAL_S
@@ -775,7 +799,12 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
                 kind, rsession, rseq, ts_ns = parsed
                 key = f"{src[0]}:{src[1]}"
 
-                if sock is main_sock and kind == PUNCH_UNSOL:
+                if sock is main_sock and kind == PUNCH_PHASE_READY:
+                    # 상대의 성공 송신 수를 seq 자리에 싣고 온다. 본 엔드포인트에서
+                    # 오는 것이 정상이므로 src == peer 를 거부하지 않는다.
+                    if src[0] == peer[0] and (peer_session is None or rsession == peer_session):
+                        peer_sent = max(peer_sent, rseq)
+                elif sock is main_sock and kind == PUNCH_UNSOL:
                     if not authentic(src, rsession):
                         rejected += 1
                         continue
@@ -803,7 +832,8 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
     finally:
         probe.close()
 
-    peer_ran, mine, theirs = unsolicited_verdict(recv, ack_recv, sent)
+    peer_ran, mine, theirs = unsolicited_verdict(
+        recv, ack_recv, sent, sync["peer_ready"], peer_sent)
 
     return {
         "enabled": True,
@@ -817,6 +847,7 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
         "ack_recv": ack_recv,
         "ack_sources": sorted(ack_sources),
         "rejected": rejected,
+        "peer_sent_reported": peer_sent,
         "peer_ran_phase": peer_ran,
         "inbound_unsolicited": mine,
         "peer_inbound_unsolicited": theirs,
@@ -1056,6 +1087,8 @@ def main(argv=None) -> int:
                     if u.get("skipped"):
                         print(f"  건너뜀: {u['skipped']}")
                     else:
+                        print(f"  동기화: 상대 확인 {'예' if u['sync']['peer_ready'] else '아니오'}"
+                              f" ({u['sync']['sync_wait_ms']:.0f} ms 대기)")
                         print(f"  보냄 {u['sent']}, 받음 {u['recv']}, "
                               f"확인응답 {u['ack_recv']}, 인증 실패로 버림 {u['rejected']}")
                     print(f"  내 쪽 인바운드   : {u['inbound_unsolicited']}"

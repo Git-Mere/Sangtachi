@@ -69,6 +69,32 @@ PUNCH_INTERVAL_S = 0.2  # protocol.md 의 HELLO 재전송 간격과 같다
 PUNCH_DEFAULT_DURATION_S = 30
 
 
+def setup_console() -> None:
+    """콘솔 인코딩을 UTF-8 로 맞춘다.
+
+    이 도구의 출력은 한국어다. Windows 에서 콘솔 코드페이지가 cp1252(영문 기본)면
+    첫 print 에서 UnicodeEncodeError 로 죽는다. 출력을 파일로 넘길 때도 같은 일이 난다.
+    측정 도중에 죽으면 30초를 다시 써야 하므로 시작할 때 막는다.
+
+    `errors="replace"` 가 마지막 방어선이다. 글자가 깨질지언정 측정은 끝나고 JSON 은
+    항상 UTF-8 로 정확히 저장된다.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:
+            pass  # 콘솔이 없거나 권한이 없으면 아래 reconfigure 로 충분하다
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass  # Python 3.7 미만이거나 재설정할 수 없는 스트림
+
+
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -76,6 +102,62 @@ def _utcnow_iso() -> str:
 # ---------------------------------------------------------------------------
 # 소켓
 # ---------------------------------------------------------------------------
+
+
+SIO_UDP_CONNRESET = 0x9800000C
+
+# SIO_UDP_CONNRESET off 를 실제로 적용했는지. main 이 기록에 넣는다.
+_connreset_state = {"disabled": None, "detail": None}
+
+
+def _disable_udp_connreset(sock: socket.socket) -> None:
+    """Windows 에서 SIO_UDP_CONNRESET 을 끈다.
+
+    **`socket.ioctl()` 로는 안 된다.** CPython 은 `SIO_RCVALL`,
+    `SIO_KEEPALIVE_VALS`, `SIO_LOOPBACK_FAST_PATH` 세 개만 허용하고 나머지는
+    `ValueError: invalid ioctl command` 로 막는다. `socket.SIO_UDP_CONNRESET`
+    상수도 없다. 그래서 `ws2_32.dll` 의 `WSAIoctl` 을 직접 부른다.
+
+    끄지 않으면 ICMP port unreachable 을 받은 뒤 `recvfrom` 이 `WSAECONNRESET` 로
+    깨진다. 펀치 초반에는 상대가 아직 포트를 열기 전이라 이 ICMP 가 정상적으로 발생한다.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    # use_last_error 를 쓰지 않는다. 그것을 켜면 ctypes 가 호출 전후로 스레드의
+    # last-error 값을 자기 것으로 바꿔치기해서, 뒤이어 부르는 WSAGetLastError 가
+    # 엉뚱한 값을 돌려준다. 대신 WSAGetLastError 를 직접 부른다.
+    ws2 = ctypes.WinDLL("ws2_32")
+
+    # GetProcAddress 자체가 last-error 를 덮을 수 있으므로 호출 전에 미리 찾아 둔다.
+    wsa_last_error = ws2.WSAGetLastError
+    wsa_last_error.argtypes = []
+    wsa_last_error.restype = ctypes.c_int
+
+    wsa_ioctl = ws2.WSAIoctl
+    wsa_ioctl.argtypes = [
+        ctypes.c_void_p,                 # SOCKET (64비트에서 8바이트)
+        wintypes.DWORD,                  # dwIoControlCode
+        ctypes.c_void_p,                 # lpvInBuffer
+        wintypes.DWORD,                  # cbInBuffer
+        ctypes.c_void_p,                 # lpvOutBuffer
+        wintypes.DWORD,                  # cbOutBuffer
+        ctypes.POINTER(wintypes.DWORD),  # lpcbBytesReturned
+        ctypes.c_void_p,                 # lpOverlapped
+        ctypes.c_void_p,                 # lpCompletionRoutine
+    ]
+    wsa_ioctl.restype = ctypes.c_int
+
+    value = wintypes.BOOL(False)  # FALSE = 이 동작을 끈다
+    returned = wintypes.DWORD(0)
+    rc = wsa_ioctl(
+        ctypes.c_void_p(sock.fileno()), SIO_UDP_CONNRESET,
+        ctypes.byref(value), ctypes.sizeof(value),
+        None, 0, ctypes.byref(returned), None, None,
+    )
+    if rc != 0:  # SOCKET_ERROR
+        err = wsa_last_error()
+        raise OSError(err, f"WSAIoctl(SIO_UDP_CONNRESET) 실패. WSAGetLastError={err}")
 
 
 def make_socket(port: int) -> socket.socket:
@@ -98,14 +180,17 @@ def make_socket(port: int) -> socket.socket:
     sock.bind(("0.0.0.0", port))
 
     if os.name == "nt":
-        # 끄지 않으면 ICMP port unreachable 수신 시 recvfrom 이 WSAECONNRESET 로
-        # 깨진다. 펀치 중에는 상대가 아직 포트를 열기 전이라 이 ICMP 가 정상적으로
-        # 발생한다.
-        sio = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
         try:
-            sock.ioctl(sio, 0)
-        except OSError as exc:
+            _disable_udp_connreset(sock)
+            _connreset_state.update(disabled=True, detail=None)
+        except Exception as exc:  # ctypes 실패, 권한, 드문 Windows 구성
+            _connreset_state.update(disabled=False, detail=str(exc))
             print(f"[warn] SIO_UDP_CONNRESET off 실패: {exc}", file=sys.stderr)
+            print("       측정은 계속된다. ICMP port unreachable 수신 시 recvfrom 오류는 "
+                  "무시하도록 되어 있다.", file=sys.stderr)
+    else:
+        # Windows 가 아니면 해당 없음. disabled=None 이 그 뜻이므로 detail 은 비운다.
+        _connreset_state.update(disabled=None, detail=None)
 
     sock.setblocking(False)
     return sock
@@ -591,6 +676,7 @@ def save(record: dict, out_dir: Path, label: str, mode: str) -> Path:
 
 
 def main(argv=None) -> int:
+    setup_console()
     default_out = Path(__file__).resolve().parent / "results"
 
     ap = argparse.ArgumentParser(
@@ -647,6 +733,8 @@ def main(argv=None) -> int:
             "local_ip": local_ip,
             "local_port": local_port,
             "reused_for_punch": args.mode == "punch",
+            "udp_connreset_disabled": _connreset_state["disabled"],
+            "udp_connreset_detail": _connreset_state["detail"],
         },
         "stun": None,
         "punch": None,
@@ -655,6 +743,9 @@ def main(argv=None) -> int:
     print()
     print(f"natprobe {args.mode}  label={args.label}")
     print(f"  로컬 엔드포인트 {local_ip}:{local_port}  (이 소켓 하나만 쓴다)")
+    if os.name == "nt":
+        ok = _connreset_state["disabled"]
+        print(f"  SIO_UDP_CONNRESET off: {'적용됨' if ok else '실패'}")
     print()
 
     try:
@@ -709,4 +800,11 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    if sys.version_info < (3, 8):
+        sys.stderr.write(
+            "natprobe requires Python 3.8 or newer. Found %d.%d.\n"
+            "On Windows try:  py -3 natprobe.py ...\n"
+            % (sys.version_info[0], sys.version_info[1])
+        )
+        sys.exit(2)
     sys.exit(main())

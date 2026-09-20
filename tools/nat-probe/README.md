@@ -135,7 +135,21 @@ NAT 뒤이므로 무효다. RDAP(`https://rdap.arin.net/registry/ip/<IP>`)로 �
 같은 LAN 시험은 `spec.md`의 필수 시험 토폴로지 (1)에 해당하지만, blocker 20이 묻는 질문에는
 답하지 못한다. 이 도구의 목적은 (2)다.
 
-### 5.3 경로 오염 제거
+### 5.3 Windows에서 막힐 때
+
+| 증상 | 원인 | 대처 |
+|------|------|------|
+| `ValueError: invalid ioctl command 2550136844` | 2026-09-20 이전 판의 결함. `socket.ioctl()`은 `SIO_UDP_CONNRESET`을 지원하지 않는다 | 최신 판을 받는다. 지금은 `ws2_32.dll`의 `WSAIoctl`을 직접 부른다 |
+| `UnicodeEncodeError: 'charmap' codec can't encode` | 콘솔 코드페이지가 cp1252(영문 Windows 기본). 이 도구의 출력은 한국어다 | 최신 판을 받는다. 시작할 때 UTF-8로 맞춘다. 글자가 깨져도 JSON은 항상 정확하다 |
+| `python`을 치면 Microsoft Store가 열린다 | Windows의 앱 실행 별칭 | `py natprobe.py ...` 를 쓴다 |
+| `SIO_UDP_CONNRESET off: 실패` 가 뜬다 | `WSAIoctl` 호출이 실패했다 | 측정은 계속된다. 이 값은 JSON의 `socket.udp_connreset_disabled`에 남으므로 기록에 적는다. 펀치 결과가 이상하면 이것부터 의심한다 |
+
+`SIO_UDP_CONNRESET`을 꺼야 하는 이유는 `protocol.md` 15장에 있다. 끄지 않으면 ICMP port
+unreachable을 받은 뒤 `recvfrom`이 `WSAECONNRESET`로 깨진다. **펀치 초반에는 상대가 아직
+포트를 열기 전이라 이 ICMP가 정상적으로 발생한다.** 즉 이 설정이 빠지면 가장 중요한 구간에서
+수신이 흔들린다.
+
+### 5.4 경로 오염 제거
 
 VPN, 회사망, 기숙사망, 캠퍼스망이 켜져 있으면 결과가 오염된다. 측정 전에 끈다. 끌 수 없으면
 그 사실을 기록에 남기고, 그 결과를 가정망 측정값으로 쓰지 않는다.
@@ -256,6 +270,8 @@ blocker 20이 위험한 이유는 대칭형 NAT 자체가 아니라, 그 사실�
 | `socket.local_ip` | string | 바인드된 로컬 IP |
 | `socket.local_port` | int | 바인드된 로컬 포트. `--port 0`이면 임시 포트 |
 | `socket.reused_for_punch` | bool | STUN과 펀치가 같은 소켓을 썼는지. `punch`에서 `true`여야 결과가 유효하다 |
+| `socket.udp_connreset_disabled` | bool / null | Windows에서 `SIO_UDP_CONNRESET`을 껐는지. Windows가 아니면 `null` |
+| `socket.udp_connreset_detail` | string / null | 위가 `false`일 때의 실패 사유. 그 외에는 항상 `null` |
 
 ### 9.3 `stun`
 

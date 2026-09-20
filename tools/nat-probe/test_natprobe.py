@@ -7,7 +7,7 @@ roadmap.md Phase 2 검증 항목 중 네트워크 없이 확인할 수 있는 �
 잘린 응답, 잘못된 magic cookie, 트랜잭션 ID 불일치를 크래시 없이 거부하는지 본다.
 """
 
-import json, struct, sys, socket
+import json, os, struct, sys, socket
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 import natprobe as np
 
@@ -92,6 +92,20 @@ cases.append(("duration 30 허용", np.valid_duration(30.0) == 30.0, None))
 cases.append(("엔드포인트 파싱", np.parse_endpoint(" 127.0.0.1:65535 ") == ("127.0.0.1", 65535), None))
 cases.append(("콜론 없는 엔드포인트 거부", raises(np.parse_endpoint, "127.0.0.1"), None))
 cases.append(("포트 범위 밖 엔드포인트 거부", raises(np.parse_endpoint, "127.0.0.1:99999"), None))
+
+# Windows 전용 경로
+cases.append(("SIO_UDP_CONNRESET 상수", np.SIO_UDP_CONNRESET == 0x9800000C, hex(np.SIO_UDP_CONNRESET)))
+_s = np.make_socket(0)
+try:
+    st = np._connreset_state
+    if os.name == "nt":
+        cases.append(("Windows: connreset 상태가 기록됨", st["disabled"] in (True, False), st))
+        cases.append(("Windows: connreset off 적용", st["disabled"] is True, st))
+    else:
+        cases.append(("비Windows: connreset 해당 없음", st["disabled"] is None, st))
+    cases.append(("소켓이 bind 되고 논블로킹", _s.getsockname()[1] > 0 and _s.gettimeout() == 0.0, None))
+finally:
+    _s.close()
 
 # 결과 파일이 덮어써지지 않는다
 import tempfile, pathlib as _pl

@@ -71,6 +71,23 @@ cases.append(("구판(v1) 패킷 거부", np.parse_punch(old_fmt) is None, None)
 cases.append(("STUN 과 펀치 첫 바이트 구분", (np.PUNCH_MAGIC[0] & 0xC0) == 0x40, None))
 cases.append(("Binding Request 20바이트", len(np.build_binding_request(txid)) == 20, None))
 
+# 요청하지 않은 인바운드 시험
+for k in (np.PUNCH_UNSOL, np.PUNCH_UNSOL_ACK, np.PUNCH_PHASE_READY):
+    pk = np.build_punch(k, 1, 2, 3)
+    cases.append((f"펀치 종류 {k} 왕복", np.parse_punch(pk) == (k, 1, 2, 3), None))
+cases.append(("정의되지 않은 종류 거부",
+              np.parse_punch(struct.pack(np.PUNCH_FMT, np.PUNCH_MAGIC, 99, 1, 1, 1)) is None, None))
+cases.append(("종류 0 거부",
+              np.parse_punch(struct.pack(np.PUNCH_FMT, np.PUNCH_MAGIC, 0, 1, 1, 1)) is None, None))
+_v = np.unsolicited_verdict
+cases.append(("양방향 통과", _v(5, 5, 10) == (True, "allowed", "allowed"), _v(5, 5, 10)))
+cases.append(("내 쪽만 통과", _v(5, 0, 10) == (True, "allowed", "blocked"), _v(5, 0, 10)))
+cases.append(("상대 쪽만 통과", _v(0, 5, 10) == (True, "blocked", "allowed"), _v(0, 5, 10)))
+cases.append(("상대가 단계를 안 돌면 blocked 라고 하지 않는다",
+              _v(0, 0, 10) == (False, "unknown", "unknown"), _v(0, 0, 10)))
+cases.append(("내가 한 발도 못 쏘면 상대를 blocked 라고 하지 않는다",
+              _v(5, 0, 0) == (True, "allowed", "unknown"), _v(5, 0, 0)))
+
 # 입력 검증
 def raises(fn, *a, **kw):
     try:

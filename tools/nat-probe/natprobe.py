@@ -65,8 +65,16 @@ PUNCH_FMT = ">8sBxxxIIQ"
 PUNCH_LEN = struct.calcsize(PUNCH_FMT)  # 28
 PUNCH_PING = 1
 PUNCH_PONG = 2
+PUNCH_UNSOL = 3      # 새 소켓에서 보내는 "요청하지 않은" 패킷
+PUNCH_UNSOL_ACK = 4  # 그것을 받았다는 확인. 본 소켓에서 보낸다
+PUNCH_PHASE_READY = 5  # 요청하지 않은 인바운드 단계에 들어갈 준비가 됐다는 신호
+PUNCH_KINDS = (PUNCH_PING, PUNCH_PONG, PUNCH_UNSOL, PUNCH_UNSOL_ACK, PUNCH_PHASE_READY)
 PUNCH_INTERVAL_S = 0.2  # protocol.md 의 HELLO 재전송 간격과 같다
 PUNCH_DEFAULT_DURATION_S = 30
+UNSOL_DEFAULT_DURATION_S = 10
+UNSOL_INTERVAL_S = 0.5
+UNSOL_SYNC_TIMEOUT_S = 15.0   # 상대가 단계에 들어오기를 기다리는 한도
+UNSOL_SYNC_INTERVAL_S = 0.2
 
 
 def setup_console() -> None:
@@ -160,7 +168,7 @@ def _disable_udp_connreset(sock: socket.socket) -> None:
         raise OSError(err, f"WSAIoctl(SIO_UDP_CONNRESET) 실패. WSAGetLastError={err}")
 
 
-def make_socket(port: int) -> socket.socket:
+def make_socket(port: int, record_state: bool = True) -> socket.socket:
     """진단 전체가 공유할 UDP 소켓 하나를 만든다.
 
     protocol.md 15장 체크리스트를 따른다.
@@ -182,13 +190,15 @@ def make_socket(port: int) -> socket.socket:
     if os.name == "nt":
         try:
             _disable_udp_connreset(sock)
-            _connreset_state.update(disabled=True, detail=None)
+            if record_state:
+                _connreset_state.update(disabled=True, detail=None)
         except Exception as exc:  # ctypes 실패, 권한, 드문 Windows 구성
-            _connreset_state.update(disabled=False, detail=str(exc))
+            if record_state:
+                _connreset_state.update(disabled=False, detail=str(exc))
             print(f"[warn] SIO_UDP_CONNRESET off 실패: {exc}", file=sys.stderr)
             print("       측정은 계속된다. ICMP port unreachable 수신 시 recvfrom 오류는 "
                   "무시하도록 되어 있다.", file=sys.stderr)
-    else:
+    elif record_state:
         # Windows 가 아니면 해당 없음. disabled=None 이 그 뜻이므로 detail 은 비운다.
         _connreset_state.update(disabled=None, detail=None)
 
@@ -439,7 +449,7 @@ def parse_punch(data: bytes) -> "tuple | None":
     magic, kind, session, seq, ts_ns = struct.unpack(PUNCH_FMT, data)
     if magic != PUNCH_MAGIC:
         return None
-    if kind not in (PUNCH_PING, PUNCH_PONG):
+    if kind not in PUNCH_KINDS:
         return None
     return kind, session, seq, ts_ns
 
@@ -467,11 +477,13 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
     recv_pong = 0
     pong_after_first_inbound = 0
     rejected_pong = 0
+    peer_session = None
     first_inbound_ms = None
     first_inbound_seq = None
     rtts: list = []
     sources: dict = {}
     other = 0
+    next_phase = 0
 
     print(f"  {peer[0]}:{peer[1]} 로 {duration_s:.0f}초 동안 펀치 시도. Ctrl+C 로 중단")
 
@@ -512,6 +524,14 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
                 continue
             kind, rsession, rseq, ts_ns = parsed
 
+            if kind not in (PUNCH_PING, PUNCH_PONG):
+                # 다음 단계(PHASE_READY 등)의 패킷이 먼저 도착할 수 있다. 상대가 나보다
+                # 먼저 펀치를 끝낸 경우다. 이 루프의 지표에 섞으면 안 된다.
+                # non_punch_datagrams 와 섞지 않는다. 그쪽은 "포트가 남의 트래픽과
+                # 겹쳤다" 는 뜻이고, 이것은 정상 동작이다.
+                next_phase += 1
+                continue
+
             if kind == PUNCH_PONG:
                 # 내가 보낸 PING 의 응답인지 확인한다. 셋 다 맞아야 한다.
                 if (rsession != session or rseq not in sent_pings
@@ -528,6 +548,10 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
 
             if kind == PUNCH_PING:
                 recv_ping += 1
+                # 상대의 세션 값은 상대가 보낸 PING 에서만 알 수 있다. PONG 은 내 세션을
+                # 되돌려 주는 것이라 알려주지 않는다. 이후 단계의 인증에 쓴다.
+                if peer_session is None:
+                    peer_session = rsession
                 try:
                     # 상대의 세션을 그대로 돌려준다. 내 세션이 아니다.
                     sock.sendto(build_punch(PUNCH_PONG, rsession, rseq, ts_ns), src)
@@ -570,6 +594,7 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
         "peer_endpoint": expected,
         "duration_s": duration_s,
         "session": session,
+        "peer_session": peer_session,
         "sent": sent,
         "recv_ping": recv_ping,
         "recv_pong": recv_pong,
@@ -582,7 +607,219 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
         "inbound_sources": sorted(sources),
         "source_matches_expected": (list(sources) == [expected]) if sources else False,
         "non_punch_datagrams": other,
+        "next_phase_datagrams": next_phase,
         "result": result,
+    }
+
+
+def unsolicited_verdict(recv: int, ack_recv: int, sent: int) -> tuple:
+    """(상대가 단계를 돌았는가, 내 쪽 판정, 상대 쪽 판정).
+
+    **상대가 이 단계를 돌았다는 증거가 있어야 `blocked` 라고 말할 수 있다.**
+    증거가 없으면 `unknown` 이다. 상대가 구판을 쓰거나 `--unsolicited` 를 안 줬을 수도
+    있는데, 그것을 차단으로 기록하면 없는 결함을 만들어 낸다.
+
+    **내가 실제로 한 발이라도 보냈어야 상대 쪽을 `blocked` 라고 할 수 있다.** 송신이
+    전부 실패했으면 상대가 막은 것이 아니라 내가 쏘지 못한 것이다.
+    """
+    peer_ran = (recv > 0) or (ack_recv > 0)
+    mine = "allowed" if recv > 0 else ("blocked" if peer_ran else "unknown")
+    if ack_recv > 0:
+        theirs = "allowed"
+    elif peer_ran and sent > 0:
+        theirs = "blocked"
+    else:
+        theirs = "unknown"
+    return peer_ran, mine, theirs
+
+
+def _send_ready(main_sock, peer, my_session) -> None:
+    try:
+        main_sock.sendto(
+            build_punch(PUNCH_PHASE_READY, my_session, 0, time.monotonic_ns()), peer)
+    except OSError:
+        pass
+
+
+def _sync_phase(main_sock, peer, my_session, peer_session, timeout_s) -> dict:
+    """양쪽이 단계에 들어올 때까지 맞춘다.
+
+    맞추지 않으면 시작 시각이 어긋나 한쪽 창이 닫힌 뒤에 상대 패킷이 도착한다. 그러면
+    통과하는 경로인데도 `blocked` 로 기록된다. **거짓 blocked 가 이 시험에서 가장 나쁜
+    결과다.** 그 결과로 없는 요구사항(방화벽 규칙 등록)을 설계에 넣게 된다.
+
+    READY 는 본 소켓에서 상대의 본 엔드포인트로 보낸다. 이 경로는 펀치로 이미 열려 있다.
+    """
+    start = time.monotonic()
+    deadline = start + timeout_s
+    next_send = start
+    peer_ready = False
+
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        if now >= next_send:
+            _send_ready(main_sock, peer, my_session)
+            next_send = now + UNSOL_SYNC_INTERVAL_S
+
+        if peer_ready and time.monotonic() - start > 0.6:
+            # 상대를 확인했고, 내 READY 도 몇 번 나갔다. 상대도 나를 봤을 것이다.
+            break
+
+        ready, _, _ = select.select(
+            [main_sock], [], [], max(0.0, min(next_send, deadline) - time.monotonic()))
+        if not ready:
+            continue
+        try:
+            data, src = main_sock.recvfrom(2048)
+        except OSError:
+            continue
+        parsed = parse_punch(data)
+        if parsed is None or src[0] != peer[0]:
+            continue
+        kind, rsession, _, _ = parsed
+        if kind == PUNCH_PHASE_READY and (peer_session is None or rsession == peer_session):
+            peer_ready = True
+
+    return {"peer_ready": peer_ready,
+            "sync_wait_ms": round((time.monotonic() - start) * 1000.0, 1)}
+
+
+def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
+                    my_session: int, peer_session: "int | None") -> dict:
+    """요청하지 않은 인바운드가 통과하는지 시험한다.
+
+    펀치가 성립한 **뒤에** 돈다. 새 소켓을 하나 더 열어서 상대의 같은 엔드포인트로 쏜다.
+    상대 입장에서 이 패킷의 출발지 포트는 **자신이 한 번도 보낸 적 없는 포트**다. 따라서
+    상태 기반 방화벽이나 포트 의존 필터링이 있으면 막힌다.
+
+    받는 쪽은 출발지 **IP** 와 상대 세션 값으로 인증한다. 출발지 **포트** 로는 거르지
+    않는다. 포트가 다른 것이 이 시험의 전제이기 때문이다.
+
+      recv     > 0  ->  상대의 요청하지 않은 패킷이 나에게 도달했다 (내 쪽이 허용)
+      ack_recv > 0  ->  내 요청하지 않은 패킷이 상대에게 도달했다 (상대 쪽이 허용)
+    """
+    sync = _sync_phase(main_sock, peer, my_session, peer_session, UNSOL_SYNC_TIMEOUT_S)
+    if not sync["peer_ready"]:
+        print(f"  [warn] {UNSOL_SYNC_TIMEOUT_S:.0f}초 안에 상대가 단계에 들어오지 않았다. 건너뛴다.")
+        return {
+            "enabled": True, "duration_s": duration_s, "skipped": "peer_not_ready",
+            "sync": sync, "peer_ran_phase": False,
+            "inbound_unsolicited": "unknown", "peer_inbound_unsolicited": "unknown",
+        }
+
+    probe = make_socket(0, record_state=False)
+    probe_port = probe.getsockname()[1]
+
+    start = time.monotonic()
+    end = start + duration_s
+    next_send = start
+    seq = 0
+    sent = recv = ack_recv = 0
+    rejected = 0
+    sent_probes: dict = {}   # seq -> ts_ns. 내가 실제로 보낸 것
+    acked: set = set()
+    sources: dict = {}
+    ack_sources: dict = {}
+
+    print(f"  요청하지 않은 인바운드 시험 {duration_s:.0f}초. "
+          f"새 소켓 로컬 포트 {probe_port} (본 소켓과 다르다)")
+
+    def authentic(src, rsession) -> bool:
+        """상대 IP 에서 왔고, 상대 세션 값을 가졌고, **본 엔드포인트가 아닌** 것만 받는다.
+
+        출발지 포트로는 거르지 않는다. 포트가 다른 것이 이 시험의 전제다. 다만 출발지가
+        **펀치에 쓴 바로 그 엔드포인트**면 그 경로는 이미 요청된 상태라 아무것도 증명하지
+        못한다. 그것을 세면 거짓 `allowed` 가 된다.
+        """
+        if src[0] != peer[0]:
+            return False
+        if src == peer:
+            return False
+        if peer_session is not None and rsession != peer_session:
+            return False
+        return True
+
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= end:
+                break
+
+            if now >= next_send:
+                seq += 1
+                ts = time.monotonic_ns()
+                try:
+                    probe.sendto(build_punch(PUNCH_UNSOL, my_session, seq, ts), peer)
+                    sent_probes[seq] = ts
+                    sent += 1
+                except OSError as exc:
+                    print(f"  [warn] sendto 실패: {exc}")
+                # 측정 중에도 READY 를 계속 보낸다. 상대가 나보다 늦게 단계에 들어오면
+                # 이것을 보고 맞춘다. 멈추면 늦은 쪽이 영영 나를 못 본다.
+                _send_ready(main_sock, peer, my_session)
+                next_send += UNSOL_INTERVAL_S
+                if next_send < now:
+                    next_send = now + UNSOL_INTERVAL_S
+
+            timeout = max(0.0, min(next_send, end) - time.monotonic())
+            ready, _, _ = select.select([main_sock, probe], [], [], timeout)
+
+            for sock in ready:
+                try:
+                    data, src = sock.recvfrom(2048)
+                except OSError:
+                    continue
+                parsed = parse_punch(data)
+                if parsed is None:
+                    continue
+                kind, rsession, rseq, ts_ns = parsed
+                key = f"{src[0]}:{src[1]}"
+
+                if sock is main_sock and kind == PUNCH_UNSOL:
+                    if not authentic(src, rsession):
+                        rejected += 1
+                        continue
+                    recv += 1
+                    sources[key] = sources.get(key, 0) + 1
+                    try:
+                        # 본 소켓에서 되돌려 준다. 상대의 새 소켓은 이미 송신했으므로
+                        # 그쪽 방화벽은 이 응답을 요청된 것으로 본다.
+                        main_sock.sendto(
+                            build_punch(PUNCH_UNSOL_ACK, rsession, rseq, ts_ns), src)
+                    except OSError:
+                        pass
+                elif sock is probe and kind == PUNCH_UNSOL_ACK:
+                    # 내가 실제로 보낸 탐침의 응답인지 확인한다. 중복은 한 번만 센다.
+                    if (src[0] != peer[0] or rsession != my_session
+                            or rseq not in sent_probes or sent_probes[rseq] != ts_ns
+                            or rseq in acked):
+                        rejected += 1
+                        continue
+                    acked.add(rseq)
+                    ack_recv += 1
+                    ack_sources[key] = ack_sources.get(key, 0) + 1
+    except KeyboardInterrupt:
+        print("  중단됨")
+    finally:
+        probe.close()
+
+    peer_ran, mine, theirs = unsolicited_verdict(recv, ack_recv, sent)
+
+    return {
+        "enabled": True,
+        "duration_s": duration_s,
+        "sync": sync,
+        "probe_local_port": probe_port,
+        "peer_session_known": peer_session is not None,
+        "sent": sent,
+        "recv": recv,
+        "recv_sources": sorted(sources),
+        "ack_recv": ack_recv,
+        "ack_sources": sorted(ack_sources),
+        "rejected": rejected,
+        "peer_ran_phase": peer_ran,
+        "inbound_unsolicited": mine,
+        "peer_inbound_unsolicited": theirs,
     }
 
 
@@ -594,6 +831,12 @@ MAPPING_NOTE = {
     "endpoint-independent": "모든 STUN 서버가 같은 공인 엔드포인트를 봤다. 홀펀칭 가능성이 높다.",
     "destination-dependent": "서버마다 다른 공인 엔드포인트를 봤다. 대칭형 거동이다. blocker 20 위험.",
     "unknown": "서로 다른 IP 의 서버 2곳에서 응답을 받지 못해 판정할 수 없다.",
+}
+
+UNSOL_NOTE = {
+    "allowed": "요청하지 않은 인바운드가 통과한다. 목적지 의존 매핑 상대도 받을 수 있다.",
+    "blocked": "막힌다. 상대가 예상과 다른 포트로 응답하면 홀펀칭이 실패한다.",
+    "unknown": "상대가 이 단계를 돌지 않아 판정할 수 없다.",
 }
 
 RESULT_NOTE = {
@@ -695,6 +938,12 @@ def main(argv=None) -> int:
             p.add_argument("--peer", metavar="IP:PORT", help="상대 공인 엔드포인트")
             p.add_argument("--duration", type=float, default=PUNCH_DEFAULT_DURATION_S,
                            help="펀치 시도 시간(초). 기본 30")
+            p.add_argument("--unsolicited", action="store_true",
+                           help="펀치 성립 후, 새 소켓에서 보내는 요청하지 않은 인바운드가 "
+                                "통과하는지 시험한다. 양쪽이 함께 줘야 한다")
+            p.add_argument("--unsolicited-duration", type=float,
+                           default=UNSOL_DEFAULT_DURATION_S,
+                           help="위 시험 시간(초). 기본 10")
 
     args = ap.parse_args(argv)
 
@@ -702,6 +951,8 @@ def main(argv=None) -> int:
         local_port = valid_port(args.port, allow_zero=True)
         if args.mode == "punch":
             valid_duration(args.duration)
+            if args.unsolicited:
+                valid_duration(args.unsolicited_duration)
             if args.peer:  # 5초짜리 STUN 을 돌리기 전에 먼저 거른다
                 parse_endpoint(args.peer)
         servers = DEFAULT_STUN_SERVERS
@@ -738,6 +989,7 @@ def main(argv=None) -> int:
         },
         "stun": None,
         "punch": None,
+        "unsolicited": None,
     }
 
     print()
@@ -788,6 +1040,28 @@ def main(argv=None) -> int:
             if r["inbound_sources"] and not r["source_matches_expected"]:
                 print(f"  [warn] 예상과 다른 출발지: {r['inbound_sources']}")
                 print("         상대 NAT 이 나에게 다른 매핑을 썼다. 목적지 의존 매핑의 증거다.")
+
+            if args.unsolicited:
+                print()
+                if r["result"] != "success":
+                    record["unsolicited"] = {
+                        "enabled": True, "skipped": "punch 가 성립하지 않아 건너뛴다"}
+                    print("  펀치가 성립하지 않아 요청하지 않은 인바운드 시험을 건너뛴다.")
+                else:
+                    record["unsolicited"] = run_unsolicited(
+                        sock, peer, args.unsolicited_duration,
+                        r["session"], r["peer_session"])
+                    u = record["unsolicited"]
+                    print()
+                    if u.get("skipped"):
+                        print(f"  건너뜀: {u['skipped']}")
+                    else:
+                        print(f"  보냄 {u['sent']}, 받음 {u['recv']}, "
+                              f"확인응답 {u['ack_recv']}, 인증 실패로 버림 {u['rejected']}")
+                    print(f"  내 쪽 인바운드   : {u['inbound_unsolicited']}"
+                          f"  ({UNSOL_NOTE[u['inbound_unsolicited']]})")
+                    print(f"  상대 쪽 인바운드 : {u['peer_inbound_unsolicited']}"
+                          f"  ({UNSOL_NOTE[u['peer_inbound_unsolicited']]})")
     finally:
         sock.close()
 

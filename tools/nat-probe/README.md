@@ -55,6 +55,8 @@ python natprobe.py punch [--label NAME] [--port N] [--peer IP:PORT] [--duration 
 | `--stun HOST:PORT ...` | 도구 내장 목록 (`DEFAULT_STUN_SERVERS`) | 질의할 STUN 서버. 여러 개를 나열한다. 기본 목록은 `natprobe.py`의 상수에서 확인한다 |
 | `--peer IP:PORT` | 없음 | 상대의 공인 엔드포인트. 주지 않으면 대화식으로 물어본다 |
 | `--duration SEC` | `30` | 펀치 시도 시간(초) |
+| `--unsolicited` | 꺼짐 | 펀치 성립 후, 요청하지 않은 인바운드가 통과하는지 시험한다 (4.3). **양쪽이 함께 줘야 한다** |
+| `--unsolicited-duration SEC` | `10` | 위 시험 시간(초) |
 | `--out DIR` | `tools/nat-probe/results/` | 결과 JSON을 쓸 디렉터리 |
 
 `--stun`과 `--peer`는 `punch`에서 같은 소켓을 공유한다. 소켓을 따로 열면 출발지 포트가 달라져
@@ -100,6 +102,53 @@ python natprobe.py probe --label home-A
 
 **공용 컴퓨터에서는 `--peer`를 쓰지 않는다.** 상대의 공인 엔드포인트가 셸 기록과 프로세스
 목록에 남는다. 비밀은 아니지만 남길 이유도 없다. 대화식 입력을 쓴다.
+
+### 4.3 요청하지 않은 인바운드 시험 (`--unsolicited`)
+
+**무엇을 묻는가.** 내가 먼저 보낸 적 없는 출발지에서 오는 UDP를 이 PC가 받는가.
+
+**왜 중요한가.** Windows 방화벽은 UDP를 상태 기반으로 처리한다. 내가 먼저 보내면 그 상대
+주소와 포트에 대해서만 인바운드가 열린다. 인바운드 기본 동작은 `Block`이고 보통 허용 규칙이
+없다. 그래서 **상대 NAT이 목적지 의존 매핑을 쓰면** 상대는 내가 보낸 적 없는 포트로 오게 되고,
+NAT이 통과시켜도 내 방화벽이 막는다. 홀펀칭이 실패하는데 원인이 NAT이 아니다.
+
+```
+python natprobe.py punch --label home-A --unsolicited
+```
+
+**양쪽이 함께 줘야 한다.** 한쪽만 주면 판정이 `unknown`이 된다.
+
+**동작.** 펀치가 `success`로 끝난 뒤에만 돈다. 새 소켓을 하나 더 열어 상대의 같은 엔드포인트로
+0.5초 간격으로 쏜다. 상대가 그것을 본 소켓에서 받으면 확인응답을 돌려준다. 한 번에 두 방향을
+잰다.
+
+| 필드 | 뜻 |
+|------|-----|
+| `unsolicited.recv` | 상대의 요청하지 않은 패킷이 **나에게** 도달한 수 |
+| `unsolicited.ack_recv` | 내 요청하지 않은 패킷이 **상대에게** 도달했다는 확인 수 |
+| `unsolicited.probe_local_port` | 시험에 쓴 새 소켓의 로컬 포트. 본 소켓과 달라야 의미가 있다 |
+| `unsolicited.peer_ran_phase` | 상대가 이 단계를 실제로 돌았는지 |
+| `unsolicited.inbound_unsolicited` | **내 쪽** 판정 |
+| `unsolicited.peer_inbound_unsolicited` | **상대 쪽** 판정 |
+
+판정은 셋 중 하나다.
+
+| 값 | 뜻 | 함의 |
+|----|-----|------|
+| `allowed` | 통과한다 | 목적지 의존 매핑을 쓰는 상대와도 연결될 수 있다 |
+| `blocked` | 막힌다 | 상대가 예상과 다른 포트로 응답하면 실패한다. **클라이언트가 방화벽 규칙을 등록해야 한다** |
+| `unknown` | 상대가 이 단계를 돌지 않았다 | 판정 불가. 양쪽이 같이 다시 돌린다 |
+
+**`blocked`는 원인을 분해하지 못한다.** 집 안 NAT, 상위 ISP 필터링, 경로 중간 장비,
+호스트 방화벽 중 무엇이든 될 수 있다.
+
+한쪽이 NAT 뒤가 아니면(`socket.local_ip`가 공인 IP와 같으면) **집 안 NAT 변환 하나만
+배제된다.** 그것으로 "방화벽 때문"이라고 단정할 수는 없다. ISP 쪽 필터링과 중간 장비가
+남는다. 원인을 좁히려면 같은 호스트에서 방화벽을 잠시 끄고 다시 재는 등 조건을 하나씩
+바꿔야 한다.
+
+**상대가 안 돌았을 때 `blocked`라고 쓰지 않는다.** 증거 없이 차단으로 기록하면 없는 결함을
+만들어 낸다. 그래서 `unknown`을 따로 둔다.
 
 ## 5. 사전 조건
 
@@ -310,7 +359,13 @@ blocker 20이 위험한 이유는 대칭형 NAT 자체가 아니라, 그 사실�
 | `punch.inbound_sources` | array | 실제로 관측된 인바운드 출발지 목록 |
 | `punch.source_matches_expected` | bool | 출발지가 기대한 상대 엔드포인트와 일치하는지. 인바운드가 없으면 `false` |
 | `punch.non_punch_datagrams` | int | 이 도구의 형식이 아닌 수신 데이터그램 수. 0이 아니면 다른 트래픽이 섞인 것이다 |
+| `punch.next_phase_datagrams` | int | 펀치 중에 도착한 다음 단계(4.3) 패킷 수. 상대가 나보다 먼저 펀치를 끝냈다는 뜻이며 **정상이다**. 펀치 지표에는 넣지 않는다 |
 | `punch.result` | string | `success` / `one-way` / `failure` |
+
+### 9.5 `unsolicited`
+
+`--unsolicited`를 주지 않으면 `null`이다. 펀치가 성립하지 않으면
+`{"enabled": true, "skipped": "..."}` 만 들어간다. 필드와 판정값은 4.3에 있다.
 
 ## 10. 기록에 반영하는 법
 

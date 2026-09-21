@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-20
-- Related: [`../design-audit.md`](../design-audit.md) blocker 20, [`../plan.md`](../plan.md) chapter 5
+- Related: [`../audit-history/design-audit.md`](../audit-history/design-audit.md) blocker 20 and follow-up 5, [`../commit_history/2026-09-20-blocker20-resolution.md`](../commit_history/2026-09-20-blocker20-resolution.md)
 
 ## Context
 
@@ -12,7 +12,7 @@ The full design audit named blocker 20 the most dangerous item.
 > there is no alternative. A relay is a post-Phase-9 stretch goal and cannot rescue it.
 
 This is not a defect we can fix. ISPs and routers decide it, and if it surfaces mid-semester there
-is no time to undo it. `plan.md` chapter 5 stated that the decision cannot be made without
+is no time to undo it. Design audit follow-up 5 stated that the decision cannot be made without
 measurement, and required measuring **both** mapping behaviour and filtering behaviour.
 
 A diagnostic tool ([`../../../tools/nat-probe/`](../../../tools/nat-probe/)) was built and used

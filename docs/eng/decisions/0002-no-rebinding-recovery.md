@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-20
-- Related: [`../protocol.md`](../protocol.md) 10.4 and 9.5, [`../design-audit.md`](../design-audit.md) blocker 12
+- Related: [`../protocol.md`](../protocol.md) 10.4 and 9.5, [`../audit-history/design-audit.md`](../audit-history/design-audit.md) blocker 12
 
 ## Context
 
@@ -88,7 +88,7 @@ firewall off; it adds and removes one narrowly scoped temporary inbound allow ru
 re-measures. That procedure exercises exactly what option a would do.
 
 The procedure is not kept here because of rule 6 in
-[`../design-audit.md`](../design-audit.md) chapter 6: a script for a test that has not been run
+[`../audit-history/design-audit.md`](../audit-history/design-audit.md) chapter 6: a script for a test that has not been run
 belongs in the tool, and the decision record only points at it.
 
 - Procedure: [`tools/nat-probe/README.md`](../../../tools/nat-probe/README.md) 12.1

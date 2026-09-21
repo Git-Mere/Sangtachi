@@ -3,7 +3,6 @@
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
 **Status:** Fixed before implementation. If the code disagrees with this document, the code is wrong.
 **Design background:** [`architecture.md`](architecture.md) / **Requirements:** [`spec.md`](spec.md)
-**Audit history:** [`design-audit.md`](design-audit.md)
 
 > Korean version: [`../kor/protocol.md`](../kor/protocol.md)
 
@@ -37,7 +36,7 @@ An on-path or off-path attacker who learns or guesses `peer_id` and `session_epo
 - force renegotiation with a forged `HELLO`
 - hijack traffic by abusing endpoint learning (10.5)
 
-The inner packet validation in section 8 is **not an attack defense.** It is hygiene against accidental injection caused by misdelivery, bugs, or wrong routing. The earlier revision of this document called those checks "the only injection defense", which was an overstatement.
+The inner packet validation in 8.4 is **not an attack defense.** It is hygiene against accidental injection caused by misdelivery, bugs, or wrong routing. The earlier revision of this document called those checks "the only injection defense", which was an overstatement.
 
 The basis for this choice is the non-goals in `spec.md`: custom cryptography and authenticated peer sessions are stretch goals, outside v1. The final report must state this limitation.
 
@@ -514,7 +513,7 @@ All outbound traffic goes to `peer_endpoint`. Before anything is learned (during
 4. If none arrives within 5 seconds, discard the tentative path and increment path_probe_failed.
 ```
 
-**The premise of this procedure, and what measurement showed.** Step 1 assumes that a packet from an address outside the candidate set **actually arrives**. Measurements on 2026-09-20 found cases where that assumption fails. On all 3 network pairs measured (Windows to Windows, Windows to macOS, Windows to Linux), UDP with **the same source IP but a different source port** was blocked in both directions (6 cases, 0 of 20 probes arrived in each).
+**The premise of this procedure, and what measurement showed.** Step 1 assumes that a packet from an address outside the candidate set **actually arrives**. Measurements found cases where that assumption fails. On all 3 network pairs measured (Windows to Windows, Windows to macOS, Windows to Linux), UDP with **the same source IP but a different source port** was blocked in both directions (6 cases, 0 of 20 probes arrived in each).
 
 **The leading explanation is port-restricted filtering in the NAT,** because the result was the same on macOS and Linux hosts believed to have no active firewall filtering. **It is not stated as certain.** The macOS case is inferred from defaults and was not queried directly; on Linux only `ufw` was confirmed off, and without root the full `nft` and `iptables` rulesets were not seen. No packet capture was taken on either side.
 
@@ -528,9 +527,9 @@ Nomination is not used for three reasons.
 
 - **Behind the same NAT**: if the two peers nominate the LAN path and the hairpinned public path respectively, they pin different endpoints and each filters out the other's packets, deadlocking.
 - **Asymmetric nomination**: one side receiving on a LAN candidate while the other sends to a public candidate produces the same deadlock.
-- **NAT rebinding**: a mapping can change without the epoch changing, so a fixed scheme has no trigger to renegotiate and must wait for the idle timeout. **Measurement on 2026-09-20 invalidated this reason.** Learning **does not guarantee recovery for a rebinding that produces the tested endpoint change, where only the source port differs and the observed filtering applies** (see the measured limit under (c) above). An actual rebinding was never induced and tested. The other two reasons still hold, so the learning approach itself stays.
+- **NAT rebinding**: a mapping can change without the epoch changing, so a fixed scheme has no trigger to renegotiate and must wait for the idle timeout. **Measurement weakened this reason.** Learning **does not guarantee recovery for a rebinding that produces the tested endpoint change, where only the source port differs and the observed filtering applies** (see the measured limit under (c) above). So **it cannot be the basis that separates the two schemes.** An actual rebinding was never induced and tested, so we do not claim this reason is void for every rebinding either. The other two reasons still hold, so the learning approach itself stays.
 
-Learning uses **whichever path most recently actually delivered**, so all three cases converge automatically. Duplicate suppression (4.5) filters older packets first, so a delayed packet from a previous path cannot drag the endpoint backwards.
+Learning uses **whichever path most recently actually delivered**, so the first two cases (behind the same NAT, asymmetric nomination) converge automatically. **Rebinding is different.** A packet from an address outside the candidate set must actually arrive for 10.4 (c) to start, and without such an arrival there is no convergence. Duplicate suppression (4.5) filters older packets first, so a delayed packet from a previous path cannot drag the endpoint backwards.
 
 Increment `endpoint_learned` whenever the endpoint changes. A continuously rising value means the path is oscillating and is useful for diagnosis.
 
@@ -619,7 +618,7 @@ If any of these six contracts breaks, the tunnel protocol does not hold.
 
 ## 15. Implementation Checklist
 
-All of the following must exist in code before Phase 4 begins.
+All of the following must exist in code in Phase 4. Phase 4 is the stage that implements this checklist.
 
 - [ ] Every constant in section 3
 - [ ] Field-by-field header serialization/deserialization plus a round-trip test
@@ -630,7 +629,6 @@ All of the following must exist in code before Phase 4 begins.
 - [ ] The 8.2 epoch/source rules (especially epoch pinning from a nonce-valid `HELLO_ACK`)
 - [ ] The 4.5 duplicate suppression algorithm (`highest`, `position`, 64-bit bitmap), ahead of all side effects
 - [ ] The leading `seq == highest` check, mutually exclusive `if/else if/else`, the `shift == 64` case, and `uint64_t` for every bit operation
-- [ ] Loss accounting on the 64-bit `position` with a `baseline`
 - [ ] The `a != b` condition in `is_newer`
 - [ ] Per-attempt `session_epoch` with a 2-minute retired list
 - [ ] CSPRNG nonce, fixed per attempt, with a 2-minute retired list. Probe nonces in a separate table
@@ -644,5 +642,6 @@ All of the following must exist in code before Phase 4 begins.
 - [ ] `CLOSE` send and receive with reason validation
 - [ ] The `pending_pings` cap and sweep
 - [ ] The section 13 STUN scope
+- [ ] The 5.4 `DATA` type, 8.4 inner validation (checks 9-15), and 8.5 send-side validation
 
-Phase 5 adds: the `DATA` type, 8.4 inner validation, 8.5 send-side validation, 4.5 loss accounting, and fuzz defenses.
+Phase 5 adds: 4.5 loss accounting with a `baseline`, the reorder window, and fuzz defenses.

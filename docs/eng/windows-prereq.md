@@ -3,10 +3,7 @@
 What must be in place on a PC that runs the client for the first time, what the client handles
 automatically, and what a person has to do beforehand.
 
-The source is [`design-audit.md`](design-audit.md) chapter 3 section D (blockers 11-17) and the
-6 platform warns in chapter 4. The work item is [`plan.md`](plan.md) number 3.
-
-> 한국어 원본: [`../kor/windows-prereq.md`](../kor/windows-prereq.md)
+> Korean version: [`../kor/windows-prereq.md`](../kor/windows-prereq.md)
 
 ## 0. How to read this
 
@@ -17,15 +14,23 @@ Most use a command, but **not all of them do.** Section 11 (LAN discovery) is a 
 rather than a state to inspect, so it records the procedure and the pass condition instead of a
 command.
 
+**Sections 1-7 block progress when they are not in place. Sections 8-13 are constraints to be
+aware of.** The first group stops you when it fails. For the second group, not recognising the
+symptom leads to fixing the wrong place.
+
 Each section states its verification status.
 
 | Mark | Meaning |
 |------|---------|
-| **Measured** | The check command was run on one Windows 11 24H2 machine on 2026-09-21 and its output decides the pass rule |
+| **Measured** | The check command was run on one Windows 11 24H2 machine and its output decides the pass rule |
 | **Partly measured** | The command was run, but **the pass rule is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
 Right now that is 4 measured, 4 partly measured and 5 unverified.
+
+**No measurement dates are written in the body.** The raw records of the measurements live in
+`commit_history/` and `tools/nat-probe/records/`. This document holds only the current spec and
+the pass rules.
 
 **A failed query and an absent object are not the same.** A query that gates progress
 (sections 3 and 8) returns 0 only for `ObjectNotFound` and raises everything else; reading a
@@ -47,7 +52,7 @@ End-to-end verification on a clean PC belongs to the Phase 8 demo preparation an
 completion condition for this document. Phase 1 implementation has not started, so what the
 client automates is a **design split**, not observed behaviour.
 
-## 1. Administrator rights (blocker 11)
+## 1. Administrator rights
 
 **Status: measured**
 
@@ -75,7 +80,7 @@ new need for administrator rights. [ADR 0002](decisions/0002-no-rebinding-recove
 "administrator rights appear" as a cost of option a, but adapter creation already needs them.
 The marginal cost is "make one more rule with rights you already hold".
 
-## 2. Firewall and network profile (blocker 12)
+## 2. Firewall and network profile
 
 **Status: partly measured.** The default inbound policy and the profile category of existing
 adapters were seen for real. **A freshly created virtual adapter being classified Public was not
@@ -84,7 +89,7 @@ observed**, because the adapter does not exist yet. Confirmed in Phase 6.
 The Windows firewall **blocks inbound by default**. A freshly created virtual adapter has no
 gateway, so it is classified as an unidentified network, which gets the **Public profile**. Under
 Public, ICMP echo requests and inbound TCP 25565 are dropped. For tunnel UDP, **the reply to a flow we started**
-passes through stateful handling ([`plan.md`](plan.md) 5.8, measured). **Unsolicited inbound does
+passes through stateful handling. This was measured. **Unsolicited inbound does
 not.** In the same measurement all 6 cases were `blocked`. An inbound allow rule is required if
 that direction is needed.
 
@@ -206,7 +211,7 @@ Set-NetConnectionProfile -InterfaceAlias '<adapter name>' -NetworkCategory Priva
 Get-NetConnectionProfile -InterfaceAlias '<adapter name>' | Select-Object NetworkCategory
 ```
 
-## 3. Leftover adapters, addresses and routes (blocker 13)
+## 3. Leftover adapters, addresses and routes
 
 **Status: partly measured.** The query commands were run and **somebody else's** leftover adapter
 (an OpenVPN TAP) really was visible. **Residue from our own client exiting abnormally was not
@@ -267,7 +272,7 @@ Measured. Running all three against a missing name gave `0` each, and an existin
 `CmdletizationQuery_NotFound_InterfaceAlias,Get-NetIPAddress` and
 `CmdletizationQuery_NotFound_InterfaceAlias,Get-NetRoute`.
 
-## 4. Wintun packaging and signature (blocker 14)
+## 4. Wintun packaging and signature
 
 **Status: unverified.** Wintun has not been adopted yet; that is Phase 6 work. The commands below
 can run once `wintun.dll` is part of the build output.
@@ -319,7 +324,7 @@ $br.Close()
 looks the same as missing administrator rights (section 1). The client therefore has to check the
 two conditions **separately** and say which one is the cause.
 
-## 5. Minecraft server bind address (blocker 15)
+## 5. Minecraft server bind address
 
 **Status: unverified.** No Minecraft server has been run yet; that is Phase 8 work.
 
@@ -360,7 +365,7 @@ also matches rows whose remote port is 25565 and does not separate listening soc
 2. Does the server PC firewall block inbound 25565: section 2
 3. Does the tunnel carry that packet: a tunnel-layer problem, not this section
 
-## 6. Control plane on EC2 (blocker 16)
+## 6. Control plane on EC2
 
 **Status: unverified.** No EC2 instance is running yet; that is Phase 3 work.
 
@@ -403,7 +408,7 @@ Test-NetConnection -ComputerName <EC2 public address> -Port 8000
 
 **Pass rule.** `TcpTestSucceeded : True`. A timeout points at the security group first.
 
-## 7. Subnet conflict (blocker 17)
+## 7. Subnet conflict
 
 **Status: partly measured.** The decision moved into [`tools/winprereq/Test-SubnetOverlap.ps1`](../../tools/winprereq/Test-SubnetOverlap.ps1)
 and was run on this machine. Its 85 cases live in the script and run under `-SelfTest`.
@@ -507,7 +512,7 @@ would be updated on one side only. The previous revision had drifted exactly tha
 **When blocked.** Use an alternative range. Both sides must use the same value, so it comes from
 the control plane. **If the client decides alone, the two sides use different ranges.**
 
-## 8. Duplicate on-link route (warn)
+## 8. Duplicate on-link route
 
 **Status: measured (automatic creation observed)**
 
@@ -556,7 +561,7 @@ error was `Category=ObjectNotFound` with
 exception types. The leftover queries in section 3 need the same distinction. **Do not swallow the error.** A
 duplicate that can be ignored and a permission failure are not the same thing.
 
-## 9. Tentative address state (warn)
+## 9. Tentative address state
 
 **Status: measured**
 
@@ -592,7 +597,7 @@ Set-NetIPInterface -InterfaceAlias '<adapter name>' -AddressFamily IPv4 -DadTran
 
 The setting applies **to that interface only**. If it is turned off, record why in a code comment.
 
-## 10. EC2 public IP changes (warn)
+## 10. EC2 public IP changes
 
 **Status: unverified.** No instance is running yet.
 
@@ -628,7 +633,7 @@ The old rule, where only an unattached address cost money, no longer applies. Af
 terminate the instance and release the Elastic IP. **Pricing changes, so check the current
 pricing page before relying on this.**
 
-## 11. Minecraft LAN discovery does not work (warn)
+## 11. Minecraft LAN discovery does not work
 
 **Status: unverified (documented behaviour).** Not tried yet; it will be checked in Phase 8.
 
@@ -650,7 +655,7 @@ one and trying to fix the tunnel turns into out-of-scope work.
 **Put this limit in the demo script.** Saying it up front beats explaining it live when an examiner
 asks why the server is not listed.
 
-## 12. Path-based Java firewall exception (warn)
+## 12. Path-based Java firewall exception
 
 **Status: measured (rules found)**
 
@@ -693,7 +698,7 @@ expanded.
 **cuts the decision column off** because the path is long. The `Exists` column actually
 disappeared on this machine. A check command that hides its own verdict is useless.
 
-## 13. SmartScreen and Defender (warn)
+## 13. SmartScreen and Defender
 
 **Status: partly measured.** Only the policy value was read. **The pass rule (starting without a
 warning on the demo PC) is not decided**, because `client.exe` does not exist yet. It is confirmed

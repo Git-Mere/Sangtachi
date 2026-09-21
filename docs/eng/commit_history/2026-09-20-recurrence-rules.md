@@ -32,7 +32,7 @@ then fixing one or two at a time.
 ## The new rules
 
 Only the names are listed here. The originals live in
-[`../design-audit.md`](../design-audit.md) chapter 6 (rule 5).
+[`../audit-history/design-audit.md`](../audit-history/design-audit.md) chapter 6 (rule 5).
 
 | # | Rule |
 |---|------|

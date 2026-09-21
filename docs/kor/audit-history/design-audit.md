@@ -4,7 +4,7 @@
 **시점:** 구현 착수 전, 커밋 `5807a8b` 기준
 **계기:** 세 차례의 diff 리뷰에서 매번 blocker가 나와 설계 전반의 신뢰도를 확인할 필요가 생겼다
 
-> English version: [`../../eng/design-audit.md`](../../eng/design-audit.md)
+> English version: [`../../eng/audit-history/design-audit.md`](../../eng/audit-history/design-audit.md)
 
 > **이 문서는 감사 기록이다.** 2026-09-14 전면 점검의 결과와 그 뒤의 해소 경과를 남긴다.
 > **현재 작업 추적은 [`../plan.md`](../plan.md)가 맡는다.** 5장의 후속 계획표는 그 시점의

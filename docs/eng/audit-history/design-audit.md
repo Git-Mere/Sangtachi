@@ -1,10 +1,30 @@
 # Full Design Audit (2026-09-14)
 
-**Target:** the complete text of [`architecture.md`](architecture.md), [`spec.md`](spec.md), [`roadmap.md`](roadmap.md)
+**Target:** the complete text of [`../architecture.md`](../architecture.md), [`../spec.md`](../spec.md), [`../roadmap.md`](../roadmap.md)
 **Point in time:** before implementation starts, at commit `5807a8b`
 **Reason:** three consecutive diff reviews each produced blockers, which raised the question of how much of the design was trustworthy
 
-> Korean version: [`../kor/design-audit.md`](../kor/design-audit.md)
+> Korean version: [`../../kor/audit-history/design-audit.md`](../../kor/audit-history/design-audit.md)
+
+> **This document is an audit record.** It keeps the result of the 2026-09-14 full audit and the
+> progress made on it afterwards. **Current work tracking belongs to [`../../kor/plan.md`](../../kor/plan.md).**
+> The follow-up table in section 5 is a snapshot of that point in time, so do not read live state
+> here.
+>
+> **The `protocol.md` chapter and section numbers in the body are the numbering of 2026-09-14.**
+> The numbers changed later and are not corrected here. A record has to hold the judgement of that
+> time as it was. For the current numbers read `../protocol.md` directly. Every reference in the
+> live documents was brought to the current numbering.
+>
+> **The source text of the recurrence-prevention rules in chapter 6 is now `CLAUDE.md` at the
+> repository root.** Chapter 6 here is the record of how those rules were obtained. Read
+> `CLAUDE.md` if the point is to follow the rules.
+>
+> `architecture.md`, `protocol.md`, `roadmap.md`, `spec.md`, `plan.md`, `windows-prereq.md` and
+> `CLAUDE.md` at the repository root do not link this file. The first six are live documents and
+> have to rest on fixed documents, and `CLAUDE.md` took over the source text of the rules this
+> file used to hold. `decisions/`, `commit_history/` and `tools/` do link it. They are records
+> whose purpose is to point at this audit.
 
 ---
 
@@ -51,7 +71,7 @@ Status: `fixed` = resolved in this pass, `open` = tracked to a follow-up step.
 
 | # | Problem | Status |
 |---|---------|--------|
-| 1 | magic/version/type values, nonce width, payload layouts, and byte offsets all undefined. No code can be written from the document | fixed, [`protocol.md`](protocol.md) sections 2 to 4 |
+| 1 | magic/version/type values, nonce width, payload layouts, and byte offsets all undefined. No code can be written from the document | fixed, [`../protocol.md`](../protocol.md) sections 2 to 4 |
 | 2 | No session instance identifier, so a restart lets delayed packets from the previous process into the new session | fixed, `protocol.md` 3.2 (new `session_epoch`, header 16 -> 20 bytes) |
 | 3 | Receive ownership of the single socket and STUN/tunnel demultiplexing undefined. The STUN reader and the receive loop consume each other's packets | fixed, `protocol.md` sections 5 and 6 |
 | 4 | Four threads mutate session state, timers, and sequence values without synchronization, producing data races | fixed, `architecture.md` 3.2. A single event loop removes the shared state |
@@ -78,13 +98,13 @@ This entire area was absent from the design.
 
 | # | Problem | Status |
 |---|---------|--------|
-| 11 | Adapter creation and route configuration need administrator privileges; the document never mentions it | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| 12 | A new adapter is classified Public and the firewall blocks inbound ICMP and TCP 25565. The client's UDP is also blocked if the first-run prompt is dismissed (**corrected by the 5.8 measurement: the reply to a flow we started passes statefully; what is blocked is unsolicited inbound**) | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| 13 | An abnormal termination leaves the adapter, address, and route behind, so the next run creates duplicates | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| 14 | Wintun DLL/driver packaging, architecture, and signing. Installation can fail on the demo PC | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| 15 | If `server-ip` in `server.properties` is set to **a different interface address**, connections to `10.100.0.1:25565` are refused. It must be blank or explicitly `10.100.0.1` | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| 16 | No EC2 security group inbound rule, binding to `127.0.0.1`, public IP changing on restart | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| 17 | `10.100.0.0/24` colliding with a real LAN, Hyper-V, or another VPN sends traffic out the wrong interface | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 11 | Adapter creation and route configuration need administrator privileges; the document never mentions it | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 12 | A new adapter is classified Public and the firewall blocks inbound ICMP and TCP 25565. The client's UDP is also blocked if the first-run prompt is dismissed (**corrected by the 5.8 measurement: the reply to a flow we started passes statefully; what is blocked is unsolicited inbound**) | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 13 | An abnormal termination leaves the adapter, address, and route behind, so the next run creates duplicates | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 14 | Wintun DLL/driver packaging, architecture, and signing. Installation can fail on the demo PC | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 15 | If `server-ip` in `server.properties` is set to **a different interface address**, connections to `10.100.0.1:25565` are refused. It must be blank or explicitly `10.100.0.1` | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 16 | No EC2 security group inbound rule, binding to `127.0.0.1`, public IP changing on restart | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 17 | `10.100.0.0/24` colliding with a real LAN, Hyper-V, or another VPN sends traffic out the wrong interface | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
 
 There is also a usability limitation here. The claim in `spec.md` is "without manual port forwarding", and that claim itself holds. What it costs instead is administrator privileges, a driver install, and firewall rules. **The configuration burden did not disappear; it changed kind.** Whether that is easier than port forwarding has to be argued separately, and it belongs in the final report as an honest limitation.
 
@@ -92,9 +112,9 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 
 | # | Problem | Status |
 |---|---------|--------|
-| 18 | The C-5 priority order does not protect the minimum deliverable. Dropping P1 removes M-5; dropping P3 removes M-6 along with the analysis the course requires. Within Phases 1-9 the only genuinely droppable tier is P2 (Wintun, virtual IP, and Minecraft, Phases 6-8); P4 is a stretch tier and never counted | open, follow-up 4 |
-| 19 | The traceability table assigns M-5 to Phase 4, but `DATA` does not exist until Phase 5 | open, follow-up 4 |
-| 20 | If both available home networks show destination-dependent mapping, minimum success is impossible and there is no alternative. Relay is a stretch goal after Phase 9 and cannot rescue it | **resolved (2026-09-20).** 22 measurements, all 7 networks `endpoint-independent`, 0 symmetric. No fallback added, M-1 and M-4 kept. **A residual risk remains** — it returns if conditions change, and there is no fallback. Re-measurement gates are set at the start of Phase 4, during Phase 8 preparation, and right before the demo. [ADR 0001](decisions/0001-no-direct-connection-fallback.md) |
+| 18 | The C-5 priority order does not protect the minimum deliverable | fixed, [`../spec.md`](../spec.md) C-5 and the "Cost of dropping a priority" section. A table records, tier by tier, whether it can be dropped and which criteria disappear with it. The minimum `DATA` round trip and the local record moved to P0, so **minimum success M-1 to M-6 holds with P0 alone** |
+| 19 | The traceability table assigns M-5 to Phase 4, but `DATA` does not exist until Phase 5 | fixed. The minimum `DATA` round trip moved to Phase 4. M-6 had the same defect (no control plane record appeared in the Phase 5 work), so it became a local record and moved to Phase 4 |
+| 20 | If both available home networks show destination-dependent mapping, minimum success is impossible and there is no alternative. Relay is a stretch goal after Phase 9 and cannot rescue it | **resolved (2026-09-20).** 22 measurements, all 7 networks `endpoint-independent`, 0 symmetric. No fallback added, M-1 and M-4 kept. **A residual risk remains** — it returns if conditions change, and there is no fallback. Re-measurement gates are set at the start of Phase 4, during Phase 8 preparation, and right before the demo. [ADR 0001](../decisions/0001-no-direct-connection-fallback.md) |
 
 **Number 20 was the most dangerous.** The others can be fixed, but this one would have left no time to recover if it had surfaced mid-semester. The whole project was hostage to an external condition outside the student's control.
 
@@ -119,17 +139,17 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 | Platform | Calling `connect()` filters out datagrams from other candidates | fixed, `protocol.md` section 5 |
 | Platform | `SO_REUSEADDR` makes delivery nondeterministic | fixed, `protocol.md` section 5 |
 | Platform | Local candidates advertising Wintun/Hyper-V/VPN addresses | fixed, `protocol.md` 8.1 |
-| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | fixed, `architecture.md` 3.2.3. DLL packaging is [`windows-prereq.md`](windows-prereq.md) section 4 |
+| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | fixed, `architecture.md` 3.2.3. DLL packaging is [`../windows-prereq.md`](../windows-prereq.md) section 4 |
 | Platform | Without waiting on the read event and releasing packets, the loop spins or exits | fixed, `architecture.md` 3.2.3 |
-| Platform | The on-link `/24` route already exists, so creating it again errors | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| Platform | Starting tests while the address is still tentative causes intermittent failures | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| Platform | EC2 public IP changes on restart | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| Platform | Minecraft LAN discovery uses multicast and cannot work over a unicast tunnel | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| Platform | A Java update invalidates a path-scoped firewall exception | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| Platform | SmartScreen/Defender may warn on, block, or quarantine the unsigned client, depending on reputation, MOTW and Defender policy | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
-| Viability | M1 (Phases 1-4) and M2 (Phases 5-8) workloads are unbalanced at five weeks each | open, follow-up 4 |
-| Viability | The external UDP vantage point required by Phase 4 keepalive verification does not exist in the design | open, follow-up 4 |
-| Viability | The HTTPS IP lookup in M-2 verification may use a different egress path than the UDP socket | open, follow-up 4 |
+| Platform | The on-link `/24` route already exists, so creating it again errors | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | Starting tests while the address is still tentative causes intermittent failures | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | EC2 public IP changes on restart | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | Minecraft LAN discovery uses multicast and cannot work over a unicast tunnel | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | A Java update invalidates a path-scoped firewall exception | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | SmartScreen/Defender may warn on, block, or quarantine the unsigned client, depending on reputation, MOTW and Defender policy | documented, [`../windows-prereq.md`](../windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Viability | M1 (Phases 1-4) and M2 (Phases 5-8) workloads are unbalanced at five weeks each | fixed. The milestone split itself was removed. Progress decides the week allocation, so it is not fixed in the documents |
+| Viability | The external UDP vantage point required by Phase 4 keepalive verification does not exist in the design | fixed, [`../roadmap.md`](../roadmap.md) Phase 4. It states that the AWS EC2 control server from Phase 3 is used as the vantage point |
+| Viability | The HTTPS IP lookup in M-2 verification may use a different egress path than the UDP socket | fixed, [`../spec.md`](../spec.md) M-2. The check became a query to two different STUN servers from the same UDP socket. The HTTPS lookup moved down to a reference record |
 | Viability | Phase 7 exact counter equality, Phase 8 ±30 ms, and the A-2 controlled failure scenario are over-tightened | open, follow-up 6 |
 | Viability | Phase 9 statistical design (trial duration, independence, uncertainty reporting) undefined | open, follow-up 6 |
 
@@ -141,8 +161,8 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 |---|------|----------|--------|
 | 1 | Write the fixed `protocol.md` | blockers 1,2,3,6,7,8,9,10 plus 13 warnings | **done (2026-09-14)** |
 | 2 | Settle the concurrency model. A single event loop | blockers 4,5 plus 2 warnings | **done (2026-09-15)** |
-| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 6 warnings | **done (2026-09-21)**. [`windows-prereq.md`](windows-prereq.md). **The completion condition is documentation, not real verification** |
-| 4 | Fix the spec logic errors: C-5 priorities, M-5 traceability, milestone rebalancing | blockers 18,19 plus 3 warnings | open |
+| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 6 warnings | **done (2026-09-21)**. [`../windows-prereq.md`](../windows-prereq.md). **The completion condition is documentation, not real verification** |
+| 4 | Fix the spec logic errors: C-5 priorities, M-5/M-6 traceability, milestone handling | blockers 18,19 plus 3 warnings | **done (2026-09-21)** |
 | 5 | Contingency for direct connection being impossible | blocker 20 | **done (2026-09-20)**. Resolved by measurement. Options A, B, and C all rejected |
 | 6 | Loosen the over-tightened verification criteria | 2 warnings | open |
 
@@ -150,7 +170,7 @@ Step 1 covered 40% of the blockers and half the warnings, and step 2 covered the
 
 **The 13 items under step 3 are marked `documented`, not `fixed`.** That means the check command and the pass rule are written down, not that they were confirmed on a demo PC. Real verification sits in Phase 3 (EC2), Phase 6 (Wintun) and Phase 8 (demo preparation).
 
-**Step 3 was completed on 2026-09-21.** [`windows-prereq.md`](windows-prereq.md) covers the 13 items one section each, and 8 of those sections were written from output actually produced on Windows 11 (4 measured, 4 partly measured). **Steps 4 and 6 remain, and both are documentation work.**
+**Step 3 was completed on 2026-09-21.** [`../windows-prereq.md`](../windows-prereq.md) covers the 13 items one section each, and 8 of those sections were written from output actually produced on Windows 11 (4 measured, 4 partly measured). **The week imbalance warning under step 4 was not covered by lowering the bar.** The milestone split itself was removed, which erased the cause. **What remains is read from [`../../kor/plan.md`](../../kor/plan.md), not from this table.**
 
 ---
 

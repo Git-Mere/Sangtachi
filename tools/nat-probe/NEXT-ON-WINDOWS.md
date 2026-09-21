@@ -62,7 +62,7 @@ python tools/nat-probe/natprobe.py punch --label <상대라벨> --port 47000 --u
 | # | 무엇 | 왜 |
 |---|------|-----|
 | 1 | 위 방화벽 시험 | [ADR 0002](../../docs/kor/decisions/0002-리바인딩-복구-미보장.md) 가 **잠정**이다. 이 시험이 확정한다 |
-| 2 | Windows × NAT↔NAT × **다른 ISP** 3회 | 유일하게 비어 있는 조건 조합 ([plan.md](../../docs/kor/plan.md) 5.7) |
+| 2 | Windows × NAT↔NAT × **다른 ISP** 3회 | 유일하게 비어 있는 조건 조합 ([design-audit.md](../../docs/kor/audit-history/design-audit.md) 후속 5번) |
 
 2번은 핫스팟 조합으로 일부 덮었지만 핫스팟은 필수 토폴로지가 아니다. 다른 ISP 가정망
 상대를 찾으면 그걸로 한다.
@@ -92,9 +92,7 @@ git diff HEAD~1 | codex exec -o review.txt "<프롬프트>"
 | 항목 | 상태 |
 |------|------|
 | `TUNNEL_DROPPED` 뒤 자동 재시도 여부 | `protocol.md` 9.6 에 없다. Phase 3~5 에서 정한다 |
-| 후속 3번 Windows 사전조건 절 | `plan.md`. **다음 권장 작업.** 방화벽 규칙 등록 항목은 넣지 않는다 |
-| 후속 4번 spec 논리 오류 | `plan.md` |
-| 후속 6번 과잉 검증 기준 | `plan.md` |
+| 설계 감사 후속 6건 | **전부 완료됐다.** 남은 일은 `docs/kor/plan.md` 에서 읽는다 |
 | **Phase 1 구현** | **미착수.** 코드는 `CMakeLists.txt` 와 hello `main.cpp` 뿐이다 |
 
 ---

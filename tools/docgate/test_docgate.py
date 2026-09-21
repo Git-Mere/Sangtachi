@@ -155,6 +155,35 @@ class TestGate(GateCase):
         self.assertFalse(report.ok)
         self.assertTrue(any(f.check == "link" for f in report.findings))
 
+    def test_kor_only_document_without_a_mirror_passes(self) -> None:
+        # 규칙 3: 정상 입력이 통과하는지부터 본다. `plan.md` 는 한국어만 둔다.
+        self.build()
+        write(self.root, "docs/kor/plan.md", "# Plan\n")
+        self.assertTrue(self.run_gate().ok)
+
+    def test_document_not_on_the_kor_only_list_still_needs_a_mirror(self) -> None:
+        self.build()
+        write(self.root, "docs/kor/notes.md", "# Notes\n")
+        report = self.run_gate()
+        self.assertFalse(report.ok)
+        self.assertTrue(any(f.check == "mirror" for f in report.findings))
+
+    def test_kor_only_document_present_in_eng_fails(self) -> None:
+        # 예외는 "없어도 된다" 이지 "있어도 된다" 가 아니다.
+        self.build()
+        write(self.root, "docs/kor/plan.md", "# Plan\n")
+        write(self.root, "docs/eng/plan.md", "# Plan\n")
+        report = self.run_gate()
+        self.assertFalse(report.ok)
+        self.assertTrue(any(f.check == "mirror" and "한국어 전용" in f.detail
+                            for f in report.findings))
+
+    def test_kor_only_exception_is_full_path_not_file_name(self) -> None:
+        # 이름만으로 봐주면 깊이가 다른 엉뚱한 파일까지 통과한다.
+        self.build()
+        write(self.root, "docs/kor/sub/plan.md", "# Plan\n")
+        self.assertFalse(self.run_gate().ok)
+
     def test_allowed_dangling_link_passes(self) -> None:
         self.build(kor=CLEAN_KOR.replace("(other.md)", "(experiments.md)"),
                    eng=CLEAN_ENG.replace("(other.md)", "(experiments.md)"))

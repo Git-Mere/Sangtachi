@@ -78,7 +78,7 @@ The client is a single process. The thread layout and state ownership are in 3.2
 
 **All UDP sends and receives share one local socket, and that socket is owned exclusively by a single receive loop.** Using different sockets makes the NAT map a different public port for each, so the endpoint discovered through STUN does not apply to the tunnel. This constraint must hold from Phase 2 onward.
 
-Sharing the socket means STUN responses and tunnel packets arrive in the same queue. If the STUN client calls `recvfrom` itself, the two readers steal each other's packets. The STUN client only registers a request and receives the response from the receive loop. The classification rule and the required socket options (`SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, never calling `connect()`) are in sections 5 and 6 of [`protocol.md`](protocol.md).
+Sharing the socket means STUN responses and tunnel packets arrive in the same queue. If the STUN client calls `recvfrom` itself, the two readers steal each other's packets. The STUN client only registers a request and receives the response from the receive loop. The classification rule and the required socket options (`SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, never calling `connect()`) are in sections 6 and 7 of [`protocol.md`](protocol.md).
 
 ### 3.2 Concurrency Model
 
@@ -233,7 +233,7 @@ The Phase 5 "control server down for 10 minutes" test (NFR-3) cannot pass withou
 - **No sentinel is pushed into the queue.** A full queue drops new entries, so a sentinel dropped at exactly that moment would leave `[telemetry]` never seeing the shutdown. Shutdown travels only on the out-of-band event.
 - **Cleanup comes before the join.** That ordering lets the console handler return without waiting on telemetry, and if the OS kills the process at that point all that is lost is a few metric records.
 - The `[telemetry]` join has a 2-second bound. If it is exceeded, the remaining records are abandoned and the process exits immediately via `_exit`, skipping the join. This is safe because cleanup already finished at step (5). **What actually enforces the bound is this `_exit`, not the socket timeouts.** The socket timeouts only make the common case exit cleanly; `_exit` is what keeps shutdown from ever being held hostage to control-plane availability.
-- Cleanup of the adapter, virtual IP address, and routes, along with leftovers from an abnormal exit, is covered by follow-up 3.
+- Cleanup of the adapter, virtual IP address, and routes, along with leftovers from an abnormal exit, is in section 3 of [`windows-prereq.md`](windows-prereq.md).
 
 ---
 
@@ -356,7 +356,7 @@ A successful UDP `sendto` does not guarantee delivery. Both transitions are ther
 - `HANDSHAKING -> CONNECTED`: **two independent flags must both be set.** `got_ack` (a `HELLO_ACK` echoing a nonce we sent, confirming our -> peer path) and `sent_ack` (we sent a `HELLO_ACK` for a valid peer `HELLO`, confirming peer -> our path). Which one is set first is not determined. Assuming an order either misreads a one-directional opening as connected, or times both sides out on a normal ordering.
 - `CONNECTED -> FAILED`: decided not by keepalive send failure, but by receiving no valid packet from the peer for 50 s. Keepalive runs at 15 s with one sent immediately on entering `CONNECTED`, so three losses are tolerated.
 
-Transitions for every state crossed with every received packet are in the 9.3 transition table of [`protocol.md`](protocol.md). In particular, `HELLO_ACK` arriving first in `PUNCHING` and re-answering `HELLO` in `CONNECTED` are both normal behavior; omitting either times both sides out.
+Transitions for every state crossed with every received packet are in the 9.4 transition table of [`protocol.md`](protocol.md). In particular, `HELLO_ACK` arriving first in `PUNCHING` and re-answering `HELLO` in `CONNECTED` are both normal behavior; omitting either times both sides out.
 
 ---
 
@@ -448,6 +448,17 @@ Each failure also records whatever NAT environment information is available (loc
 
 The client buffers into a local ring buffer first and a dedicated thread uploads to the control plane periodically. The upload is fully separated from the data plane, so a control plane outage never affects the tunnel. The isolation structure is in 3.2.6.
 
+**Separate from the upload there is a local record file.** This is what M-6 of [`spec.md`](spec.md) requires, not control plane storage. There are four contracts.
+
+| Item | Contract |
+|------|----------|
+| Content | For each connection attempt, the result (success, or the FR-13 failure code of [`spec.md`](spec.md)) and the RTT |
+| Timing | At the end of session establishment. Written on success and on failure alike |
+| Method | Append-only. Earlier lines are not modified |
+| Independence | No dependency on the telemetry queue or the upload path. The record remains even with no control plane |
+
+**The path and the line format are not decided yet.** They are decided in this document before Phase 4 starts. They are not chosen arbitrarily in code.
+
 ---
 
 ## 10. Repository Layout
@@ -479,11 +490,11 @@ Sangtachi/
 |   |   +-- architecture.md      this document
 |   |   +-- spec.md              requirements and success criteria
 |   |   +-- roadmap.md           phased development plan
-|   |   +-- plan.md              checklist for the current work unit
+|   |   +-- plan.md              handover for the next session
 |   |   +-- first_design.md      initial proposal (reference only)
-|   |   +-- protocol.md          fixed tunnel protocol (written before implementation)
-|   |   +-- design-audit.md      full design audit record
+|   |   +-- protocol.md          fixed tunnel protocol
 |   |   +-- experiments.md       experiment design and results (written in Phase 9)
+|   |   +-- audit-history/       archive of full design audit records
 |   |   +-- decisions/           design decision records
 |   |   +-- commit_history/      per-work-unit change records
 |   +-- kor/                 Korean documents, same structure
@@ -502,7 +513,7 @@ The source tree currently contains only `src/main.cpp` and `CMakeLists.txt` at t
 
 | Dependency | Scope provided | Approval status |
 |------------|----------------|-----------------|
-| Wintun | Windows virtual network interface access only. Adapter creation, packet read/inject | **Approved (2026-09-14)** |
+| Wintun | Windows virtual network interface access only. Adapter creation, packet read/inject | **Approved** |
 | Windows IP Helper / NetIO API | IP address and route configuration for the virtual adapter. **Wintun does not provide this** | OS built-in |
 | Winsock2 | Windows standard socket API | OS built-in |
 | Public STUN servers | Binding Response replies. The server is not implemented, only used | external public service |

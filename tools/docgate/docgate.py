@@ -7,7 +7,7 @@
 
 | 검사 | 판정 | 내용 |
 |------|------|------|
-| `mirror` | 차단 | `docs/kor` 와 `docs/eng` 의 문서 짝이 맞는가 |
+| `mirror` | 차단 | `docs/kor` 와 `docs/eng` 의 문서 짝이 맞는가. `KOR_ONLY` 만 예외다 |
 | `parity` | 차단 | 짝의 헤딩 레벨 순서, 표 행 수, 코드 블록 수, 링크 수가 같은가 |
 | `link` | 차단 | 상대 링크가 실재 경로인가 (예외 목록만 제외) |
 | `claim` | 보고 | 강한 주장 문구가 어디에 있는가. 막지 않고 목록만 낸다 |
@@ -57,6 +57,14 @@ ENG = "eng"
 ALLOWED_DANGLING = {
     f"docs/{KOR}/experiments.md",
     f"docs/{ENG}/experiments.md",
+}
+
+# 한국어만 두는 문서. 전체 경로로 적는다. 미러 짝이 없어도 결함으로 세지 않는다.
+# `plan.md` 는 다음 세션 인수인계용이라 번역해 둘 이유가 없고, 번역이 늦으면 오히려 낡은
+# 상태를 두 곳에 두게 된다. **eng 쪽에 같은 문서가 있으면 그것은 결함이다.** 예외는
+# "없어도 된다" 이지 "있어도 된다" 가 아니다.
+KOR_ONLY = {
+    f"docs/{KOR}/plan.md",
 }
 
 # 파일 이름이 언어마다 다른 디렉터리. 여기서만 앞 번호로 짝을 맞춘다.
@@ -547,9 +555,18 @@ def run(root: Path) -> Report:
     eng_files = _collect(root / "docs" / ENG)
     pairs, unmatched_kor, unmatched_eng = pair_documents(kor_files, eng_files)
 
-    for path, other in [(p, ENG) for p in unmatched_kor] + [(p, KOR) for p in unmatched_eng]:
-        report.findings.append(Finding(
-            "mirror", str(path.relative_to(root)).replace("\\", "/"), f"{other} 쪽에 짝이 없다"))
+    def _rel(path: Path) -> str:
+        return str(path.relative_to(root)).replace("\\", "/")
+
+    # 한국어 전용 문서는 eng 쪽에 **있으면** 안 된다. 없는 것만 봐주는 예외다.
+    for kor_path, eng_path in pairs:
+        if _rel(kor_path) in KOR_ONLY:
+            report.findings.append(Finding(
+                "mirror", _rel(eng_path), f"한국어 전용 문서인데 {ENG} 쪽에 파일이 있다"))
+
+    for path, other in [(p, ENG) for p in unmatched_kor if _rel(p) not in KOR_ONLY] + \
+                       [(p, KOR) for p in unmatched_eng]:
+        report.findings.append(Finding("mirror", _rel(path), f"{other} 쪽에 짝이 없다"))
 
     for kor_path, eng_path in pairs:
         report.pairs += 1

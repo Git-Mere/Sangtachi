@@ -1,7 +1,7 @@
 # 2026-09-14 Full Design Audit and protocol.md
 
 > This record was not written at the time of commit `9808640`; it was added retroactively on
-> 2026-09-15, reconstructed from that commit's diff and [`../design-audit.md`](../design-audit.md).
+> 2026-09-15, reconstructed from that commit's diff and [`../audit-history/design-audit.md`](../audit-history/design-audit.md).
 
 ## Changes
 

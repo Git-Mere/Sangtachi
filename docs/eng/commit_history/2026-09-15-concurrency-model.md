@@ -2,7 +2,7 @@
 
 ## Changes
 
-Executed follow-up 2 from the design audit ([`../design-audit.md`](../design-audit.md)). It resolves
+Executed follow-up 2 from the design audit ([`../audit-history/design-audit.md`](../audit-history/design-audit.md)). It resolves
 blocker 4 (data races) and blocker 5 (telemetry blocking keepalives), plus 2 warnings.
 
 - Added `architecture.md` 3.2: thread layout, wait mechanism, one loop iteration, timers,

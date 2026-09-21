@@ -17,6 +17,7 @@ probe 만으로 판단하면 안 된다. Binding 응답은 매핑 거동만 알�
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import math
 import os
@@ -113,6 +114,18 @@ def _utcnow_iso() -> str:
 
 
 SIO_UDP_CONNRESET = 0x9800000C
+
+# 로컬 출발지로 인정하는 비공인 대역. `ipaddress.is_private` 를 그대로 쓰면 문서용
+# (192.0.2.0/24 등)과 벤치마킹(198.18.0.0/15) 대역까지 "사설 NAT 주소" 로 보고하게 된다.
+# 실제 단말에 붙을 수 있는 대역만 명시한다.
+_PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "192.0.0.0/29",   # RFC 7335 464XLAT CLAT
+    "fc00::/7",       # ULA
+))
+_SPECIAL_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "100.64.0.0/10",  # CGNAT
+))
 
 # SIO_UDP_CONNRESET off 를 실제로 적용했는지. main 이 기록에 넣는다.
 _connreset_state = {"disabled": None, "detail": None}
@@ -412,6 +425,167 @@ def classify_mapping(servers: list, local_port: int = 0) -> dict:
         "mapping_confident": confident,
         "port_preserving": port_preserving,
     }
+
+
+def _is_usable_public(ip) -> bool:
+    """인터넷에서 유니캐스트로 도달 가능한 주소인가.
+
+    `is_global` 만으로는 부족하다. **멀티캐스트 주소는 `is_global` 이 참이다**
+    (`224.0.0.1`, `ff02::1` 모두 그렇다). STUN 응답이 멀티캐스트를 담고 있으면
+    유효한 공인 엔드포인트로 받아들여 잘못된 판정을 만든다.
+    """
+    return (ip.is_global and not ip.is_multicast and not ip.is_unspecified
+            and not ip.is_loopback and not ip.is_link_local and not ip.is_reserved)
+
+
+def _strict_port(value) -> "int | None":
+    """정수이거나 표준 10진 문자열일 때만 포트로 받는다.
+
+    `int()` 를 그냥 쓰면 `True` 가 1이 되고 `5.9` 가 5로 잘린다. 잘못된 입력이
+    조용히 그럴듯한 값으로 바뀌면 그 위에서 내린 판정이 틀렸는지 알 수 없다.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        port = value
+    elif (isinstance(value, str) and value.isascii() and value.isdigit()
+            and len(value) <= 5):
+        # 길이를 먼저 본다. Python 3.11+ 는 아주 긴 숫자 문자열에 int() 를 쓰면
+        # int_max_str_digits 제한으로 ValueError 를 던진다.
+        port = int(value)
+    else:
+        return None
+    return port if 0 < port < 65536 else None
+
+
+def classify_nat(local_ip: str, local_port: int, servers: list) -> dict:
+    """로컬 엔드포인트와 STUN 관측 엔드포인트를 비교해 NAT 뒤인지 판정한다.
+
+    **이것을 기록하지 않으면 측정을 잘못 보고하게 된다.** 2026-09-20 US-KR 측정에서
+    한국 쪽은 로컬 주소가 곧 공인 주소였다(KT가 단말에 공인 IP를 직접 준다). 그것을
+    사후에 `socket.local_ip` 와 대조해서야 알았다. 몰랐다면 그 측정을 NAT ↔ NAT 으로
+    보고했을 것이고, blocker 20 판정이 틀렸을 것이다.
+
+    **IP 와 포트를 둘 다 본다.** IP 만 비교하면 포트만 바꾸는 상위 장비를 "NAT 없음" 으로
+    잘못 보고한다. `behind_nat` 이 `False` 라는 것은 변환이 전혀 없다는 강한 주장이므로
+    두 값이 모두 같을 때만 낸다.
+
+      True   로컬 엔드포인트와 관측 엔드포인트가 다르다. 중간에 변환이 있다
+      False  둘이 완전히 같다. 이 호스트가 공인 엔드포인트를 직접 갖는다
+      None   비교할 수 없다
+    """
+    # 서버 행 자체가 잘못된 형태일 수 있다. 여기서 터지면 측정 전체가 죽는다.
+    ok = []
+    try:
+        for row in servers:
+            if not isinstance(row, dict):
+                raise TypeError("서버 행이 dict 가 아니다")
+            # 불리언 True 만 받는다. "false" 같은 문자열도 truthy 라서
+            # 단순 조건으로는 실패한 질의를 성공으로 처리한다.
+            if row["ok"] is True:
+                ok.append(row)
+            elif row["ok"] is not False:
+                raise TypeError("ok 가 불리언이 아니다")
+    except (TypeError, KeyError):
+        return {"behind_nat": None, "local_ip_scope": "unknown",
+                "nat_note": "STUN 결과의 형태가 잘못되어 판정하지 않는다"}
+
+    # 해석되지 않는 로컬 주소로 위상을 단정하지 않는다. 검증 안 된 입력에서
+    # behind_nat=True 를 내면 없는 사실을 만들어 낸다.
+    # 문자열만 받는다. ipaddress 는 정수도 받아 12345 를 0.0.48.57 로 해석하므로,
+    # 문자열을 강제하지 않으면 잘못된 입력이 그럴듯한 주소로 조용히 바뀐다.
+    if not isinstance(local_ip, str):
+        return {"behind_nat": None, "local_ip_scope": "unknown",
+                "nat_note": f"로컬 주소가 문자열이 아니다: {local_ip!r}"}
+    try:
+        addr = ipaddress.ip_address(local_ip)
+    except ValueError:
+        return {"behind_nat": None, "local_ip_scope": "unknown",
+                "nat_note": f"로컬 주소를 해석할 수 없어 비교할 수 없다: {local_ip!r}"}
+    if addr.is_unspecified:
+        return {"behind_nat": None, "local_ip_scope": "unknown",
+                "nat_note": "로컬 주소가 0.0.0.0(미지정)이라 비교할 수 없다"}
+
+    # 루프백, 멀티캐스트, 예약 대역은 외부로 나가는 출발지가 될 수 없다. ipaddress 는
+    # 루프백도 is_private 로 보므로 먼저 걸러내지 않으면 127.0.0.1 을 "사설 대역이고
+    # 관측값과 다르니 NAT 이 있다" 로 오판한다.
+    if (addr.is_loopback or addr.is_multicast or addr.is_reserved
+            or addr.is_link_local):
+        # 링크 로컬(169.254.x.x)은 DHCP 실패 시 붙는 주소다. 인터넷 출발지가 될 수
+        # 없으므로, 이 주소로 STUN 관측값과 비교해 위상을 말하면 안 된다.
+        return {"behind_nat": None, "local_ip_scope": "special",
+                "nat_note": f"로컬 주소가 외부 출발지가 될 수 없는 대역이다: {local_ip}"}
+
+    lport = _strict_port(local_port)
+    if lport is None:
+        return {"behind_nat": None, "local_ip_scope": "unknown",
+                "nat_note": f"로컬 포트가 유효하지 않다: {local_port!r}"}
+
+    if addr.is_global:
+        scope = "public"
+    elif any(addr in n for n in _PRIVATE_NETS if n.version == addr.version):
+        scope = "private"
+    elif any(addr in n for n in _SPECIAL_NETS if n.version == addr.version):
+        scope = "special"          # CGNAT
+    else:
+        # 문서용, 벤치마킹, 그 밖의 특수 대역. 단말의 실제 출발지가 아니다.
+        return {"behind_nat": None, "local_ip_scope": "unknown",
+                "nat_note": f"로컬 주소가 단말 출발지로 쓰이는 대역이 아니다: {local_ip}"}
+
+    # 관측값도 검증한다. 문자열이 아니라 해석한 주소 객체로 비교한다. IPv6 는 같은
+    # 주소를 여러 방식으로 적을 수 있어(2001:0db8::1 과 2001:db8::1) 문자열 비교가 틀린다.
+    # **하나라도 해석되지 않으면 판정하지 않는다.** 남은 값 하나가 우연히 일치해서
+    # "NAT 없음" 이 나오면 틀린 위상을 보고하게 된다.
+    observed = set()
+    for row in ok:
+        try:
+            raw_ip = row["mapped"]["ip"]
+            if not isinstance(raw_ip, str):
+                raise TypeError("관측 주소가 문자열이 아니다")
+            ip = ipaddress.ip_address(raw_ip)
+        except (ValueError, KeyError, TypeError):
+            return {"behind_nat": None, "local_ip_scope": scope,
+                    "nat_note": "해석할 수 없는 STUN 관측 주소가 있어 판정하지 않는다"}
+        # STUN 서버가 보고하는 것은 공인 도달 가능 주소여야 한다. 0.0.0.0, 루프백,
+        # 링크 로컬, 예약 대역이 오면 그 값으로 위상을 말할 수 없다.
+        if not _is_usable_public(ip):
+            return {"behind_nat": None, "local_ip_scope": scope,
+                    "nat_note": f"STUN 관측 주소가 도달 가능한 공인 유니캐스트가 아니다: {raw_ip}"}
+        try:
+            port = _strict_port(row["mapped"]["port"])
+        except (KeyError, TypeError):
+            port = None
+        if port is None:
+            return {"behind_nat": None, "local_ip_scope": scope,
+                    "nat_note": "유효하지 않은 STUN 관측 포트가 있어 판정하지 않는다"}
+        observed.add((ip, port))
+
+    if not observed:
+        return {"behind_nat": None, "local_ip_scope": scope,
+                "nat_note": "비교할 수 있는 STUN 관측 엔드포인트가 없다"}
+
+    mine = (addr, lport)
+    behind = not (len(observed) == 1 and mine in observed)
+
+    # behind_nat=False 는 "이 호스트가 공인 엔드포인트를 직접 갖는다" 는 강한 주장이다.
+    # 사설·특수 대역이 관측값과 일치하는 경우는 그 주장을 뒷받침하지 못한다. 잘못된
+    # STUN 응답이 로컬 주소를 그대로 돌려주기만 해도 성립해 버린다.
+    if not behind and not _is_usable_public(addr):
+        return {"behind_nat": None, "local_ip_scope": scope,
+                "nat_note": (f"관측값이 로컬 엔드포인트와 같은데 그 주소가 공인 대역이 "
+                             f"아니다({scope}). 판정하지 않는다")}
+
+    if not behind:
+        note = ("로컬 엔드포인트가 곧 공인 엔드포인트다. 주소도 포트도 바뀌지 않았다. "
+                "이 호스트의 인바운드는 방화벽과 상위 경로만이 거른다")
+    elif len(observed) == 1 and next(iter(observed))[0] == addr:
+        note = ("IP 는 같은데 포트가 바뀐다. 주소 변환은 없고 포트만 바꾸는 장비가 있다")
+    elif scope == "public":
+        note = "로컬 주소가 공인 대역인데 관측값과 다르다. 상위에 변환 장비가 있다"
+    else:
+        note = f"로컬 주소가 {scope} 대역이고 관측값과 다르다. 통상적인 NAT 구성이다"
+
+    return {"behind_nat": behind, "local_ip_scope": scope, "nat_note": note}
 
 
 def run_stun(sock: socket.socket, servers: list, local_port: int = 0) -> dict:
@@ -1017,6 +1191,9 @@ def main(argv=None) -> int:
             "reused_for_punch": args.mode == "punch",
             "udp_connreset_disabled": _connreset_state["disabled"],
             "udp_connreset_detail": _connreset_state["detail"],
+            "behind_nat": None,
+            "local_ip_scope": None,
+            "nat_note": None,
         },
         "stun": None,
         "punch": None,
@@ -1033,7 +1210,12 @@ def main(argv=None) -> int:
 
     try:
         record["stun"] = run_stun(sock, servers, local_port)
+        record["socket"].update(
+            classify_nat(local_ip, local_port, record["stun"]["servers"]))
         print_stun_summary(record["stun"])
+        nat = record["socket"]["behind_nat"]
+        label = {True: "예", False: "아니오", None: "판정 불가"}[nat]
+        print(f"  NAT 뒤인가: {label}  ({record['socket']['nat_note']})")
 
         mine = shareable_endpoint(record["stun"])
         if mine:

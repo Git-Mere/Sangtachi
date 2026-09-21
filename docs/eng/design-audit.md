@@ -94,9 +94,11 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 |---|---------|--------|
 | 18 | The C-5 priority order does not protect the minimum deliverable. Dropping P1 removes M-5; dropping P3 removes M-6 along with the analysis the course requires. Within Phases 1-9 the only genuinely droppable tier is P2 (Wintun, virtual IP, and Minecraft, Phases 6-8); P4 is a stretch tier and never counted | open, follow-up 4 |
 | 19 | The traceability table assigns M-5 to Phase 4, but `DATA` does not exist until Phase 5 | open, follow-up 4 |
-| 20 | If both available home networks show destination-dependent mapping, minimum success is impossible and there is no alternative. Relay is a stretch goal after Phase 9 and cannot rescue it | open, follow-up 5 |
+| 20 | If both available home networks show destination-dependent mapping, minimum success is impossible and there is no alternative. Relay is a stretch goal after Phase 9 and cannot rescue it | **resolved (2026-09-20).** 22 measurements, all 7 networks `endpoint-independent`, 0 symmetric. No fallback added, M-1 and M-4 kept. **A residual risk remains** — it returns if conditions change, and there is no fallback. Re-measurement gates are set at the start of Phase 4, during Phase 8 preparation, and right before the demo. [ADR 0001](decisions/0001-no-direct-connection-fallback.md) |
 
-**Number 20 is the most dangerous.** The others can be fixed, but this one leaves no time to recover if it surfaces mid-semester. The whole project is hostage to an external condition outside the student's control.
+**Number 20 was the most dangerous.** The others can be fixed, but this one would have left no time to recover if it had surfaced mid-semester. The whole project was hostage to an external condition outside the student's control.
+
+**It was resolved by measurement on 2026-09-20.** The hostage structure itself has not gone away, though. The measurements are observations at one point in time and can be invalidated by a router replacement or an ISP configuration change. There is still no fallback for the fallback, so a re-measurement right before the demo is added to the Phase 8 preparation steps.
 
 ---
 
@@ -141,10 +143,12 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 | 2 | Settle the concurrency model. A single event loop | blockers 4,5 plus 2 warnings | **done (2026-09-15)** |
 | 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 6 warnings | open |
 | 4 | Fix the spec logic errors: C-5 priorities, M-5 traceability, milestone rebalancing | blockers 18,19 plus 3 warnings | open |
-| 5 | Contingency for direct connection being impossible: a NAT emulation testbed, or promote a minimal relay to P1 | blocker 20 | open |
+| 5 | Contingency for direct connection being impossible | blocker 20 | **done (2026-09-20)**. Resolved by measurement. Options A, B, and C all rejected |
 | 6 | Loosen the over-tightened verification criteria | 2 warnings | open |
 
-Step 1 covered 40% of the blockers and half the warnings, and step 2 covered the two remaining concurrency blockers. Step 5 is recommended next. The rest can be fixed whenever, but blocker 20 leaves no time to recover if it surfaces mid-semester.
+Step 1 covered 40% of the blockers and half the warnings, and step 2 covered the two remaining concurrency blockers. **Step 5 was resolved by measurement on 2026-09-20.** It was handled first because it was the most dangerous item.
+
+**Steps 3, 4, and 6 remain, and all three are documentation work.** Step 3 (Windows prerequisites) is recommended next: it is better to write down the runtime prerequisites before starting the Phase 1 implementation, and the step 5 measurements already produced observations about firewall and NAT behaviour.
 
 ---
 

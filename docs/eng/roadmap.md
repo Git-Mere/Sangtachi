@@ -166,6 +166,8 @@ Two clients on different networks obtain each other's endpoint through AWS.
 
 ### Tasks
 
+- **Re-run the `tools/nat-probe` measurement before starting.** Confirm the blocker 20 verdict still holds. A change found here still leaves time to revise the design ([ADR 0001](decisions/0001-no-direct-connection-fallback.md))
+
 Follow the section 12 implementation checklist in [`protocol.md`](protocol.md) exactly. This phase is implementation, not design.
 
 - Header serialization/deserialization (field by field, network byte order)
@@ -337,6 +339,8 @@ The two Windows machines communicate using virtual IP addresses alone.
 
 ### Tasks
 
+- **Re-run the `tools/nat-probe` measurement when Phase 8 starts.** Confirm the blocker 20 verdict still holds before setting up the demo environment ([ADR 0001](decisions/0001-no-direct-connection-fallback.md))
+- **Re-run it once more right before the demo.** This is the same-day check. The blocker 20 verdict rests on observations at one point in time and can be invalidated by a router replacement or an ISP configuration change
 - Run the Minecraft Java server on the host
 - Have the player connect to the host's virtual IP
 - Confirm login and world entry

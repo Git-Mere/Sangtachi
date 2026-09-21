@@ -514,13 +514,21 @@ All outbound traffic goes to `peer_endpoint`. Before anything is learned (during
 4. If none arrives within 5 seconds, discard the tentative path and increment path_probe_failed.
 ```
 
+**The premise of this procedure, and what measurement showed.** Step 1 assumes that a packet from an address outside the candidate set **actually arrives**. Measurements on 2026-09-20 found cases where that assumption fails. On all 3 network pairs measured (Windows to Windows, Windows to macOS, Windows to Linux), UDP with **the same source IP but a different source port** was blocked in both directions (6 cases, 0 of 20 probes arrived in each).
+
+**The leading explanation is port-restricted filtering in the NAT,** because the result was the same on macOS and Linux hosts believed to have no active firewall filtering. **It is not stated as certain.** The macOS case is inferred from defaults and was not queried directly; on Linux only `ufw` was confirmed off, and without root the full `nft` and `iptables` rulesets were not seen. No packet capture was taken on either side.
+
+**So v1 does not guarantee recovery from NAT rebinding through (c).** More precisely, it is not guaranteed **for endpoint changes matching the behaviour that was tested, where only the source port changes.** An actual rebinding was never induced and tested, so this does not claim that every rebinding fails. Where it is not guaranteed, step 1 never starts, and renegotiation in 9.5 loses its trigger for the same reason. Both sides then reach the idle timeout (50s) and the session ends with `TUNNEL_DROPPED`. As 9.6 states, **if a retry happens** it starts from `IDLE` with a new epoch and nonce and goes through the control plane again. **This document does not define who starts that retry, or when.** Whether it is automatic is undecided and must be settled in Phases 3 to 5.
+
+(c) is not removed, for two reasons. First, its **defence against forged source addresses** still applies: whenever a packet does arrive from outside the candidate set, that validation is needed. Second, **on a NAT that uses address-restricted (restricted cone) filtering the packet can arrive.** Every observation here was merely **consistent with** a port-restricted NAT; it was not confirmed. The reasoning and the discarded alternatives are in [`decisions/0002-no-rebinding-recovery.md`](decisions/0002-no-rebinding-recovery.md).
+
 An attacker spoofing the source never receives the `HELLO` in step 2 and so cannot complete step 3. This is how the promise in section 2 to block third-party harm is preserved under endpoint learning. Without this procedure, anyone who knows the session identifiers could redirect the entire game traffic stream at an arbitrary victim.
 
 Nomination is not used for three reasons.
 
 - **Behind the same NAT**: if the two peers nominate the LAN path and the hairpinned public path respectively, they pin different endpoints and each filters out the other's packets, deadlocking.
 - **Asymmetric nomination**: one side receiving on a LAN candidate while the other sends to a public candidate produces the same deadlock.
-- **NAT rebinding**: a mapping can change without the epoch changing, so a fixed scheme has no trigger to renegotiate and must wait for the idle timeout.
+- **NAT rebinding**: a mapping can change without the epoch changing, so a fixed scheme has no trigger to renegotiate and must wait for the idle timeout. **Measurement on 2026-09-20 invalidated this reason.** Learning **does not guarantee recovery for a rebinding that produces the tested endpoint change, where only the source port differs and the observed filtering applies** (see the measured limit under (c) above). An actual rebinding was never induced and tested. The other two reasons still hold, so the learning approach itself stays.
 
 Learning uses **whichever path most recently actually delivered**, so all three cases converge automatically. Duplicate suppression (4.5) filters older packets first, so a delayed packet from a previous path cannot drag the endpoint backwards.
 

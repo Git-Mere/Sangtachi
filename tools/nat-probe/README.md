@@ -327,6 +327,13 @@ blocker 20이 위험한 이유는 대칭형 NAT 자체가 아니라, 그 사실�
 | `socket.reused_for_punch` | bool | STUN과 펀치가 같은 소켓을 썼는지. `punch`에서 `true`여야 결과가 유효하다 |
 | `socket.udp_connreset_disabled` | bool / null | Windows에서 `SIO_UDP_CONNRESET`을 껐는지. Windows가 아니면 `null` |
 | `socket.udp_connreset_detail` | string / null | 위가 `false`일 때의 실패 사유. 그 외에는 항상 `null` |
+| `socket.behind_nat` | bool / null | 로컬 엔드포인트와 STUN 관측 엔드포인트가 다른가. **IP와 포트를 둘 다 본다.** `false` 면 주소도 포트도 바뀌지 않았다는 뜻이다. 비교할 수 없으면 `null` |
+| `socket.local_ip_scope` | string / null | `private` / `public` / `special`(CGNAT 등) / `unknown`. 해석할 수 없는 주소와 `0.0.0.0` 은 `unknown` 이고, 이때 `behind_nat` 은 `null` 이다 |
+| `socket.nat_note` | string / null | 위 판정의 근거를 한 줄로 |
+
+**`behind_nat` 를 반드시 기록에 옮긴다.** 2026-09-20 US-KR 측정에서 한국 쪽은 로컬 주소가 곧
+공인 주소였다. 그것을 사후에 알아챘기에 망정이지, 몰랐다면 그 측정을 NAT ↔ NAT 으로 잘못
+보고했을 것이다. **한쪽이라도 `false` 면 그 측정은 NAT 두 개를 시험한 것이 아니다.**
 
 ### 9.3 `stun`
 

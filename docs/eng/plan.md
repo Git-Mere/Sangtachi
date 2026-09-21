@@ -15,11 +15,17 @@ and warning numbers for each item are in sections 3 and 4 of that document.
 | 2 | Settle the concurrency model | blockers 4,5 plus 2 warnings | done 2026-09-15 |
 | 3 | Add a Windows prerequisites section | blockers 11-17 plus 6 warnings | todo |
 | 4 | Fix the spec logic errors | blockers 18,19 plus 3 warnings | todo |
-| 5 | Contingency for direct connection being impossible | blocker 20 | todo |
+| 5 | Contingency for direct connection being impossible | blocker 20 | done 2026-09-20 |
 | 6 | Loosen the over-tightened verification criteria | 2 warnings (4 criteria) | todo |
 
-**Step 5 is recommended first.** The rest can be fixed whenever, but blocker 20 leaves no time to
-recover if it surfaces mid-semester.
+**Step 5 was completed by measurement on 2026-09-20.** It was handled first because it was the
+most dangerous item. The worst case of blocker 20 was not observed and no fallback is being added
+(5.7-5.9, [ADR 0001](decisions/0001-no-direct-connection-fallback.md)). A residual risk remains
+if conditions change, so re-measurement gates are set at three points.
+
+**Step 3 is recommended next.** It is better to write down the runtime prerequisites before
+starting the Phase 1 implementation, and the step 5 measurements already produced observations
+about firewall and NAT behaviour.
 
 ---
 
@@ -137,6 +143,97 @@ that path fail too leaves blocker 20 exactly where it was.
 - State what remains if that path also fails. If there is no contingency for the contingency, say so
 - Record the decision and its basis as an ADR in `decisions/`
 
+### 5.7 Measurement Results (complete, 2026-09-20)
+
+A tool was built and 22 measurements were taken. The tool is in
+[`../../tools/nat-probe/`](../../tools/nat-probe/); the filled records and raw JSON are under it
+(not committed, because of the public IPs; see 5.9).
+
+| Item | Value |
+|------|-----|
+| Measurements | 22 |
+| Distinct networks | **7** (3 T-Mobile, 3 Comcast, 1 KT) |
+| Mapping verdict | **`endpoint-independent` in all 22** |
+| Punch result | **`success` in all 22** |
+| Symmetric (destination-dependent) NAT | **0** |
+| Network pairs attempted | 6. 0 failures |
+
+| Measurement | Topology | NAT-NAT | Diff ISP | Win-Win | Unsolicited inbound |
+|------|----------|:-------:|:--------:|:-------:|------------------------|
+| 09-17 | 2 mobile hotspots, same carrier | yes | no | no | not tested |
+| 09-18 | 2 Comcast homes, **3 in a row** | **yes** | no | no | not tested |
+| 09-20 | US to Korea, **3 in a row** | no (KR has a public IP) | **yes** | **yes** | not tested |
+| 09-20 | 2 Comcast homes, Windows | **yes** | no | **yes** | **`blocked`** |
+| 09-20 | Washington to Michigan | **yes** | no | no | **`blocked`** |
+| 09-20 | T-Mobile hotspot to Comcast home | **yes** | **yes** | no | **`blocked`** |
+
+**Required test topology (2), "2 different home networks", succeeded 3 times in a row on 09-18.**
+No condition changed between rounds and the end times agreed within 1 second each round.
+
+**No single measurement satisfied all three conditions at once.** The combination is covered and
+all 6 pairs attempted succeeded, but it was not proven within one measurement. This limit goes
+into the report.
+
+### 5.8 A Side Finding: the NAT Blocks Unsolicited Inbound
+
+**This item was not in the original plan.** It surfaced while investigating why no Windows
+firewall prompt appeared in the 09-20 measurement even though all inbound traffic arrived.
+
+The default inbound action is `Block` and there is no allow rule for `python.exe`, yet the punch
+succeeded. **Stateful UDP** explains it: because we sent first, the replies counted as solicited
+traffic. Other explanations were not excluded. That left packets **from a source port we have
+never sent to** untested.
+
+An `--unsolicited` test was built and run on 3 pairs. **All 6 cases were `blocked`.**
+
+| Host OS | Host firewall | Result |
+|-----------|---------------|------|
+| Windows 11 | Inbound default `Block`, no `python.exe` rule | `blocked` |
+| macOS | Application Firewall off by default | `blocked` |
+| Linux | `/etc/ufw/ufw.conf` says `ENABLED=no` (checked directly) | `blocked` |
+
+**It was blocked even on hosts believed to have no active firewall filtering. The most likely
+cause is not the host but port-restricted filtering in the NAT.** The macOS case is inferred from defaults and only `ufw`
+was checked on Linux, so it is not stated as certain. The observations are merely consistent with
+a port-restricted NAT.
+
+Two things follow.
+
+- **The client does not register firewall rules. This is provisional.** If the NAT is the cause,
+  a rule would not help. For now no administrator rights requirement appears and the "without
+  manual port forwarding" claim in `spec.md` stands. **However, the firewall is not excluded as
+  the cause for directions where our Windows host is the receiver.** Adding one narrowly scoped temporary inbound
+  rule on a Windows machine and re-running `--unsolicited` settles it. The condition that would overturn
+  the decision is in [ADR 0002](decisions/0002-no-rebinding-recovery.md)
+- **The premise of path validation in [`protocol.md`](protocol.md) 10.4 (c) breaks.** Of the three
+  reasons 10.4 chose learning over nomination, **NAT rebinding recovery** is not guaranteed under the
+  filtering observed in the tested environments. The decision is recorded in
+  [ADR 0002](decisions/0002-no-rebinding-recovery.md) and applied to `protocol.md`
+
+### 5.9 Conclusion and Remaining Actions
+
+**Blocker 20 is resolved.** No fallback is added and M-1 and M-4 stay exactly as written. Options
+A (emulation), B (promoting the relay to P1), and C (making the hotspot mandatory) were all
+rejected. The reasoning and the accepted risks are in
+[ADR 0001](decisions/0001-no-direct-connection-fallback.md).
+
+**2 decisions.**
+
+| Item | Decision |
+|------|------|
+| Whether to publish the raw measurements | **Keep them local.** `tools/nat-probe/results/` and `records/` are in `.gitignore`. This repository is public and the files carry the public IPs of two households with minute-level timestamps. Publishing a friend's home IP cannot be undone and was not agreed to. Attachments are not the raw files. A submission system and shared links create the same exposure. **Replace public addresses with irreversible pseudonyms (`network A`, `network B`) and keep timestamps only to the date.** Masking the last IPv4 octet is not enough and does not apply to IPv6. Otherwise obtain explicit consent from the people involved. State in the report which was done. **Cost:** the raw data does not follow the repository to another machine. The verdicts and the reasoning stay in this document and in the ADRs, so the conclusions are not lost |
+| Writing the ADRs | **Done.** 0001 and 0002 in `decisions/` |
+
+**Remaining actions.**
+
+1. ~~Add "re-measure right before the demo" to the Phase 8 preparation steps~~ **Done.** It was
+   added to the Phase 8 tasks in `roadmap.md`. This decision rests on observations at one point in
+   time and can be invalidated by a router replacement or an ISP configuration change. There is no
+   fallback for the fallback
+2. Measure mapping lifetime during the Phase 4 keepalive work, and check whether the 15s interval
+   actually prevents rebinding
+3. Carry the limits of the evidence into the report: no measurement satisfied all three conditions
+   at once, the sample leans toward Comcast, and one side of the different-ISP pair is a hotspot
 ---
 
 ## 6. Loosen the Over-Tightened Verification Criteria

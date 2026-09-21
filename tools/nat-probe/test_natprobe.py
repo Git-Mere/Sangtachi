@@ -71,6 +71,109 @@ cases.append(("구판(v1) 패킷 거부", np.parse_punch(old_fmt) is None, None)
 cases.append(("STUN 과 펀치 첫 바이트 구분", (np.PUNCH_MAGIC[0] & 0xC0) == 0x40, None))
 cases.append(("Binding Request 20바이트", len(np.build_binding_request(txid)) == 20, None))
 
+# NAT 유무 판정
+# 주소는 전부 개인과 무관한 값이다. 실측 기록의 공인 IP를 시험에 쓰지 않는다.
+def srv(ip, port=1):
+    return {"ok": True, "resolved_ip": "1.1.1.1", "mapped": {"ip": ip, "port": port}}
+_n = np.classify_nat
+c = _n("10.0.0.1", 5000, [srv("8.8.4.4", 6000), srv("8.8.4.4", 6000)])
+cases.append(("사설 로컬 + 다른 공인 -> NAT 있음",
+              c["behind_nat"] is True and c["local_ip_scope"] == "private", c))
+c = _n("8.8.8.8", 5000, [srv("8.8.8.8", 5000), srv("8.8.8.8", 5000)])
+cases.append(("로컬 엔드포인트 = 공인 엔드포인트 -> NAT 없음",
+              c["behind_nat"] is False and c["local_ip_scope"] == "public", c))
+c = _n("8.8.8.8", 5000, [srv("8.8.8.8", 6000)])
+cases.append(("IP 는 같은데 포트가 바뀌면 NAT 없음이라고 하지 않는다",
+              c["behind_nat"] is True, c))
+c = _n("192.0.0.2", 5000, [srv("1.1.1.1", 6000)])
+cases.append(("464XLAT 대역(RFC 7335 192.0.0.0/29)도 사설로 본다",
+              c["behind_nat"] is True and c["local_ip_scope"] == "private", c))
+c = _n("100.64.0.5", 5000, [srv("8.8.4.4", 6000)])
+cases.append(("CGNAT 대역은 special 로 본다",
+              c["behind_nat"] is True and c["local_ip_scope"] == "special", c))
+c = _n("10.0.0.1", 5000, [])
+cases.append(("STUN 응답이 없으면 판정 불가", c["behind_nat"] is None, c))
+c = _n("not-an-ip", 5000, [srv("8.8.4.4")])
+cases.append(("해석 안 되는 로컬 주소는 단정하지 않는다",
+              c["behind_nat"] is None and c["local_ip_scope"] == "unknown", c))
+c = _n("0.0.0.0", 5000, [srv("8.8.4.4")])
+cases.append(("0.0.0.0 은 비교 불가",
+              c["behind_nat"] is None and c["local_ip_scope"] == "unknown", c))
+# 공인 IPv6 로 시험한다. 2001:db8::/32 는 문서용 예약 대역이라 is_global 이 거짓이고,
+# 그 경우 위 가드가 먼저 걸려 표기 비교를 확인할 수 없다.
+c = _n("2606:4700:4700::1111", 5000,
+       [srv("2606:4700:4700:0000:0000:0000:0000:1111", 5000)])
+cases.append(("IPv6 표기가 달라도 같은 주소로 본다", c["behind_nat"] is False, c))
+c = _n("2001:db8::1", 5000, [srv("2001:db8::1", 5000)])
+cases.append(("문서용 IPv6 대역은 NAT 없음이라고 하지 않는다", c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, [srv("bogus", 1)])
+cases.append(("관측 주소가 잘못되면 판정 불가", c["behind_nat"] is None, c))
+c = _n("8.8.8.8", 5000, [srv("8.8.8.8", 5000), srv("bogus", 1)])
+cases.append(("관측값 하나만 잘못돼도 버리지 않고 판정 불가로 낸다",
+              c["behind_nat"] is None, c))
+c = _n("8.8.8.8", 5000, [srv("8.8.8.8", 99999)])
+cases.append(("관측 포트가 범위를 벗어나면 판정 불가", c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, [srv("8.8.4.4", 6000), srv("8.8.4.4", 7000)])
+cases.append(("서버마다 관측값이 다르면 NAT 있음", c["behind_nat"] is True, c))
+c = _n("127.0.0.1", 5000, [srv("8.8.4.4", 6000)])
+cases.append(("루프백은 외부 출발지가 아니므로 판정 불가",
+              c["behind_nat"] is None and c["local_ip_scope"] == "special", c))
+c = _n("10.0.0.1", 0, [srv("8.8.4.4", 6000)])
+cases.append(("로컬 포트 0 은 판정 불가", c["behind_nat"] is None, c))
+c = _n("10.0.0.1", "abc", [srv("8.8.4.4", 6000)])
+cases.append(("로컬 포트가 숫자가 아니면 판정 불가", c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, ["not-a-dict"])
+cases.append(("서버 행이 dict 가 아니면 죽지 않고 판정 불가", c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, [{"mapped": {"ip": "8.8.4.4", "port": 1}}])
+cases.append(("ok 키가 없어도 죽지 않고 판정 불가", c["behind_nat"] is None, c))
+for bad_ip in (None, 12345, ["10.0.0.1"]):
+    c = _n(bad_ip, 5000, [srv("8.8.4.4", 6000)])
+    cases.append((f"로컬 주소가 {type(bad_ip).__name__} 이어도 죽지 않는다",
+                  c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, [srv(12345, 6000)])
+cases.append(("관측 주소가 정수면 판정 불가 (0.0.48.57 로 오해석 방지)",
+              c["behind_nat"] is None, c))
+cases.append(("포트로 True 를 받지 않는다", np._strict_port(True) is None, None))
+cases.append(("포트로 실수를 받지 않는다", np._strict_port(5.9) is None, None))
+cases.append(("포트로 '5.0' 을 받지 않는다", np._strict_port("5.0") is None, None))
+cases.append(("포트로 ' 5' 를 받지 않는다", np._strict_port(" 5") is None, None))
+cases.append(("포트 '65535' 는 받는다", np._strict_port("65535") == 65535, None))
+cases.append(("아주 긴 숫자 문자열에 죽지 않는다", np._strict_port("1" * 9000) is None, None))
+c = _n("10.0.0.1", 5000, [srv("10.0.0.1", 5000)])
+cases.append(("사설 주소가 그대로 관측돼도 NAT 없음이라고 하지 않는다",
+              c["behind_nat"] is None, c))
+c = _n("100.64.0.5", 5000, [srv("100.64.0.5", 5000)])
+cases.append(("CGNAT 주소가 그대로 관측돼도 NAT 없음이라고 하지 않는다",
+              c["behind_nat"] is None, c))
+for bad_obs in ("0.0.0.0", "127.0.0.1", "169.254.1.1", "203.0.113.1", "10.0.0.2"):
+    c = _n("10.0.0.1", 5000, [srv(bad_obs, 6000)])
+    cases.append((f"관측 주소가 공인 대역이 아니면 판정 불가: {bad_obs}",
+                  c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, [{"ok": "false", "resolved_ip": "1.1.1.1",
+                           "mapped": {"ip": "8.8.4.4", "port": 1}}])
+cases.append(("ok 가 문자열이면 성공으로 보지 않는다", c["behind_nat"] is None, c))
+c = _n("10.0.0.1", 5000, [{"ok": False, "mapped": {"ip": "bogus", "port": 0}},
+                          srv("8.8.4.4", 6000)])
+cases.append(("ok=False 행은 그냥 건너뛴다", c["behind_nat"] is True, c))
+for mc in ("224.0.0.1", "239.1.1.1", "ff02::1", "ff0e::1"):
+    c = _n("10.0.0.1" if ":" not in mc else "fd00::1", 5000, [srv(mc, 6000)])
+    cases.append((f"관측 주소가 멀티캐스트면 판정 불가: {mc}", c["behind_nat"] is None, c))
+cases.append(("멀티캐스트는 is_global 이 참이지만 사용 불가로 본다",
+              __import__("ipaddress").ip_address("224.0.0.1").is_global
+              and not np._is_usable_public(__import__("ipaddress").ip_address("224.0.0.1")), None))
+for doc_ip in ("192.0.2.5", "198.51.100.5", "203.0.113.5", "198.18.0.5"):
+    c = _n(doc_ip, 5000, [srv("8.8.4.4", 6000)])
+    cases.append((f"문서용/벤치마킹 대역은 사설로 보지 않는다: {doc_ip}",
+                  c["behind_nat"] is None and c["local_ip_scope"] == "unknown", c))
+c = _n("fd00::1", 5000, [srv("2606:4700:4700::1111", 6000)])
+cases.append(("ULA(fc00::/7)는 사설로 본다",
+              c["behind_nat"] is True and c["local_ip_scope"] == "private", c))
+c = _n("169.254.10.5", 5000, [srv("8.8.4.4", 6000)])
+cases.append(("링크 로컬은 외부 출발지가 아니므로 판정 불가",
+              c["behind_nat"] is None and c["local_ip_scope"] == "special", c))
+c = _n("10.0.0.1", 5000, [srv("8.8.4.4", 5.9)])
+cases.append(("관측 포트가 실수면 판정 불가", c["behind_nat"] is None, c))
+
 # 요청하지 않은 인바운드 시험
 for k in (np.PUNCH_UNSOL, np.PUNCH_UNSOL_ACK, np.PUNCH_PHASE_READY):
     pk = np.build_punch(k, 1, 2, 3)

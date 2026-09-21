@@ -3,7 +3,7 @@
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
 **상태:** 구현 전 확정본. 이 문서와 코드가 다르면 코드가 틀린 것이다.
 **설계 배경:** [`architecture.md`](architecture.md) / **요구사항:** [`spec.md`](spec.md)
-**점검 이력:** [`design-audit.md`](design-audit.md)
+**점검 이력:** 설계 감사 기록 (2026-09-14 전면 점검)
 
 > English version: [`../eng/protocol.md`](../eng/protocol.md)
 
@@ -37,7 +37,7 @@ IPv6 지원은 v2 이후다. v1은 `AF_INET`으로만 소켓을 열고 STUN 서�
 - 위조 `HELLO`로 세션 재협상 유도
 - 엔드포인트 로밍(10.5)을 악용한 트래픽 탈취
 
-7장의 내부 패킷 검증은 **공격 방어 수단이 아니다.** 오배달, 버그, 잘못된 라우팅으로 인한 우발적 주입을 막는 위생 장치다. 이전 판에서 이 검사를 "유일한 주입 방어선"이라고 쓴 것은 과장이었다.
+8.4의 내부 패킷 검증은 **공격 방어 수단이 아니다.** 오배달, 버그, 잘못된 라우팅으로 인한 우발적 주입을 막는 위생 장치다. 이전 판에서 이 검사를 "유일한 주입 방어선"이라고 쓴 것은 과장이었다.
 
 이 선택의 근거는 `spec.md`의 비목표다. 자체 암호 알고리즘 개발과 인증된 피어 세션은 스트레치 목표이며 v1 범위 밖이다. 최종 보고서는 이 한계를 명시해야 한다.
 
@@ -59,7 +59,7 @@ constexpr size_t   REPLAY_WINDOW  = 64;
 constexpr size_t   MAX_PENDING_PINGS = 16;
 ```
 
-`TUNNEL_MAGIC`의 첫 바이트 `0x53`은 상위 2비트가 `01`이고, STUN 메시지는 상위 2비트가 반드시 `00`이다. 이 성질이 8장 분류의 근거이므로 magic 값을 바꿀 때 유지해야 한다.
+`TUNNEL_MAGIC`의 첫 바이트 `0x53`은 상위 2비트가 `01`이고, STUN 메시지는 상위 2비트가 반드시 `00`이다. 이 성질이 7장 분류의 근거이므로 magic 값을 바꿀 때 유지해야 한다.
 
 ---
 
@@ -279,7 +279,7 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 
 ```text
 (buf[0] & 0xC0) == 0x00  이고  len >= 20  이고  buf[4..8) == STUN_COOKIE
-      -> STUN 메시지. 트랜잭션 ID로 대기 중인 요청과 매칭 (14장)
+      -> STUN 메시지. 트랜잭션 ID로 대기 중인 요청과 매칭 (13장)
 (buf[0] & 0xC0) == 0x40
       -> 터널 후보. 8장 검증 파이프라인으로
 그 외
@@ -319,7 +319,7 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 | `HELLO_ACK` (그 외) | 폐기, `drop_bad_nonce` |
 | 그 외 전부 | epoch 미고정이면 폐기, `drop_no_epoch`. 고정된 값과 다르면 폐기, `drop_stale_epoch` |
 
-이 규칙이 없으면 "선행 `HELLO_ACK`은 정상"이라는 9.3의 서술과 epoch 검사가 서로 모순되어, 상대가 먼저 펀치를 시작한 정상 상황에서 양쪽이 타임아웃한다.
+이 규칙이 없으면 "선행 `HELLO_ACK`은 정상"이라는 9.4의 서술과 epoch 검사가 서로 모순되어, 상대가 먼저 펀치를 시작한 정상 상황에서 양쪽이 타임아웃한다.
 
 ### 8.3 중복 억제
 
@@ -619,7 +619,7 @@ FINGERPRINT, MESSAGE-INTEGRITY, 인증, TURN, ICE 절차는 구현하지 않는�
 
 ## 15. 구현 체크리스트
 
-Phase 4 착수 전에 아래가 전부 코드에 있어야 한다.
+Phase 4 에서 아래가 전부 코드에 있어야 한다. Phase 4 가 이 체크리스트를 구현하는 단계다.
 
 - [ ] 3장 상수 전부
 - [ ] 필드 단위 헤더 직렬화/역직렬화 + 라운드트립 테스트
@@ -630,7 +630,6 @@ Phase 4 착수 전에 아래가 전부 코드에 있어야 한다.
 - [ ] 8.2 epoch/출발지 규칙 (특히 nonce 유효 `HELLO_ACK`의 epoch 고정)
 - [ ] 4.5 중복 억제 알고리즘 (`highest` + `position` + 64비트 비트맵), 부수 효과보다 먼저
 - [ ] `seq == highest` 선행 판정, `if/else if/else` 상호 배타 분기, `shift == 64` 처리, 모든 비트 연산 `uint64_t`
-- [ ] 64비트 `position` 기반 손실 집계와 `baseline`
 - [ ] `is_newer`의 `a != b` 조건
 - [ ] 세션 시도 단위 `session_epoch`, 2분 폐기 목록
 - [ ] CSPRNG nonce, 시도당 고정, 2분 폐기 목록. probe nonce는 별도 표로 분리
@@ -644,5 +643,6 @@ Phase 4 착수 전에 아래가 전부 코드에 있어야 한다.
 - [ ] `CLOSE` 송수신, reason 값 검증
 - [ ] `pending_pings` 상한과 정리
 - [ ] 13장 STUN 범위
+- [ ] 5.4 `DATA` 타입, 8.4 내부 검증(검사 9~15), 8.5 송신 측 검증
 
-Phase 5에서 추가: `DATA` 타입, 8.4 내부 검증, 8.5 송신 검증, 4.5 손실 집계, 퍼즈 방어.
+Phase 5에서 추가: 4.5 손실 집계와 `baseline`, 재정렬 윈도우, 퍼즈 방어.

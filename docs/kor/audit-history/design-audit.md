@@ -1,10 +1,23 @@
 # 설계 전면 점검 (2026-09-14)
 
-**대상:** [`architecture.md`](architecture.md), [`spec.md`](spec.md), [`roadmap.md`](roadmap.md) 전문
+**대상:** [`../architecture.md`](../architecture.md), [`../spec.md`](../spec.md), [`../roadmap.md`](../roadmap.md) 전문
 **시점:** 구현 착수 전, 커밋 `5807a8b` 기준
 **계기:** 세 차례의 diff 리뷰에서 매번 blocker가 나와 설계 전반의 신뢰도를 확인할 필요가 생겼다
 
-> English version: [`../eng/design-audit.md`](../eng/design-audit.md)
+> English version: [`../../eng/design-audit.md`](../../eng/design-audit.md)
+
+> **이 문서는 감사 기록이다.** 2026-09-14 전면 점검의 결과와 그 뒤의 해소 경과를 남긴다.
+> **현재 작업 추적은 [`../plan.md`](../plan.md)가 맡는다.** 5장의 후속 계획표는 그 시점의
+> 스냅숏이므로 살아 있는 상태를 여기서 읽지 않는다.
+>
+> **본문이 적는 `protocol.md` 장·절 번호는 2026-09-14 당시 표기다.** 그 뒤 번호가 바뀌었고
+> 여기서는 고치지 않는다. 기록은 그때의 판단을 그대로 담아야 하기 때문이다. 현재 번호가
+> 필요하면 `../protocol.md`를 직접 본다. 살아 있는 문서의 참조는 전부 현재 번호로 맞췄다.
+>
+> `architecture.md`, `protocol.md`, `roadmap.md`, `spec.md`, `plan.md`, `windows-prereq.md`는
+> 이 파일을 근거로 링크하지 않는다. `CLAUDE.md`와 `decisions/`, `commit_history/`,
+> `tools/`는 링크한다. 앞은 살아 있는 문서라 확정 문서를 근거로 삼아야 하고, 뒤는 이 점검을
+> 가리키는 것이 목적인 안내서와 기록이다.
 
 ---
 
@@ -51,7 +64,7 @@ diff가 아니라 **완성된 문서 전문**을 대상으로, 서로 다른 렌
 
 | # | 문제 | 상태 |
 |---|------|------|
-| 1 | magic/version/type 값, nonce 폭, 페이로드 레이아웃, 바이트 오프셋이 전부 미정. 문서만으로 코드를 쓸 수 없다 | 해결 [`protocol.md`](protocol.md) 2~4장 |
+| 1 | magic/version/type 값, nonce 폭, 페이로드 레이아웃, 바이트 오프셋이 전부 미정. 문서만으로 코드를 쓸 수 없다 | 해결 [`../protocol.md`](../protocol.md) 2~4장 |
 | 2 | 세션 인스턴스 식별자가 없어 재시작 시 이전 프로세스의 지연 패킷이 새 세션에 수용된다 | 해결 `protocol.md` 3.2 (`session_epoch` 신설, 헤더 16 -> 20바이트) |
 | 3 | 단일 소켓의 수신 소유권과 STUN/터널 역다중화 미정. STUN 읽기와 수신 루프가 서로의 패킷을 소비한다 | 해결 `protocol.md` 5~6장 |
 | 4 | 4개 스레드가 세션 상태, 타이머, 시퀀스를 동기화 없이 변경해 데이터 레이스 | 해결 `architecture.md` 3.2. 단일 이벤트 루프로 공유 상태 제거 |
@@ -78,13 +91,13 @@ diff가 아니라 **완성된 문서 전문**을 대상으로, 서로 다른 렌
 
 | # | 문제 | 상태 |
 |---|------|------|
-| 11 | 어댑터 생성과 라우트 설정에 관리자 권한이 필요한데 문서에 언급이 없다 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 12 | 새 어댑터가 Public 프로필로 분류되어 방화벽이 ICMP와 TCP 25565 인바운드를 차단. 클라이언트 UDP도 첫 실행 프롬프트를 닫으면 막힌다(**5.8 실측으로 정정: 우리가 먼저 보낸 흐름의 응답은 상태 기반으로 통과한다. 막히는 것은 요청하지 않은 인바운드다**) | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 13 | 비정상 종료 시 어댑터/주소/라우트가 남아 다음 실행에서 중복 생성 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 14 | Wintun DLL/드라이버 패키징, 아키텍처, 서명. 시연 PC에서 설치 실패 가능 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 15 | `server.properties`의 `server-ip`가 **다른 인터페이스 주소로** 설정되어 있으면 `10.100.0.1:25565` 접속이 거부된다. 비워 두거나 `10.100.0.1`로 명시해야 한다 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 16 | EC2 보안 그룹 인바운드 규칙 없음, `127.0.0.1` 바인드, 재시작 시 공인 IP 변경 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 17 | `10.100.0.0/24`가 실제 LAN, Hyper-V, 다른 VPN과 충돌하면 트래픽이 엉뚱한 인터페이스로 간다 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 11 | 어댑터 생성과 라우트 설정에 관리자 권한이 필요한데 문서에 언급이 없다 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 12 | 새 어댑터가 Public 프로필로 분류되어 방화벽이 ICMP와 TCP 25565 인바운드를 차단. 클라이언트 UDP도 첫 실행 프롬프트를 닫으면 막힌다(**5.8 실측으로 정정: 우리가 먼저 보낸 흐름의 응답은 상태 기반으로 통과한다. 막히는 것은 요청하지 않은 인바운드다**) | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 13 | 비정상 종료 시 어댑터/주소/라우트가 남아 다음 실행에서 중복 생성 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 14 | Wintun DLL/드라이버 패키징, 아키텍처, 서명. 시연 PC에서 설치 실패 가능 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 15 | `server.properties`의 `server-ip`가 **다른 인터페이스 주소로** 설정되어 있으면 `10.100.0.1:25565` 접속이 거부된다. 비워 두거나 `10.100.0.1`로 명시해야 한다 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 16 | EC2 보안 그룹 인바운드 규칙 없음, `127.0.0.1` 바인드, 재시작 시 공인 IP 변경 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 17 | `10.100.0.0/24`가 실제 LAN, Hyper-V, 다른 VPN과 충돌하면 트래픽이 엉뚱한 인터페이스로 간다 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
 
 여기에 사용성 한계가 하나 있다. `spec.md`의 주장은 "수동 포트 포워딩 없이"이고 그 주장 자체는 유지된다. 다만 대신 관리자 권한, 드라이버 설치, 방화벽 규칙이 필요하다. **설정 부담이 사라진 것이 아니라 종류가 바뀐 것이다.** 포트 포워딩보다 쉬운지는 별도로 논증해야 하며, 최종 보고서에서 정직하게 다뤄야 할 한계다.
 
@@ -92,9 +105,9 @@ diff가 아니라 **완성된 문서 전문**을 대상으로, 서로 다른 렌
 
 | # | 문제 | 상태 |
 |---|------|------|
-| 18 | C-5 우선순위가 최소 산출물을 지키지 못한다. P1을 버리면 M-5가 사라지고 P3을 버리면 M-6과 과목 요구 분석이 함께 사라진다. Phase 1~9 안에서 실제로 버릴 수 있는 것은 P2(Wintun + 가상 IP + Minecraft, Phase 6~8)뿐이다. P4는 애초에 스트레치라 계산에 들어가지 않는다 | 대기, 후속 4번 |
-| 19 | 추적표가 M-5를 Phase 4에 할당했으나 `DATA`는 Phase 5에나 생긴다 | 대기, 후속 4번 |
-| 20 | 가용한 두 가정망이 대칭형 거동이면 최소 성공이 불가능하고 대안이 없다. 릴레이는 Phase 9 이후 스트레치라 구제가 안 된다 | **해소 (2026-09-20).** 실측 22건, 망 7곳 전부 `endpoint-independent`, 대칭형 0건. 대비책 미도입, M-1/M-4 유지. **잔여 위험은 남는다** — 조건이 바뀌면 다시 성립하며 대비책이 없다. Phase 4 착수, Phase 8 준비, 시연 직전 세 지점에 재측정 게이트를 뒀다. [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) |
+| 18 | C-5 우선순위가 최소 산출물을 지키지 못한다 | 해결 [`../spec.md`](../spec.md) C-5 와 "우선순위 제거의 대가" 절. 등급마다 버릴 수 있는지와 버리면 사라지는 기준을 표로 적었다. `DATA` 최소 왕복과 로컬 기록을 P0 으로 옮겨 **최소 성공 M-1 ~ M-6 이 P0 만으로 성립**하게 했다 |
+| 19 | 추적표가 M-5를 Phase 4에 할당했으나 `DATA`는 Phase 5에나 생긴다 | 해결. `DATA` 최소 왕복을 Phase 4 로 당겼다. M-6 도 같은 결함이 있어(제어 평면 기록이 Phase 5 작업에 없었다) 로컬 기록으로 바꿔 Phase 4 에 뒀다 |
+| 20 | 가용한 두 가정망이 대칭형 거동이면 최소 성공이 불가능하고 대안이 없다. 릴레이는 Phase 9 이후 스트레치라 구제가 안 된다 | **해소 (2026-09-20).** 실측 22건, 망 7곳 전부 `endpoint-independent`, 대칭형 0건. 대비책 미도입, M-1/M-4 유지. **잔여 위험은 남는다** — 조건이 바뀌면 다시 성립하며 대비책이 없다. Phase 4 착수, Phase 8 준비, 시연 직전 세 지점에 재측정 게이트를 뒀다. [ADR 0001](../decisions/0001-직접-연결-대비책-미도입.md) |
 
 **20번이 가장 위험했다.** 나머지는 고치면 되지만 이것은 학기 중반에 드러나면 되돌릴 시간이 없었다. 프로젝트 전체가 통제 불가능한 외부 조건에 인질 잡혀 있었다.
 
@@ -119,17 +132,17 @@ diff가 아니라 **완성된 문서 전문**을 대상으로, 서로 다른 렌
 | 플랫폼 | `connect()` 호출 시 다른 후보 데이터그램이 걸러진다 | 해결 `protocol.md` 5장 |
 | 플랫폼 | `SO_REUSEADDR` 사용 시 배달 비결정성 | 해결 `protocol.md` 5장 |
 | 플랫폼 | 로컬 후보가 Wintun/Hyper-V/VPN 주소를 광고 | 해결 `protocol.md` 8.1 |
-| 플랫폼 | Wintun은 L3 링 API이지 TAP/`ReadFile`이 아니다 | 해결 `architecture.md` 3.2.3. DLL 패키징은 [`windows-prereq.md`](windows-prereq.md) 4절 |
+| 플랫폼 | Wintun은 L3 링 API이지 TAP/`ReadFile`이 아니다 | 해결 `architecture.md` 3.2.3. DLL 패키징은 [`../windows-prereq.md`](../windows-prereq.md) 4절 |
 | 플랫폼 | 읽기 이벤트 대기와 패킷 해제를 안 하면 루프가 스핀하거나 종료 | 해결 `architecture.md` 3.2.3 |
-| 플랫폼 | on-link `/24` 라우트가 이미 생성되어 중복 생성 오류 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 플랫폼 | 주소가 tentative 상태일 때 테스트 시작하면 간헐 실패 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 플랫폼 | EC2 재시작 시 공인 IP 변경 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 플랫폼 | Minecraft LAN 탐색은 멀티캐스트라 유니캐스트 터널로 안 된다 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 플랫폼 | Java 업데이트로 경로 기반 방화벽 예외 무효화 | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 플랫폼 | SmartScreen/Defender가 미서명 클라이언트에 경고하거나 차단·격리할 수 있다(평판과 MOTW, Defender 정책에 달렸다) | 문서화 [`windows-prereq.md`](windows-prereq.md). 실물 검증은 Phase 3·6·8 |
-| 성립성 | M1(Phase 1~4)과 M2(Phase 5~8) 작업량이 5주씩으로 불균형 | 대기, 후속 4번 |
-| 성립성 | Phase 4 keepalive 검증이 요구하는 외부 UDP 관측점이 설계에 없다 | 대기, 후속 4번 |
-| 성립성 | M-2 검증의 HTTPS IP 조회가 UDP 송신 경로와 다를 수 있다 | 대기, 후속 4번 |
+| 플랫폼 | on-link `/24` 라우트가 이미 생성되어 중복 생성 오류 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 플랫폼 | 주소가 tentative 상태일 때 테스트 시작하면 간헐 실패 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 플랫폼 | EC2 재시작 시 공인 IP 변경 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 플랫폼 | Minecraft LAN 탐색은 멀티캐스트라 유니캐스트 터널로 안 된다 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 플랫폼 | Java 업데이트로 경로 기반 방화벽 예외 무효화 | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 플랫폼 | SmartScreen/Defender가 미서명 클라이언트에 경고하거나 차단·격리할 수 있다(평판과 MOTW, Defender 정책에 달렸다) | 문서화 [`../windows-prereq.md`](../windows-prereq.md). 실물 검증은 Phase 3·6·8 |
+| 성립성 | M1(Phase 1~4)과 M2(Phase 5~8) 작업량이 5주씩으로 불균형 | 해결. 마일스톤 구분 자체를 없앴다. 주차 배분은 진행 속도가 정하므로 문서에 고정하지 않는다 |
+| 성립성 | Phase 4 keepalive 검증이 요구하는 외부 UDP 관측점이 설계에 없다 | 해결 [`../roadmap.md`](../roadmap.md) Phase 4. Phase 3 의 AWS EC2 제어 서버를 관측점으로 쓴다고 명시했다 |
+| 성립성 | M-2 검증의 HTTPS IP 조회가 UDP 송신 경로와 다를 수 있다 | 해결 [`../spec.md`](../spec.md) M-2. 같은 UDP 소켓으로 서로 다른 두 STUN 서버에 질의하는 판정으로 바꿨다. HTTPS 조회는 참고 기록으로 내렸다 |
 | 성립성 | Phase 7 카운터 정확 일치, Phase 8 ±30ms, A-2 통제 실패 시나리오가 과잉 기준 | 대기, 후속 6번 |
 | 성립성 | Phase 9 통계 설계(시행 시간, 독립성, 불확실성 보고) 미정 | 대기, 후속 6번 |
 
@@ -141,8 +154,8 @@ diff가 아니라 **완성된 문서 전문**을 대상으로, 서로 다른 렌
 |---|------|-----------|------|
 | 1 | `protocol.md` 확정본 작성 | blocker 1,2,3,6,7,8,9,10 + warn 13건 | **완료 (2026-09-14)** |
 | 2 | 동시성 모델 확정. 단일 이벤트 루프 | blocker 4,5 + warn 2건 | **완료 (2026-09-15)** |
-| 3 | Windows 사전조건 절 신설. 권한, 방화벽, 어댑터 정리, 서브넷 충돌 검사, Wintun 패키징 | blocker 11~17 + warn 6건 | **완료 (2026-09-21)**. [`windows-prereq.md`](windows-prereq.md). **문서화가 완료 조건이고 실물 검증은 아니다** |
-| 4 | spec 논리 오류 수정. C-5 우선순위, M-5 추적, 마일스톤 재배분 | blocker 18,19 + warn 3건 | 대기 |
+| 3 | Windows 사전조건 절 신설. 권한, 방화벽, 어댑터 정리, 서브넷 충돌 검사, Wintun 패키징 | blocker 11~17 + warn 6건 | **완료 (2026-09-21)**. [`../windows-prereq.md`](../windows-prereq.md). **문서화가 완료 조건이고 실물 검증은 아니다** |
+| 4 | spec 논리 오류 수정. C-5 우선순위, M-5/M-6 추적, 마일스톤 처리 | blocker 18,19 + warn 3건 | **완료 (2026-09-21)** |
 | 5 | 직접 연결 불가 대비책 | blocker 20 | **완료 (2026-09-20)**. 실측으로 해소. 선택지 A/B/C 전부 기각 |
 | 6 | 과잉 검증 기준 되돌리기 | warn 2건 | 대기 |
 
@@ -150,7 +163,7 @@ diff가 아니라 **완성된 문서 전문**을 대상으로, 서로 다른 렌
 
 **3번의 13개 항목 상태는 `해결` 이 아니라 `문서화` 다.** 확인 명령과 통과 조건을 적었다는 뜻이고, 시연 PC 에서 실물로 확인했다는 뜻이 아니다. 실물 검증은 Phase 3(EC2), 6(Wintun), 8(시연 준비)에 걸려 있다.
 
-**3번은 2026-09-21에 완료됐다.** [`windows-prereq.md`](windows-prereq.md)가 13개 항목을 절 단위로 다루고, 8개 절은 실제 Windows 11에서 돌린 출력으로 썼다(실측 4, 부분 실측 4). **남은 것은 4, 6번이고 둘 다 문서 작업이다.**
+**3번은 2026-09-21에 완료됐다.** [`../windows-prereq.md`](../windows-prereq.md)가 13개 항목을 절 단위로 다루고, 8개 절은 실제 Windows 11에서 돌린 출력으로 썼다(실측 4, 부분 실측 4). **4번의 주차 불균형 warn 은 기준을 낮춰 덮은 것이 아니다.** 마일스톤 구분 자체를 없애 원인째 지웠다. **무엇이 남았는지는 이 표가 아니라 [`../plan.md`](../plan.md)에서 읽는다.**
 
 ---
 

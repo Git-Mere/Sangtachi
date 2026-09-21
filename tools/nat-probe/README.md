@@ -5,7 +5,7 @@
 blocker 20 실측 도구. 두 망의 NAT 매핑 거동과 실제 UDP 홀펀칭 성립 여부를 측정한다.
 
 **근거 문서:** [`docs/kor/plan.md`](../../docs/kor/plan.md) 5장 "직접 연결 불가 대비책",
-[`docs/kor/design-audit.md`](../../docs/kor/design-audit.md) blocker 20.
+[`docs/kor/audit-history/design-audit.md`](../../docs/kor/audit-history/design-audit.md) blocker 20.
 **기록 양식:** [`RECORD-TEMPLATE.md`](RECORD-TEMPLATE.md)
 
 이 디렉터리는 `docs/` 트리 밖이므로 kor/eng 미러 규칙 대상이 아니다. 한국어로만 유지한다.

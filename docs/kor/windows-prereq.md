@@ -3,7 +3,7 @@
 클라이언트를 처음 돌리는 PC에서 무엇이 갖춰져 있어야 하는지, 무엇이 자동으로 처리되고
 무엇을 사람이 미리 해둬야 하는지를 적는다.
 
-출처는 [`design-audit.md`](design-audit.md) 3장 D절(blocker 11~17)과 4장 플랫폼 warn 6건이다.
+출처는 설계 감사 3장 D절(blocker 11~17)과 4장 플랫폼 warn 6건이다.
 작업 단위는 [`plan.md`](plan.md) 3번이다.
 
 > English version: [`../eng/windows-prereq.md`](../eng/windows-prereq.md)

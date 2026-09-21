@@ -22,13 +22,16 @@ docs/eng/    영어. 미러
 2. `docs/kor/commit_history/` 최신 1~2건
 3. `docs/kor/decisions/`
 4. `docs/kor/plan.md`
-5. `docs/kor/design-audit.md` 5장 (후속 작업 추적표)
+5. `docs/kor/audit-history/design-audit.md` 5장 (후속 작업 추적표)
+
+`design-audit.md`는 감사 기록 보관소 `docs/kor/audit-history/`로 옮겼다. 현재 작업 추적은
+`plan.md`가 맡는다.
 
 남은 작업은 세 군데로 나뉜다. 하나만 보고 전체를 안다고 판단하지 않는다.
 
 | 무엇 | 어디 |
 |------|------|
-| 설계 감사 후속 3~6번 | `design-audit.md` 5장. `plan.md`가 작업 단위로 풀어 둔다 |
+| 설계 감사 후속 3~6번 | `audit-history/design-audit.md` 5장. `plan.md`가 작업 단위로 풀어 둔다 |
 | Phase 1~9 구현 작업 | `roadmap.md` |
 | 문서 부채 | `plan.md` 마지막 "부채" 절 |
 
@@ -40,7 +43,7 @@ docs/eng/    영어. 미러
 | `roadmap.md` | Phase 1~9. 목표, 작업, 산출물, 검증 |
 | `architecture.md` | 시스템 구성, 모듈 분해, 동시성 모델(3.2), 데이터 평면 경로 |
 | `protocol.md` | **터널/STUN 와이어 프로토콜의 단일 출처.** 상수, 오프셋, 타이머 값, 전이표, 검증 파이프라인. 14장은 제어 평면이 지켜야 할 계약만 적고 REST/JSON 인코딩은 정하지 않는다 |
-| `design-audit.md` | 전면 점검 기록, blocker/warn 목록, 후속 계획 |
+| `audit-history/design-audit.md` | 전면 점검 기록, blocker/warn 목록, 후속 계획. 감사 기록 보관소다 |
 | `windows-prereq.md` | **실행 전제의 단일 출처.** 관리자 권한, 방화벽, 어댑터 정리, 서브넷 충돌, Wintun 패키징, EC2. 절마다 확인 방법과 통과 조건을 적는다. 명령이 없는 절도 있다 |
 | `plan.md` | 현재 작업 단위 체크리스트 |
 | `first_design.md` | 최초 기획서. **참고 자료이며 확정 사양이 아니다.** 충돌 시 다른 문서가 우선 |
@@ -72,7 +75,7 @@ sha256으로 확인한다. 리뷰 없이 마커를 찍지 않는다.
 
 ## 문서 작업 시
 
-`design-audit.md` 6장에 재발 방지 규칙 7개가 있다. **원문은 그 문서이고 아래는 색인이다.**
+`audit-history/design-audit.md` 6장에 재발 방지 규칙 7개가 있다. **원문은 그 문서이고 아래는 색인이다.**
 내용이 필요하면 원문을 읽는다. 여기에 본문을 옮기지 않는다 (규칙 5).
 
 1. 완성 선언 전에 시나리오 하나를 끝에서 끝까지 추적한다
@@ -94,7 +97,7 @@ sha256으로 확인한다. 리뷰 없이 마커를 찍지 않는다.
 
 **판정을 내는 절차는 케이스 표를 먼저 쓰고, 그 표를 돌릴 수 있는 자리에 둔다.** 규칙 7
 ("판정을 내는 함수는 검증을 먼저 쓴다")을 문서 안 절차에까지 넓힌 것이고, 규칙 7 원문은
-`design-audit.md` 6장이다. 케이스 표가 없으면 리뷰어가 반례를 한 라운드에 하나씩 던지게 되고,
+`audit-history/design-audit.md` 6장이다. 케이스 표가 없으면 리뷰어가 반례를 한 라운드에 하나씩 던지게 되고,
 라운드 수가 결함 수가 아니라 반례 수를 따라간다. 근거는
 `docs/kor/commit_history/2026-09-21-docgate.md` 다.
 

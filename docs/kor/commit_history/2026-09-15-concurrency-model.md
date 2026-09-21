@@ -2,7 +2,7 @@
 
 ## 변경
 
-설계 감사([`../design-audit.md`](../design-audit.md)) 후속 2번을 수행했다. blocker 4번(데이터 레이스)과
+설계 감사([`../audit-history/design-audit.md`](../audit-history/design-audit.md)) 후속 2번을 수행했다. blocker 4번(데이터 레이스)과
 5번(텔레메트리가 keepalive를 막음), warn 2건을 해소한다.
 
 - `architecture.md` 3.2 신설. 스레드 구성, 대기 방식, 루프 한 바퀴, 타이머, 상태 소유,

@@ -1,7 +1,7 @@
 # 2026-09-14 전면 설계 점검과 protocol.md 확정
 
 > 이 기록은 커밋 `9808640` 시점에 남기지 못하고 2026-09-15에 소급해 작성했다.
-> 내용은 해당 커밋의 diff와 [`../design-audit.md`](../design-audit.md)에서 재구성했다.
+> 내용은 해당 커밋의 diff와 [`../audit-history/design-audit.md`](../audit-history/design-audit.md)에서 재구성했다.
 
 ## 변경
 

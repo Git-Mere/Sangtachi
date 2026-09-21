@@ -27,7 +27,7 @@
 
 ## 새 규칙
 
-이름만 적는다. 본문은 [`../design-audit.md`](../design-audit.md) 6장이 원문이다 (규칙 5).
+이름만 적는다. 본문은 [`../audit-history/design-audit.md`](../audit-history/design-audit.md) 6장이 원문이다 (규칙 5).
 
 | # | 규칙 |
 |---|------|

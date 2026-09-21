@@ -321,6 +321,42 @@ cases.append(("서버 1곳이면 unknown", c["mapping"] == "unknown" and not c["
 c = np.classify_mapping([mk("1.1.1.1", ("9.9.9.9", 100)), mk("1.1.1.1", ("9.9.9.9", 100))], 100)
 cases.append(("같은 서버 IP 2회도 unknown", c["mapping"] == "unknown", c))
 
+# ps1 파일 인코딩
+# Windows PowerShell 5.1 은 BOM 없는 .ps1 을 ANSI 코드페이지(한국어 Windows 면 CP949)로
+# 읽는다. 한글 주석과 문자열이 깨져 스크립트가 파싱조차 되지 않는다. 2026-09-20 에
+# 실제로 이 이유로 방화벽 시험 스크립트가 실행 불가였다. 정적 리뷰 17라운드가 놓쳤다.
+_ps1 = _pl.Path(__file__).resolve().parent / "unsolicited-firewall-test.ps1"
+cases.append(("방화벽 시험 스크립트가 존재한다", _ps1.is_file(), str(_ps1)))
+_ps1_raw = _ps1.read_bytes() if _ps1.is_file() else b""
+cases.append(("ps1 이 UTF-8 BOM 으로 시작한다", _ps1_raw[:3] == b"\xef\xbb\xbf", _ps1_raw[:8]))
+try:
+    _ps1_raw.decode("utf-8")
+    _ps1_utf8 = True
+except UnicodeDecodeError:
+    _ps1_utf8 = False
+cases.append(("ps1 본문 전체가 UTF-8 로 해독된다", _ps1_utf8, None))
+
+# BOM 이 있어도 파싱이 된다는 보장은 없다. 위 두 건은 원인 하나를 볼 뿐이다.
+# Windows 에서는 실제 파서에 물어본다. 이것이 판정이고 위 두 건은 진단이다.
+if os.name == "nt":
+    import shutil as _sh, subprocess as _sp
+    # 찾지 못하면 조용히 건너뛰지 않는다. 검증하지 못했다는 사실 자체가 실패다.
+    # 조용히 넘어가면 파서 검증이 한 번도 안 돈 채로 전건 통과가 찍힌다.
+    _psexe = _sh.which("powershell")
+    cases.append(("Windows 에서 powershell 을 찾는다", _psexe is not None, _psexe))
+    if _psexe:
+        _lit = str(_ps1).replace("'", "''")
+        _snip = ("$errs=$null; $toks=$null; "
+                 "$null=[System.Management.Automation.Language.Parser]::ParseFile("
+                 "'" + _lit + "',[ref]$toks,[ref]$errs); "
+                 "if ($errs.Count -gt 0) { exit 1 } else { exit 0 }")
+        try:
+            _rc = _sp.run([_psexe, "-NoProfile", "-NonInteractive", "-Command", _snip],
+                          capture_output=True, timeout=120).returncode
+        except Exception as _exc:
+            _rc = f"실행 실패: {_exc}"
+        cases.append(("Windows PowerShell 이 ps1 을 파싱한다", _rc == 0, _rc))
+
 fail = 0
 for name, ok, detail in cases:
     print(("PASS  " if ok else "FAIL  ") + name)

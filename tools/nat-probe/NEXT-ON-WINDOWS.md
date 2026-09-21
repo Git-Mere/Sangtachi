@@ -9,7 +9,7 @@
 ```powershell
 git pull
 cd tools\nat-probe
-py test_natprobe.py        # 145/145 나와야 한다
+py test_natprobe.py        # Windows 151/151, Linux 149/149
 ```
 
 `py` 가 안 먹으면 `python`. 둘 다 안 되면 python.org 에서 받을 때
@@ -17,10 +17,19 @@ py test_natprobe.py        # 145/145 나와야 한다
 
 ---
 
-## 1. 제일 먼저 — 스크립트를 실제로 돌려 본다
+## 1. 끝났다 — 스크립트는 돈다
 
-**`unsolicited-firewall-test.ps1` 은 한 번도 실행된 적이 없다.** 리뷰 17라운드를 정적으로만
-돌렸고, blocker 6건 중 **3건이 "정상 상태에서 실행조차 안 되는" 문제**였다. 남아 있을 수 있다.
+2026-09-20 에 Windows 에서 처음 실행했다. **파싱조차 되지 않았다.** 원인은 UTF-8 BOM
+누락이고, Windows PowerShell 5.1 이 `.ps1` 을 CP949 로 읽어 한글이 깨졌다. BOM 을 붙여
+고쳤고 `test_natprobe.py` 에 회귀 시험을 넣었다. 그중 1건이 실제 PowerShell 파서를 부른다
+(Windows 151/151).
+
+기계 부분은 관리자 권한으로 끝까지 확인했다. 규칙 생성, `ActiveStore` 검증 4종, 오류
+경로에서의 삭제, 순서 뒤집기, 최종 정리 보고까지다. **두 번에 나눠 확인했다** — 가짜 상대로
+한 번, `natprobe` 를 스텁으로 바꿔 한 번이다. 실측은 아니다. 자세한 것은
+[커밋 기록](../../docs/kor/commit_history/2026-09-20-firewall-script-first-run.md).
+
+**남은 것은 실측이고, 상대가 있어야 한다.**
 
 ```powershell
 # 관리자 PowerShell, 레포 루트에서
@@ -33,7 +42,10 @@ py test_natprobe.py        # 145/145 나와야 한다
 python tools/nat-probe/natprobe.py punch --label <상대라벨> --port 47000 --unsolicited
 ```
 
-**한 번 돌리는 것이 리뷰 한 라운드보다 많은 것을 알려준다.** 깨지면 그 자리에서 고친다.
+**시행마다 손으로 두 번 입력한다** — 상대 엔드포인트와 동시 시작 Enter 다. `-Trials` 는
+**쌍 수**이므로 시행은 그 두 배다. 위 `-Trials 2` 는 4시행이라 입력 8번, 기본 `-Trials 4` 는
+8시행이라 16번이다. 상대 주소를 명령줄로 받지 않기로 한 결정의 대가이며 고치지 않는다.
+`README.md` 12.1 을 본다.
 
 > ⚠️ 규칙이 UDP 47000 을 모든 출발지에 연다. 정상 종료하면 지우지만 **강제 종료·재부팅이면
 > 영구히 남는다.** 그때는 직접 지운다.
@@ -43,6 +55,7 @@ python tools/nat-probe/natprobe.py punch --label <상대라벨> --port 47000 --u
 > ```
 
 ---
+
 
 ## 2. 측정 2건
 
@@ -68,8 +81,9 @@ python tools/nat-probe/natprobe.py punch --label <상대라벨> --port 47000 --u
 git diff HEAD~1 | codex exec -o review.txt "<프롬프트>"
 ```
 
-프롬프트는 `~/.agents/skills/cross-review/SKILL.md` 에 있다. **다만 1번을 먼저 한다.**
-실행 한 번이 정적 리뷰보다 낫다.
+프롬프트는 `~/.agents/skills/cross-review/SKILL.md` 에 있다. **그 파일은 Windows 기기에
+없다.** `codex` CLI 는 있다. 스킬을 옮겨 오거나 같은 뜻의 프롬프트를 직접 쓴다.
+**다만 1번을 먼저 한다.** 실행 한 번이 정적 리뷰보다 낫다.
 
 ---
 

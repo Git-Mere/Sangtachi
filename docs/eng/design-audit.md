@@ -78,13 +78,13 @@ This entire area was absent from the design.
 
 | # | Problem | Status |
 |---|---------|--------|
-| 11 | Adapter creation and route configuration need administrator privileges; the document never mentions it | open, follow-up 3 |
-| 12 | A new adapter is classified Public and the firewall blocks inbound ICMP and TCP 25565. The client's UDP is also blocked if the first-run prompt is dismissed | open, follow-up 3 |
-| 13 | An abnormal termination leaves the adapter, address, and route behind, so the next run creates duplicates | open, follow-up 3 |
-| 14 | Wintun DLL/driver packaging, architecture, and signing. Installation can fail on the demo PC | open, follow-up 3 |
-| 15 | If `server-ip` in `server.properties` is set to **a different interface address**, connections to `10.100.0.1:25565` are refused. It must be blank or explicitly `10.100.0.1` | open, follow-up 3 |
-| 16 | No EC2 security group inbound rule, binding to `127.0.0.1`, public IP changing on restart | open, follow-up 3 |
-| 17 | `10.100.0.0/24` colliding with a real LAN, Hyper-V, or another VPN sends traffic out the wrong interface | open, follow-up 3 |
+| 11 | Adapter creation and route configuration need administrator privileges; the document never mentions it | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 12 | A new adapter is classified Public and the firewall blocks inbound ICMP and TCP 25565. The client's UDP is also blocked if the first-run prompt is dismissed (**corrected by the 5.8 measurement: the reply to a flow we started passes statefully; what is blocked is unsolicited inbound**) | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 13 | An abnormal termination leaves the adapter, address, and route behind, so the next run creates duplicates | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 14 | Wintun DLL/driver packaging, architecture, and signing. Installation can fail on the demo PC | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 15 | If `server-ip` in `server.properties` is set to **a different interface address**, connections to `10.100.0.1:25565` are refused. It must be blank or explicitly `10.100.0.1` | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 16 | No EC2 security group inbound rule, binding to `127.0.0.1`, public IP changing on restart | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| 17 | `10.100.0.0/24` colliding with a real LAN, Hyper-V, or another VPN sends traffic out the wrong interface | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
 
 There is also a usability limitation here. The claim in `spec.md` is "without manual port forwarding", and that claim itself holds. What it costs instead is administrator privileges, a driver install, and firewall rules. **The configuration burden did not disappear; it changed kind.** Whether that is easier than port forwarding has to be argued separately, and it belongs in the final report as an honest limitation.
 
@@ -119,14 +119,14 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 | Platform | Calling `connect()` filters out datagrams from other candidates | fixed, `protocol.md` section 5 |
 | Platform | `SO_REUSEADDR` makes delivery nondeterministic | fixed, `protocol.md` section 5 |
 | Platform | Local candidates advertising Wintun/Hyper-V/VPN addresses | fixed, `protocol.md` 8.1 |
-| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | fixed, `architecture.md` 3.2.3. DLL packaging remains follow-up 3 |
+| Platform | Wintun is an L3 ring API, not TAP or `ReadFile` | fixed, `architecture.md` 3.2.3. DLL packaging is [`windows-prereq.md`](windows-prereq.md) section 4 |
 | Platform | Without waiting on the read event and releasing packets, the loop spins or exits | fixed, `architecture.md` 3.2.3 |
-| Platform | The on-link `/24` route already exists, so creating it again errors | open, follow-up 3 |
-| Platform | Starting tests while the address is still tentative causes intermittent failures | open, follow-up 3 |
-| Platform | EC2 public IP changes on restart | open, follow-up 3 |
-| Platform | Minecraft LAN discovery uses multicast and cannot work over a unicast tunnel | open, follow-up 3 |
-| Platform | A Java update invalidates a path-scoped firewall exception | open, follow-up 3 |
-| Platform | SmartScreen/Defender quarantines the unsigned client | open, follow-up 3 |
+| Platform | The on-link `/24` route already exists, so creating it again errors | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | Starting tests while the address is still tentative causes intermittent failures | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | EC2 public IP changes on restart | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | Minecraft LAN discovery uses multicast and cannot work over a unicast tunnel | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | A Java update invalidates a path-scoped firewall exception | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
+| Platform | SmartScreen/Defender may warn on, block, or quarantine the unsigned client, depending on reputation, MOTW and Defender policy | documented, [`windows-prereq.md`](windows-prereq.md). Real verification in Phases 3, 6 and 8 |
 | Viability | M1 (Phases 1-4) and M2 (Phases 5-8) workloads are unbalanced at five weeks each | open, follow-up 4 |
 | Viability | The external UDP vantage point required by Phase 4 keepalive verification does not exist in the design | open, follow-up 4 |
 | Viability | The HTTPS IP lookup in M-2 verification may use a different egress path than the UDP socket | open, follow-up 4 |
@@ -141,14 +141,16 @@ There is also a usability limitation here. The claim in `spec.md` is "without ma
 |---|------|----------|--------|
 | 1 | Write the fixed `protocol.md` | blockers 1,2,3,6,7,8,9,10 plus 13 warnings | **done (2026-09-14)** |
 | 2 | Settle the concurrency model. A single event loop | blockers 4,5 plus 2 warnings | **done (2026-09-15)** |
-| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 6 warnings | open |
+| 3 | Add a Windows prerequisites section: privileges, firewall, adapter cleanup, subnet collision check, Wintun packaging | blockers 11-17 plus 6 warnings | **done (2026-09-21)**. [`windows-prereq.md`](windows-prereq.md). **The completion condition is documentation, not real verification** |
 | 4 | Fix the spec logic errors: C-5 priorities, M-5 traceability, milestone rebalancing | blockers 18,19 plus 3 warnings | open |
 | 5 | Contingency for direct connection being impossible | blocker 20 | **done (2026-09-20)**. Resolved by measurement. Options A, B, and C all rejected |
 | 6 | Loosen the over-tightened verification criteria | 2 warnings | open |
 
 Step 1 covered 40% of the blockers and half the warnings, and step 2 covered the two remaining concurrency blockers. **Step 5 was resolved by measurement on 2026-09-20.** It was handled first because it was the most dangerous item.
 
-**Steps 3, 4, and 6 remain, and all three are documentation work.** Step 3 (Windows prerequisites) is recommended next: it is better to write down the runtime prerequisites before starting the Phase 1 implementation, and the step 5 measurements already produced observations about firewall and NAT behaviour.
+**The 13 items under step 3 are marked `documented`, not `fixed`.** That means the check command and the pass rule are written down, not that they were confirmed on a demo PC. Real verification sits in Phase 3 (EC2), Phase 6 (Wintun) and Phase 8 (demo preparation).
+
+**Step 3 was completed on 2026-09-21.** [`windows-prereq.md`](windows-prereq.md) covers the 13 items one section each, and 8 of those sections were written from output actually produced on Windows 11 (4 measured, 4 partly measured). **Steps 4 and 6 remain, and both are documentation work.**
 
 ---
 

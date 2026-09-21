@@ -13,7 +13,7 @@ and warning numbers for each item are in sections 3 and 4 of that document.
 |---|------|----------|--------|
 | 1 | Write the settled `protocol.md` | blockers 1,2,3,6-10 plus 13 warnings | done 2026-09-14 |
 | 2 | Settle the concurrency model | blockers 4,5 plus 2 warnings | done 2026-09-15 |
-| 3 | Add a Windows prerequisites section | blockers 11-17 plus 6 warnings | todo |
+| 3 | Add a Windows prerequisites section | blockers 11-17 plus 6 warnings | done 2026-09-21 |
 | 4 | Fix the spec logic errors | blockers 18,19 plus 3 warnings | todo |
 | 5 | Contingency for direct connection being impossible | blocker 20 | done 2026-09-20 |
 | 6 | Loosen the over-tightened verification criteria | 2 warnings (4 criteria) | todo |
@@ -23,13 +23,21 @@ most dangerous item. The worst case of blocker 20 was not observed and no fallba
 (5.7-5.9, [ADR 0001](decisions/0001-no-direct-connection-fallback.md)). A residual risk remains
 if conditions change, so re-measurement gates are set at three points.
 
-**Step 3 is recommended next.** It is better to write down the runtime prerequisites before
+**Step 3 was completed on 2026-09-21.** The result is [`windows-prereq.md`](windows-prereq.md):
+13 items, one section each, 8 of them written from commands actually run on Windows 11 (4 measured, 4 partly measured).
+
+**Next is step 4 or step 6.** Both are document work and neither needs a peer.
+
+The earlier recommendation is kept below for the record. It is better to write down the runtime prerequisites before
 starting the Phase 1 implementation, and the step 5 measurements already produced observations
 about firewall and NAT behaviour.
 
 ---
 
 ## 3. Windows Prerequisites Section
+
+**Done 2026-09-21.** The result is [`windows-prereq.md`](windows-prereq.md).
+How the verification criteria were met is recorded at the end of this section.
 
 **Problem.** Nothing in the documents states the runtime prerequisites. The first run on a demo PC
 will stall.
@@ -69,6 +77,23 @@ against the document itself.
 
 Actual end-to-end verification on a freshly installed PC belongs to the Phase 8 demo and is not a
 completion condition for this item.
+
+**Verification result (2026-09-21).**
+
+| Criterion | Result |
+|-----------|--------|
+| Each of the 13 items has its own subsection | [`windows-prereq.md`](windows-prereq.md) sections 1-13 |
+| How to check and what passes | In every section: 12 use a command and section 11 (LAN discovery) is a manual procedure. **4 measured and 4 partly measured**, with 5 marked `unverified` and the reason given |
+| Automatic and manual marked separately | Section 14 table |
+
+**The commands were run before going into the document, and two things came out of it**
+(recurrence-prevention rule 6).
+
+- `DefaultInboundAction` from `Get-NetFirewallProfile` is `NotConfigured` on a normal machine.
+  A check written as `-eq 'Block'` **fails a correct machine.** The criteria list above named that
+  cmdlet, but the document uses it only as a counterexample and decides with `netsh advfirewall`
+- Printing the Java path check through `Format-Table -AutoSize` **cuts off the verdict column**
+  because the path is long. It was changed to formatted-string output
 
 ---
 

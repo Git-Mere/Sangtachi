@@ -101,7 +101,7 @@ decision.**
 
 | Option | Content | Reason for rejection |
 |----|------|-----------|
-| a | Have the client register an inbound allow rule | **Deferred, not rejected.** It was blocked even on hosts believed to have no active firewall filtering (macOS, Linux), so the NAT is the likely cause, in which case a rule would not help. It would also require administrator rights, increasing the burden of blocker 11 and adding a caveat to the "without manual port forwarding" claim in `spec.md`. **However, the firewall has not been excluded as the cause for directions where Windows is the receiver.** See the revisit condition below |
+| a | Have the client register an inbound allow rule | **Deferred, not rejected.** It was blocked even on hosts believed to have no active firewall filtering (macOS, Linux), so the NAT is the likely cause, in which case a rule would not help. It also adds a caveat to the "without manual port forwarding" claim in `spec.md`. **Administrator rights are not a cost**: adapter creation already needs them (blocker 11, [`windows-prereq.md`](../windows-prereq.md) section 1). Corrected 2026-09-21. **However, the firewall has not been excluded as the cause for directions where Windows is the receiver.** See the revisit condition below |
 | b | Predict the peer's port range and send to several ports at once | Ports under destination-dependent mapping are not reliably predictable. It increases traffic and risks conflicting with the candidate hygiene rule in 10.1 (do not fire at third parties from an unbounded candidate list) |
 | c | Add a rebinding renegotiation trigger to the control plane | It grows the scope of Phase 3. Rebinding itself is rare in a 30 minute demo, and the 15s keepalive keeps the mapping alive. Left out of v1 scope |
 | d | Delete 10.4 (c) entirely | Path validation is the mechanism that stops an attacker from redirecting traffic to a third party with a forged source address (the security argument in 10.4). Deleting it removes that defence |
@@ -110,8 +110,11 @@ decision.**
 
 **What this gains.**
 
-- No administrator rights requirement appears. The "without manual port forwarding" claim in
-  `spec.md` stands
+- The "without manual port forwarding" claim in `spec.md` stands
+- **The original line, "no administrator rights requirement appears", was wrong.** Adapter
+  creation already needs them ([`windows-prereq.md`](../windows-prereq.md) section 1). What this
+  decision buys is not avoided rights but an unregistered rule. Corrected 2026-09-21, and **the
+  cost of option a drops accordingly**
 - Follow-up 3 (the Windows prerequisites section) does not gain a firewall rule registration item
 - The documents and the actual behaviour agree
 

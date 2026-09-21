@@ -41,6 +41,7 @@ docs/eng/    영어. 미러
 | `architecture.md` | 시스템 구성, 모듈 분해, 동시성 모델(3.2), 데이터 평면 경로 |
 | `protocol.md` | **터널/STUN 와이어 프로토콜의 단일 출처.** 상수, 오프셋, 타이머 값, 전이표, 검증 파이프라인. 14장은 제어 평면이 지켜야 할 계약만 적고 REST/JSON 인코딩은 정하지 않는다 |
 | `design-audit.md` | 전면 점검 기록, blocker/warn 목록, 후속 계획 |
+| `windows-prereq.md` | **실행 전제의 단일 출처.** 관리자 권한, 방화벽, 어댑터 정리, 서브넷 충돌, Wintun 패키징, EC2. 절마다 확인 방법과 통과 조건을 적는다. 명령이 없는 절도 있다 |
 | `plan.md` | 현재 작업 단위 체크리스트 |
 | `first_design.md` | 최초 기획서. **참고 자료이며 확정 사양이 아니다.** 충돌 시 다른 문서가 우선 |
 
@@ -64,7 +65,7 @@ python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료
 **의미 있는 커밋마다 `docs/{kor,eng}/commit_history/YYYY-MM-DD-주제.md`를 남긴다.**
 변경, 결정, 검증, 크로스 모델 리뷰 결과(지적별로 반영 또는 기각 사유)를 적는다.
 
-**설계 결정은 `docs/{kor,eng}/decisions/`에 ADR로 남긴다.** 현재 비어 있고, 채워야 할 부채다.
+**설계 결정은 `docs/{kor,eng}/decisions/`에 ADR로 남긴다.** 현재 2건 있다.
 
 **커밋 전 크로스 모델 리뷰를 돌린다.** `cross-review` 스킬. 게이트 훅이 스테이징된 diff의
 sha256으로 확인한다. 리뷰 없이 마커를 찍지 않는다.
@@ -106,9 +107,14 @@ Windows 로 넘어가 nat-probe 작업을 이어간다면
 
 코드는 `CMakeLists.txt`와 hello 수준 `src/main.cpp`뿐이다. Phase 1은 CMake 구성만 되어 있고
 Winsock2 래퍼부터는 미착수다.
-후속 1번(protocol.md), 2번(동시성 모델), **5번(blocker 20 실측)** 완료. 3·4·6번 대기.
-`plan.md` 참고.
+후속 1번(protocol.md), 2번(동시성 모델), **5번(blocker 20 실측)**, **3번(windows-prereq.md)**
+완료. 4·6번 대기. `plan.md` 참고.
 
 `decisions/` 에 ADR 2건이 있다. `tools/docgate/` 에 문서 게이트가 있고 케이스 105건으로 검증했다.
+`tools/winprereq/` 에 `windows-prereq.md` 2절·7절의 판정 스크립트가 있다. 각각 `-SelfTest` 로
+케이스 표를 돌린다.
 `tools/nat-probe/` 에 진단 도구가 있고 실측 22건을 마쳤다.
+방화벽 시험 스크립트는 기계 검증까지 끝났다. 근거는 커밋 `c48d9dd` 와 그 기록
+`docs/{kor,eng}/commit_history/2026-09-20-firewall-script-first-run.md` 다. **실측은 상대가
+필요해 대기다.**
 실측 원본과 기록은 공인 IP 때문에 `.gitignore` 로 로컬 보관한다.

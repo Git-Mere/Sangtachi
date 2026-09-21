@@ -81,6 +81,12 @@ python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료
 검사 내용과 예외는 `tools/docgate/docgate.py` 첫머리에 적혀 있다. 끊긴 채로 두어도 되는 링크는
 `experiments.md` 하나뿐이다 (Phase 9 산출물).
 
+**살아 있는 문서에는 날짜와 감사 식별자를 적지 않는다.** `spec.md`, `roadmap.md`,
+`architecture.md`, `protocol.md`, `windows-prereq.md` 는 **현재 사양**만 담는다. 언제 무엇이
+해소됐는지는 `commit_history/` 와 `audit-history/` 가 갖는다. 근거가 필요하면 날짜로
+대신하지 말고 **무엇을 어떻게 측정했는지를 그 자리에 적는다.** 날짜는 근거가 아니다.
+`plan.md` 는 예외다. 작업 추적이 그 문서의 일이다.
+
 **의미 있는 커밋마다 `docs/{kor,eng}/commit_history/YYYY-MM-DD-주제.md`를 남긴다.**
 변경, 결정, 검증, 크로스 모델 리뷰 결과(지적별로 반영 또는 기각 사유)를 적는다.
 

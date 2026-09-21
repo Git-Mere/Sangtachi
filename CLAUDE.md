@@ -50,16 +50,16 @@ docs/eng/    영어. 미러
 
 ## 규칙
 
-**한국어가 원본이고 영어가 미러다.** 한쪽만 고치지 않는다. 고친 뒤 헤딩 수가 양쪽 같은지 확인한다.
+**한국어가 원본이고 영어가 미러다.** 한쪽만 고치지 않는다. **리뷰에 보내기 전에 문서 게이트를
+돌린다.** 미러 짝, 헤딩 구조, 표·코드 블록·링크 수, 상대 링크를 판정한다.
 
 ```bash
-for f in architecture protocol roadmap spec design-audit plan; do
-  echo "$f kor=$(grep -c '^#' docs/kor/$f.md) eng=$(grep -c '^#' docs/eng/$f.md)"
-done
+python tools/docgate/docgate.py            # 마지막 줄이 VERDICT: pass 여야 한다
+python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료 코드는 바뀌지 않는다
 ```
 
-상대 링크가 실재 경로인지 확인한다. 미해결로 남아도 되는 것은 `experiments.md` 하나뿐이다
-(Phase 9 산출물).
+검사 내용과 예외는 `tools/docgate/docgate.py` 첫머리에 적혀 있다. 끊긴 채로 두어도 되는 링크는
+`experiments.md` 하나뿐이다 (Phase 9 산출물).
 
 **의미 있는 커밋마다 `docs/{kor,eng}/commit_history/YYYY-MM-DD-주제.md`를 남긴다.**
 변경, 결정, 검증, 크로스 모델 리뷰 결과(지적별로 반영 또는 기각 사유)를 적는다.
@@ -89,6 +89,13 @@ sha256으로 확인한다. 리뷰 없이 마커를 찍지 않는다.
 
 **리뷰에 보내기 전에 내 diff를 내가 먼저 자기모순 검사한다.** 주장 강도를 낮췄으면 `grep`으로
 그 주장이 있는 모든 곳을 찾아 한 번에 맞춘다. 이걸 안 하면 라운드가 두 배로 늘어난다.
+`docgate.py --claims` 가 그 목록을 낸다.
+
+**판정을 내는 절차는 케이스 표를 먼저 쓰고, 그 표를 돌릴 수 있는 자리에 둔다.** 규칙 7
+("판정을 내는 함수는 검증을 먼저 쓴다")을 문서 안 절차에까지 넓힌 것이고, 규칙 7 원문은
+`design-audit.md` 6장이다. 케이스 표가 없으면 리뷰어가 반례를 한 라운드에 하나씩 던지게 되고,
+라운드 수가 결함 수가 아니라 반례 수를 따라간다. 근거는
+`docs/kor/commit_history/2026-09-21-docgate.md` 다.
 
 ## 이어서 작업할 때
 
@@ -102,5 +109,6 @@ Winsock2 래퍼부터는 미착수다.
 후속 1번(protocol.md), 2번(동시성 모델), **5번(blocker 20 실측)** 완료. 3·4·6번 대기.
 `plan.md` 참고.
 
-`decisions/` 에 ADR 2건이 있다. `tools/nat-probe/` 에 진단 도구가 있고 실측 22건을 마쳤다.
+`decisions/` 에 ADR 2건이 있다. `tools/docgate/` 에 문서 게이트가 있고 케이스 105건으로 검증했다.
+`tools/nat-probe/` 에 진단 도구가 있고 실측 22건을 마쳤다.
 실측 원본과 기록은 공인 IP 때문에 `.gitignore` 로 로컬 보관한다.

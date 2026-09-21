@@ -34,6 +34,21 @@ from pathlib import Path
 
 SCHEMA = "natprobe/1"
 
+
+class QuietParser(argparse.ArgumentParser):
+    """인자 오류 메시지에 인자 원문을 싣지 않는다.
+
+    argparse 기본 동작은 잘못된 인자를 그대로 stderr 에 되쓴다. 인자에는 상대 공인
+    주소가 들어올 수 있고(`--peer`, `check-peer`), 그것이 터미널 기록과 수집 로그에
+    남는다. 사용법은 그대로 찍으므로 어떤 형태가 필요한지는 알 수 있다.
+    """
+
+    def error(self, message: str):  # noqa: D102
+        self.print_usage(sys.stderr)
+        sys.stderr.write(f"{self.prog}: 인자가 올바르지 않다. "
+                         "자세한 값은 로그 노출을 막기 위해 생략한다\n")
+        sys.exit(2)
+
 # --- STUN (RFC 5389, docs/kor/protocol.md 13장 범위) -------------------------
 
 STUN_BINDING_REQUEST = 0x0001
@@ -125,6 +140,25 @@ _PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in (
 ))
 _SPECIAL_NETS = tuple(ipaddress.ip_network(n) for n in (
     "100.64.0.0/10",  # CGNAT
+))
+
+# `is_global` 이 참이지만 피어 엔드포인트가 될 수 없는 IANA 특수 목적 대역.
+# 술어만으로는 걸러지지 않으므로 명시한다.
+# **완전한 IANA 목록이 아니다.** 알려진 대역을 거부하는 최선 노력 목록이다. 새 특수
+# 목적 대역이 할당되면 여기에 없어 통과할 수 있다. 계약은 "이 목록에 있는 것은 반드시
+# 거부한다" 까지다.
+_NOT_PEER_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "192.0.0.0/24",     # IETF Protocol Assignments 전체. 안에 PCP anycast(.9),
+                        # NAT64/DNS64 discovery(.10), DS-Lite(.0/29) 등이 있고
+                        # 일부는 is_global 이 참이다. 피어가 될 수 없으므로 통째로 막는다
+    "192.88.99.0/24",   # 6to4 relay anycast (RFC 7526 폐기)
+    "192.31.196.0/24",  # AS112-v4
+    "192.52.193.0/24",  # AMT
+    "192.175.48.0/24",  # AS112 direct delegation
+    "64:ff9b::/96",     # NAT64 well-known prefix
+    "64:ff9b:1::/48",   # NAT64 local-use
+    "2001::/32",        # Teredo
+    "2002::/16",        # 6to4
 ))
 
 # SIO_UDP_CONNRESET off 를 실제로 적용했는지. main 이 기록에 넣는다.
@@ -434,8 +468,27 @@ def _is_usable_public(ip) -> bool:
     (`224.0.0.1`, `ff02::1` 모두 그렇다). STUN 응답이 멀티캐스트를 담고 있으면
     유효한 공인 엔드포인트로 받아들여 잘못된 판정을 만든다.
     """
-    return (ip.is_global and not ip.is_multicast and not ip.is_unspecified
-            and not ip.is_loopback and not ip.is_link_local and not ip.is_reserved)
+    if not (ip.is_global and not ip.is_multicast and not ip.is_unspecified
+            and not ip.is_loopback and not ip.is_link_local and not ip.is_reserved):
+        return False
+    return not any(ip in n for n in _NOT_PEER_NETS if n.version == ip.version)
+
+
+def is_public_unicast(text: str) -> bool:
+    """문자열이 인터넷에서 도달 가능한 유니캐스트 주소인가.
+
+    `check-peer` 하위 명령과 `classify_nat` 이 **같은 구현**을 쓴다. 검증을 두 번 쓰면
+    한쪽만 고치게 되고, 그 차이가 잘못된 방화벽 규칙이나 잘못된 판정을 만든다.
+
+    **완전한 IANA 특수 목적 대역 검사가 아니다.** `_NOT_PEER_NETS` 는 알려진 대역만
+    거부한다. 새로 할당된 대역은 통과할 수 있다.
+    """
+    if not isinstance(text, str):
+        return False
+    try:
+        return _is_usable_public(ipaddress.ip_address(text))
+    except ValueError:
+        return False
 
 
 def _strict_port(value) -> "int | None":
@@ -1127,9 +1180,21 @@ def main(argv=None) -> int:
     setup_console()
     default_out = Path(__file__).resolve().parent / "results"
 
-    ap = argparse.ArgumentParser(
+    ap = QuietParser(
         description="NAT 매핑 거동과 UDP 홀펀칭 실측 (design-audit blocker 20)")
-    sub = ap.add_subparsers(dest="mode", required=True)
+    sub = ap.add_subparsers(dest="mode", required=True, parser_class=QuietParser)
+
+    cp = sub.add_parser("check-peer",
+                        help="주소가 도달 가능한 공인 유니캐스트인지 확인한다. "
+                             "맞으면 종료 코드 0, 아니면 2")
+    cp.add_argument("address", nargs="?",
+                    help="검사할 IP 주소. --stdin 을 쓰면 생략한다")
+    cp.add_argument("--stdin", action="store_true",
+                    help="주소를 표준 입력에서 읽는다. 명령줄 인자는 프로세스 목록과 "
+                         "감사 로그에 남으므로 민감한 주소는 이쪽을 쓴다")
+    cp.add_argument("--ipv4", action="store_true",
+                    help="IPv4 만 허용한다. 이 도구의 소켓이 AF_INET 이므로 "
+                         "방화벽 시험처럼 IPv4 경로를 전제하는 곳에서 쓴다")
 
     for name, help_text in (("probe", "STUN 매핑 거동만 측정"),
                             ("punch", "STUN 측정 후 같은 소켓으로 홀펀칭 시도")):
@@ -1152,6 +1217,37 @@ def main(argv=None) -> int:
 
     args = ap.parse_args(argv)
 
+    if args.mode == "check-peer":
+        # 소켓을 열지 않는다. 주소는 출력하지 않는다 — 터미널 기록에 남는다.
+        if args.stdin and args.address is not None:
+            # 둘 다 주면 어느 쪽을 검증했는지 호출자가 알 수 없다. 조용히 하나를
+            # 고르면 입력한 주소와 다른 값을 검증하고 통과시킬 수 있다.
+            sys.stderr.write("address 와 --stdin 을 함께 줄 수 없다\n")
+            return 2
+        if args.stdin:
+            # 첫 줄만 읽고 strip 하면 나머지 입력이 검증되지 않은 채 남는다.
+            # 전부 읽고, 끝의 줄바꿈 하나만 허용한다.
+            raw = sys.stdin.read()
+            address = raw[:-1] if raw.endswith("\n") else raw
+            if not address or any(ch.isspace() for ch in address):
+                sys.stderr.write("표준 입력은 공백 없는 주소 한 줄이어야 한다\n")
+                return 2
+        elif args.address is not None:
+            address = args.address
+        else:
+            sys.stderr.write("주소를 인자로 주거나 --stdin 을 쓴다\n")
+            return 2
+        ok = is_public_unicast(address)
+        if ok and args.ipv4:
+            ok = isinstance(ipaddress.ip_address(address), ipaddress.IPv4Address)
+        if ok:
+            # 아무것도 출력하지 않는다. 종료 코드만으로 답한다는 계약이고,
+            # 조용한 검증 명령으로 다른 스크립트에서 쓸 수 있어야 한다.
+            return 0
+        sys.stderr.write("도달 가능한 공인 유니캐스트 주소가 아니다"
+                         + (" (IPv4 만 허용)" if args.ipv4 else "") + "\n")
+        return 2
+
     try:
         local_port = valid_port(args.port, allow_zero=True)
         if args.mode == "punch":
@@ -1166,10 +1262,14 @@ def main(argv=None) -> int:
             for item in args.stun:
                 host, _, port = item.rpartition(":")
                 if not host:
-                    raise ValueError(f"--stun 은 HOST:PORT 형식이어야 한다: {item!r}")
+                    # 입력값을 되쓰지 않는다. 로그에 남는다.
+                    raise ValueError("--stun 은 HOST:PORT 형식이어야 한다")
                 servers.append((host, valid_port(port)))
     except ValueError as exc:
         ap.error(str(exc))
+    except OSError:
+        # 이름 해석 실패. 예외 문자열과 역추적에 입력값이 들어가므로 되쓰지 않는다.
+        ap.error("상대 엔드포인트의 호스트를 해석할 수 없다")
 
     sock = make_socket(local_port)
     local_ip = primary_local_ip()

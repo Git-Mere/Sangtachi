@@ -158,9 +158,18 @@ cases.append(("ok=False 행은 그냥 건너뛴다", c["behind_nat"] is True, c)
 for mc in ("224.0.0.1", "239.1.1.1", "ff02::1", "ff0e::1"):
     c = _n("10.0.0.1" if ":" not in mc else "fd00::1", 5000, [srv(mc, 6000)])
     cases.append((f"관측 주소가 멀티캐스트면 판정 불가: {mc}", c["behind_nat"] is None, c))
-cases.append(("멀티캐스트는 is_global 이 참이지만 사용 불가로 본다",
-              __import__("ipaddress").ip_address("224.0.0.1").is_global
-              and not np._is_usable_public(__import__("ipaddress").ip_address("224.0.0.1")), None))
+for sp in ("192.88.99.1", "192.31.196.1", "192.52.193.1", "192.175.48.1",
+           "192.0.0.9", "192.0.0.10", "192.0.0.170", "192.0.0.255",
+           "64:ff9b::102:304", "2001::1234", "2002::1"):
+    cases.append((f"IANA 특수 목적 대역 거부: {sp}", np.is_public_unicast(sp) is False, sp))
+# 표준 라이브러리의 is_global 값은 Python 판의 IANA 표에 따라 달라질 수 있다.
+# 그 값을 단정하지 않고 우리 판정만 확인한다.
+cases.append(("6to4 relay anycast 거부", not np.is_public_unicast("192.88.99.1"), None))
+cases.append(("정상 공인 주소는 통과", np.is_public_unicast("8.8.8.8")
+              and np.is_public_unicast("2606:4700:4700::1111"), None))
+cases.append(("문자열이 아니면 거부", np.is_public_unicast(None) is False, None))
+cases.append(("멀티캐스트 거부",
+              not np._is_usable_public(__import__("ipaddress").ip_address("224.0.0.1")), None))
 for doc_ip in ("192.0.2.5", "198.51.100.5", "203.0.113.5", "198.18.0.5"):
     c = _n(doc_ip, 5000, [srv("8.8.4.4", 6000)])
     cases.append((f"문서용/벤치마킹 대역은 사설로 보지 않는다: {doc_ip}",
@@ -173,6 +182,62 @@ cases.append(("링크 로컬은 외부 출발지가 아니므로 판정 불가",
               c["behind_nat"] is None and c["local_ip_scope"] == "special", c))
 c = _n("10.0.0.1", 5000, [srv("8.8.4.4", 5.9)])
 cases.append(("관측 포트가 실수면 판정 불가", c["behind_nat"] is None, c))
+
+
+# --- check-peer CLI ---------------------------------------------------------
+# `check-peer` 는 주소가 인터넷 유니캐스트인지 확인하는 독립 보조 명령이다.
+# (방화벽 시험 스크립트는 상대 주소를 아예 받지 않으므로 이것을 부르지 않는다.)
+# 함수만 시험하면 인자 처리, 종료 코드, 주소 노출은 확인되지 않는다.
+import subprocess, sys as _sys, pathlib as _pl
+_PROBE = str(_pl.Path(__file__).resolve().parent / "natprobe.py")
+
+def cli(args, stdin=None):
+    p = subprocess.run([_sys.executable, _PROBE, "check-peer", *args],
+                       input=stdin, capture_output=True, text=True)
+    return p.returncode, p.stdout, p.stderr
+
+for args, stdin, want, name in [
+    (["8.8.8.8"], None, 0, "위치 인자 공인 주소 통과"),
+    (["10.0.0.1"], None, 2, "위치 인자 사설 주소 거부"),
+    (["192.0.0.9"], None, 2, "PCP anycast 거부"),
+    (["--stdin"], "8.8.8.8\n", 0, "stdin 한 줄 통과"),
+    (["--stdin"], "8.8.8.8", 0, "stdin 줄바꿈 없어도 통과"),
+    (["--stdin"], "8.8.8.8\n10.0.0.1\n", 2, "stdin 여러 줄 거부"),
+    (["--stdin"], " 8.8.8.8 ", 2, "stdin 공백 거부"),
+    (["--stdin"], "", 2, "stdin 빈 입력 거부"),
+    (["--stdin", "8.8.8.8"], "8.8.8.8\n", 2, "위치 인자와 --stdin 동시 사용 거부"),
+    ([], None, 2, "주소도 --stdin 도 없으면 거부"),
+    (["--ipv4", "2606:4700:4700::1111"], None, 2, "--ipv4 는 IPv6 거부"),
+    (["2606:4700:4700::1111"], None, 0, "--ipv4 없으면 공인 IPv6 통과"),
+    (["--ipv4", "8.8.8.8"], None, 0, "--ipv4 + IPv4 통과"),
+    (["Any"], None, 2, "방화벽 키워드 거부"),
+    (["0.0.0.0/0"], None, 2, "CIDR 거부"),
+]:
+    rc, out, err = cli(args, stdin)
+    cases.append((f"CLI: {name}", rc == want, (rc, out.strip(), err.strip())))
+
+# argparse 자체 오류 경로도 주소를 되쓰면 안 된다.
+for args, stdin in [(["8.8.8.8", "9.9.9.9"], None), (["--bogus", "8.8.8.8"], None),
+                    (["--ipv4=8.8.8.8"], None)]:
+    rc, out, err = cli(args, stdin)
+    leaked = [a for a in ("8.8.8.8", "9.9.9.9") if a in out or a in err]
+    cases.append((f"CLI: 인자 오류에도 주소를 남기지 않는다 {args}",
+                  rc != 0 and leaked == [], (rc, leaked, err.strip()[:60])))
+
+# 주소가 출력에 절대 남으면 안 된다. 터미널 기록과 수집 로그로 새는 경로다.
+# 성공 시 stdout 이 비어 있어야 한다. 조용한 검증 명령이라는 계약이다.
+for args, stdin in [(["8.8.8.8"], None), (["--stdin"], "8.8.8.8\n"),
+                    (["--ipv4", "8.8.8.8"], None)]:
+    rc, out, err = cli(args, stdin)
+    cases.append((f"CLI: 통과 시 stdout 이 비어 있다 {args}", rc == 0 and out == "", (rc, out)))
+
+for args, stdin in [(["8.8.8.8"], None), (["10.0.0.1"], None),
+                    (["--stdin"], "8.8.8.8\n"), (["--stdin"], "10.0.0.1\n"),
+                    (["--ipv4", "2606:4700:4700::1111"], None)]:
+    rc, out, err = cli(args, stdin)
+    leaked = [a for a in ("8.8.8.8", "10.0.0.1", "2606:4700:4700::1111")
+              if a in out or a in err]
+    cases.append((f"CLI: 출력에 주소를 남기지 않는다 {args}", leaked == [], leaked))
 
 # 요청하지 않은 인바운드 시험
 for k in (np.PUNCH_UNSOL, np.PUNCH_UNSOL_ACK, np.PUNCH_PHASE_READY):

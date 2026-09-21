@@ -160,6 +160,22 @@ Rules taken from this audit.
 2. **Diff review only catches local defects.** Run a separate full-document audit at every milestone.
 3. **Check that a correct implementation passes a criterion before adding it.** A criterion nothing can pass gets loosened later, and real defects pass along with it.
 4. **When applying a finding, define the new contract that fix creates.** Adding the constraint "they share one socket" required settling that socket's ownership and demultiplexing at the same time.
+5. **Never copy the same claim into more than one place.** Write it once and link to it. A copied claim has to be tracked down everywhere each time its strength changes, and one or two places always get missed. If it is already spread out, `grep` for every occurrence and fix them in one pass. **There are 3 exceptions.** (1) The `docs/kor` and `docs/eng` mirror pair (Korean is the original). (2) A **summary index**: at most a one-line name per item, never the body, and it must state where the original lives. (3) **Historical records** such as `commit_history/` and measurement records. These state facts about a moment, so they carry the evidence and figures as they were. **They are not updated when the source changes.** If they only linked, a later reader would see the current document instead of the judgement made at the time, which defeats their purpose.
+6. **An executable procedure in a document needs code-level review.** Input validation, cleanup on interruption, privilege scope, and the limits of what the result proves. If that is not worth doing, put the procedure in a tool and have the document point at it. **Do not keep a script for a test that has not been run yet in a document.**
+7. **A function that returns a verdict starts with validation.** The default is "indeterminate when unsure"; it asserts only when certain. Do not trust a standard library predicate by its name (`is_private` includes loopback and documentation ranges, and `is_global` is true for multicast). An allow list is safer than a deny list.
+
+**Rules 5 to 7 come from the blocker 20 work on 2026-09-20.** Nineteen rounds of cross-model
+review produced 93 findings, and 56 of them landed in two places.
+
+| Location | Findings | Cause |
+|------|:----:|------|
+| `classify_nat` in `natprobe.py` | 31 | A verdict function written as a 20-line convenience. It asserted on invalid input (rule 7) |
+| The PowerShell procedure in ADR 0002 | 25 | A script for a test that had not been run, placed in a document. After round 13 it produced 9 of the next 10 findings (rule 6) |
+
+Most of the rest came from copying the same claim into 8 places (4 documents in 2 languages) and
+then fixing one or two at a time (rule 5). **Rule 4 was broken again too:** the description of the
+cause was softened to "likely" while the conclusion that depended on it was left absolute.
+
 
 ---
 

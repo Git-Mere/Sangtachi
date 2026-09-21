@@ -83,76 +83,16 @@ So for directions where our Windows host is the receiver, the firewall is still 
 If it is, the client could register an inbound rule and fix **its own reception**. That would not
 fix the whole path if the peer NAT still blocks, but it would remove our side as a factor.
 
-**The decisive test.** Do not turn the firewall off. **Adding and removing one narrowly scoped
-inbound rule is safer and more precise.** Disabling a profile risks disabling the wrong one
-depending on which profile is active, and restoring it can overwrite its original value.
+**The decisive test lives in `tools/nat-probe/README.md` chapter 12.** It does not turn the
+firewall off; it adds and removes one narrowly scoped temporary inbound allow rule and
+re-measures. That procedure exercises exactly what option a would do.
 
-Run this in an administrator PowerShell. The port must be fixed so a rule can target it.
+The procedure is not kept here because of rule 6 in
+[`../design-audit.md`](../design-audit.md) chapter 6: a script for a test that has not been run
+belongs in the tool, and the decision record only points at it.
 
-```powershell
-# Administrator PowerShell.
-$group = "natprobe-unsolicited-test"     # An identifier used only by this test
-
-# 0. Clear rules left by a previous run first. An interruption or reboot can skip finally.
-#    Find them by the dedicated Group, not by a name wildcard.
-#    Run this only when no other copy of this test is running on the machine.
-Get-NetFirewallRule -Group $group -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-
-# 1. Read the address. Do not put it on the command line; PowerShell history keeps it on disk.
-#    Read-Host also accepts "Any" and CIDR, so check for a public unicast IPv4 address.
-$raw  = Read-Host "Peer public IP"
-$peer = [System.Net.IPAddress]::Parse($raw)      # throws if it is not an address
-if ($peer.AddressFamily -ne 'InterNetwork') { throw "must be IPv4: $raw" }
-$b = $peer.GetAddressBytes()
-$notPublic =
-  ($b[0] -eq 0) -or ($b[0] -eq 10) -or ($b[0] -eq 127) -or ($b[0] -ge 224) -or
-  ($b[0] -eq 169 -and $b[1] -eq 254) -or
-  ($b[0] -eq 172 -and $b[1] -ge 16  -and $b[1] -le 31)  -or
-  ($b[0] -eq 192 -and $b[1] -eq 168) -or
-  ($b[0] -eq 100 -and $b[1] -ge 64  -and $b[1] -le 127) -or
-  ($b[0] -eq 192 -and $b[1] -eq 0   -and ($b[2] -eq 0 -or $b[2] -eq 2)) -or
-  ($b[0] -eq 198 -and ($b[1] -eq 18 -or $b[1] -eq 19)) -or
-  ($b[0] -eq 198 -and $b[1] -eq 51  -and $b[2] -eq 100) -or
-  ($b[0] -eq 203 -and $b[1] -eq 0   -and $b[2] -eq 113)
-if ($notPublic) { throw "must be a public unicast IPv4 address: $raw" }
-
-$rule = $null
-try {
-    $rule = New-NetFirewallRule -DisplayName "natprobe-temp-$((New-Guid).Guid)" `
-      -Group $group -Direction Inbound -Protocol UDP -LocalPort 47000 `
-      -RemoteAddress $peer.IPAddressToString -Action Allow -Profile Any
-    # Assumes the repository root. The explicit path avoids depending on the working directory.
-    py .\tools\nat-probe\natprobe.py punch --label us-home --port 47000 --unsolicited
-}
-finally {
-    # Remove **the object**, not a name or a group. Safe even with a concurrent run.
-    if ($rule) { Remove-NetFirewallRule -InputObject $rule }
-}
-
-# 2. Verify. This must print nothing.
-Get-NetFirewallRule -Group $group -ErrorAction SilentlyContinue
-```
-
-**The rule is persistent.** `New-NetFirewallRule` creates a rule that survives on disk by default.
-If the process dies, the window is closed, or the machine reboots during the measurement,
-`finally` never runs and the rule stays. That is why step 0 runs every time and step 2 checks.
-**If step 2 prints anything, remove it and check again.**
-
-The address check uses the same rules as `classify_nat` in `natprobe.py`. It rejects private,
-loopback, link-local, CGNAT, documentation, benchmarking, and multicast ranges. One typo should
-not create a broad rule.
-
-`Read-Host` is used so the peer's public IP is not written into command history. This is the same
-reason the raw measurements are not committed to this repository
-([ADR 0001](0001-no-direct-connection-fallback.md)).
-
-**That this test needs administrator rights is itself an observation.** If option a were adopted,
-the client would have to do the same thing, and the cost shows up right here.
-
-| Result | Reading | Action |
-|------|------|------|
-| Still `blocked` with the rule in place | **The default inbound policy is not the cause.** This does not exclude the firewall as a whole: an explicit block rule takes precedence over an allow rule, and third-party security products can still filter. The evidence leans further toward the NAT but is not conclusive. Confirming it needs the effective WFP rules or packet captures on both sides | This ADR stands. Further checks are optional |
-| Becomes `allowed` with the rule | **The Windows firewall was the cause.** Revise this ADR | Reconsider option a, and carry the administrator rights requirement into `spec.md` and follow-up 3 |
+- Procedure: [`tools/nat-probe/README.md`](../../../tools/nat-probe/README.md) 12.1
+- Reading the result: 12.2 in the same document
 
 Until that test is run, **"the client does not register firewall rules" is a provisional
 decision.**

@@ -14,10 +14,14 @@
 > 여기서는 고치지 않는다. 기록은 그때의 판단을 그대로 담아야 하기 때문이다. 현재 번호가
 > 필요하면 `../protocol.md`를 직접 본다. 살아 있는 문서의 참조는 전부 현재 번호로 맞췄다.
 >
-> `architecture.md`, `protocol.md`, `roadmap.md`, `spec.md`, `plan.md`, `windows-prereq.md`는
-> 이 파일을 근거로 링크하지 않는다. `CLAUDE.md`와 `decisions/`, `commit_history/`,
-> `tools/`는 링크한다. 앞은 살아 있는 문서라 확정 문서를 근거로 삼아야 하고, 뒤는 이 점검을
-> 가리키는 것이 목적인 안내서와 기록이다.
+> **6장 재발 방지 규칙의 원문은 이제 저장소 루트 `CLAUDE.md`다.** 여기 6장은 그 규칙을 얻은
+> 경위의 기록이다. 규칙을 지키려고 읽는 것이면 `CLAUDE.md`를 본다.
+>
+> `architecture.md`, `protocol.md`, `roadmap.md`, `spec.md`, `plan.md`, `windows-prereq.md`와
+> 저장소 루트 `CLAUDE.md`는 이 파일을 링크하지 않는다. 앞의 여섯은 살아 있는 문서라 확정
+> 문서를 근거로 삼아야 하고, `CLAUDE.md`는 이 파일이 담고 있던 규칙의 원문을 가져갔다.
+> `decisions/`, `commit_history/`, `tools/`는 링크한다. 이 점검을 가리키는 것이 목적인
+> 기록이기 때문이다.
 
 ---
 

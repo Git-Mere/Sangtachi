@@ -490,7 +490,7 @@ Sangtachi/
 |   |   +-- architecture.md      이 문서
 |   |   +-- spec.md              요구사항과 성공 기준
 |   |   +-- roadmap.md           단계별 개발 계획
-|   |   +-- plan.md              현재 작업 단위 체크리스트
+|   |   +-- plan.md              다음 세션 인수인계
 |   |   +-- first_design.md      초기 기획서 (참고용)
 |   |   +-- protocol.md          터널 프로토콜 확정본
 |   |   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)

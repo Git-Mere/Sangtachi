@@ -34,7 +34,7 @@ coverage/
 Thumbs.db
 
 # 실측 데이터와 기록. 공개 레포이고 두 가정의 공인 IP와 분 단위 시각이 들어 있다.
-# 로컬 보관하고 보고서 제출 시에만 첨부한다. 결정 근거는 plan.md 5.9.
+# 로컬 보관하고 보고서 제출 시에만 첨부한다. 결정 근거는 ADR 0001 이다.
 tools/nat-probe/results/**
 tools/nat-probe/records/**
 !tools/nat-probe/results/.gitkeep

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """natprobe - NAT 매핑 거동과 UDP 홀펀칭 실측 도구.
 
-docs/kor/plan.md "5. 직접 연결 불가 대비책" (design-audit blocker 20) 의 실측용.
+설계 감사 blocker 20 (후속 5번 "직접 연결 불가 대비책") 의 실측용.
 
 표준 라이브러리만 쓴다. Python 3.8+. 대상은 Windows 10/11 x64지만 Linux/macOS에서도 돈다.
 

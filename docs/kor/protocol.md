@@ -211,7 +211,7 @@ expected = position - baseline
 
 `pkt_pos`는 전진 패킷이면 갱신된 `position`, 재정렬 패킷이면 `position - back`이다. 상태값 `position`을 그대로 쓰면 `baseline` 이전에 보내진 재정렬 패킷까지 `accepted`에 세어 `accepted > expected`가 되고 `손실`이 음수로 언더플로한다. `baseline` 이하의 재정렬 패킷을 정확히 배제해야 이 문제가 없다.
 
-`drop_too_old`로 버린 패킷은 이미 손실로 확정된 것이므로 되돌리지 않는다. 손실률은 10초 주기로 스냅샷을 찍어 텔레메트리에 올린다.
+`drop_too_old`로 버린 패킷은 이미 손실로 확정된 것이므로 되돌리지 않는다. 손실률은 10초 주기로 스냅샷을 찍어 텔레메트리 서비스에 올린다.
 
 ---
 

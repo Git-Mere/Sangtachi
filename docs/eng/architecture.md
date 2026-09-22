@@ -295,7 +295,7 @@ The tunnel header reduces the available payload size.
 
 Set the virtual adapter MTU down to around 1400 to avoid fragmentation.
 
-Note that the calculation above depends on the **assumption that the outer path MTU is 1500**. Paths over PPPoE lines or through another tunnel are smaller, and in that case the outer UDP packet fragments. The exact value is fixed by measurement in Phase 7; if a conservative fixed value is used, state that limitation in [`experiments.md`](experiments.md).
+Note that the calculation above depends on the **assumption that the outer path MTU is 1500**. Paths over PPPoE lines or through another tunnel are smaller, and in that case the outer UDP packet fragments. The exact value is fixed by measurement; if a conservative fixed value is used, state that limitation in [`experiments.md`](experiments.md).
 
 ---
 
@@ -457,7 +457,7 @@ The client buffers into a local ring buffer first and a dedicated thread uploads
 | Method | Append-only. Earlier lines are not modified |
 | Independence | No dependency on the telemetry queue or the upload path. The record remains even with no control plane |
 
-**The path and the line format are not decided yet.** They are decided in this document before Phase 4 starts. They are not chosen arbitrarily in code.
+**The path and the line format are not decided yet.** They are decided in this document. They are not chosen arbitrarily in code. **When they have to be decided belongs to [`roadmap.md`](roadmap.md).**
 
 ---
 
@@ -505,7 +505,7 @@ Both language trees hold the same files. When a document changes, update both si
 
 ### Difference from the current state
 
-The source tree currently contains only `src/main.cpp` and `CMakeLists.txt` at the root (`docs/` is already populated). At the start of Phase 1 these move under `client/` and `control-server/` is created. This relocation is handled as the first task of Phase 1.
+The source tree currently contains only `src/main.cpp` and `CMakeLists.txt` at the root (`docs/` is already populated). The relocation that moves them under `client/` and creates `control-server/` is still pending.
 
 ---
 

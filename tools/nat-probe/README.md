@@ -1,7 +1,5 @@
 # nat-probe
 
-> **Windows 에서 이어서 작업한다면 [`NEXT-ON-WINDOWS.md`](NEXT-ON-WINDOWS.md) 를 먼저 읽는다.**
-
 blocker 20 실측 도구. 두 망의 NAT 매핑 거동과 실제 UDP 홀펀칭 성립 여부를 측정한다.
 
 **근거 문서:** [`design-audit.md`](../../docs/kor/audit-history/design-audit.md) 후속 5번 "직접 연결 불가 대비책",

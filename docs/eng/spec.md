@@ -150,7 +150,7 @@ All of the following must hold.
 | M-3 | The two peers exchange connection information through the AWS control plane. | The `get_peers` response contains the other peer's virtual IP and public endpoint |
 | M-4 | A direct UDP connection is established in a supported NAT environment without manual port forwarding. | With no router port forwarding rule in place, the session reaches `CONNECTED`. Packet capture confirms the traffic does not go through AWS |
 | M-5 | Inner IP packets are transferred over the direct tunnel. | A `DATA` round trip succeeds in both directions and the received bytes match the sent bytes. The payload is a **complete inner IPv4 packet** as defined in [`protocol.md`](protocol.md) 5.4. Phase 4 judges this with synthesized packets and no Wintun; carrying real application traffic is confirmed in T-3 |
-| M-6 | Connection status and basic performance data are recorded. | The client writes the connection result (success, or the FR-13 failure code) and the RTT to a **local record file**. The path and the line format of that file are fixed in [`architecture.md`](architecture.md) chapter 9 **before Phase 4 starts.** Until they are fixed, this criterion cannot be decided. Control plane upload and per-environment aggregation are FR-14 and belong to Phase 9 |
+| M-6 | Connection status and basic performance data are recorded. | The client writes the connection result (success, or the FR-13 failure code) and the RTT to a **local record file**. The path and the line format of that file are fixed in [`architecture.md`](architecture.md) chapter 9. **Until they are fixed, this criterion cannot be decided.** Control plane upload and per-environment aggregation are FR-14 and belong to Phase 9 |
 
 ### Target success
 

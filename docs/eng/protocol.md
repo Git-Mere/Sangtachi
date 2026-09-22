@@ -517,7 +517,7 @@ All outbound traffic goes to `peer_endpoint`. Before anything is learned (during
 
 **The leading explanation is port-restricted filtering in the NAT,** because the result was the same on macOS and Linux hosts believed to have no active firewall filtering. **It is not stated as certain.** The macOS case is inferred from defaults and was not queried directly; on Linux only `ufw` was confirmed off, and without root the full `nft` and `iptables` rulesets were not seen. No packet capture was taken on either side.
 
-**So v1 does not guarantee recovery from NAT rebinding through (c).** More precisely, it is not guaranteed **for endpoint changes matching the behaviour that was tested, where only the source port changes.** An actual rebinding was never induced and tested, so this does not claim that every rebinding fails. Where it is not guaranteed, step 1 never starts, and renegotiation in 9.5 loses its trigger for the same reason. Both sides then reach the idle timeout (50s) and the session ends with `TUNNEL_DROPPED`. As 9.6 states, **if a retry happens** it starts from `IDLE` with a new epoch and nonce and goes through the control plane again. **This document does not define who starts that retry, or when.** Whether it is automatic is undecided and must be settled in Phases 3 to 5.
+**So v1 does not guarantee recovery from NAT rebinding through (c).** More precisely, it is not guaranteed **for endpoint changes matching the behaviour that was tested, where only the source port changes.** An actual rebinding was never induced and tested, so this does not claim that every rebinding fails. Where it is not guaranteed, step 1 never starts, and renegotiation in 9.5 loses its trigger for the same reason. Both sides then reach the idle timeout (50s) and the session ends with `TUNNEL_DROPPED`. As 9.6 states, **if a retry happens** it starts from `IDLE` with a new epoch and nonce and goes through the control plane again. **This document does not define who starts that retry, or when.** Whether it is automatic is undecided.
 
 (c) is not removed, for two reasons. First, its **defence against forged source addresses** still applies: whenever a packet does arrive from outside the candidate set, that validation is needed. Second, **on a NAT that uses address-restricted (restricted cone) filtering the packet can arrive.** Every observation here was merely **consistent with** a port-restricted NAT; it was not confirmed. The reasoning and the discarded alternatives are in [`decisions/0002-no-rebinding-recovery.md`](decisions/0002-no-rebinding-recovery.md).
 
@@ -563,7 +563,7 @@ Dequeue time rather than arrival time, because the receive loop caps how many da
 
 The idle timeout is **50 s** rather than 45 s because a keepalive is sent immediately on entering `CONNECTED`, giving four send opportunities within 45 s (at 0, 15, 30, and 45 s). At 45 s the last send would race the timeout. 50 s tolerates three losses and leaves room to recover on the fourth.
 
-15 s and 50 s are initial values. If adjusted from the measured mapping lifetime in Phase 4, update this document.
+15 s and 50 s are initial values. If adjusted from the measured mapping lifetime, update this document.
 
 ---
 
@@ -581,7 +581,7 @@ The virtual adapter MTU defaults to **1400**, leaving 52 bytes of headroom below
 
 **Do not set the DF bit on outer UDP packets.** On Windows `IP_DONTFRAGMENT` is off by default for UDP, so simply do not enable it. With DF set, an intermediate router silently discards packets when the path MTU is smaller, so small packets get through while large ones vanish and **the inner TCP stack enters a retransmission blackhole.** The classic symptom is that login succeeds but world loading hangs.
 
-Full path MTU discovery is out of scope for v1. Phase 7 measures and fixes the default, and the limitation is recorded in [`experiments.md`](experiments.md).
+Full path MTU discovery is out of scope for v1. Measurement fixes the default, and the limitation is recorded in [`experiments.md`](experiments.md).
 
 ---
 

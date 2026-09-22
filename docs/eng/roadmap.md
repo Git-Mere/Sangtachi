@@ -227,6 +227,7 @@ There are NAT environments where this phase fails. Do not hide the failures; rec
 - Loss and reordering accounting from `sequence`, using wrap-aware comparison (32-bit rollover) and a reordering window, so only numbers still missing after the window expires count as lost
 - Fuzz defenses. No crash on corrupted or truncated input
 - Secure long-duration connection stability
+- **Decide whether retries are automatic.** Section 9.6 of [`protocol.md`](protocol.md) does not say who starts a retry after `TUNNEL_DROPPED`, or when. Once decided, that document is updated
 
 **What Phase 4 already implemented is not built again here.** For the three items below the **test** belongs to this phase and the implementation is in Phase 4. Confusing where each part lives splits the verification criteria across two phases.
 

@@ -36,7 +36,7 @@
 |------|-----------|-------------|
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | 어댑터가 아직 없다. 지금 상태는 문서화이고 실물 확인이 아니다 | Phase 3(EC2), 6(Wintun), 8(시연) |
-| nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/NEXT-ON-WINDOWS.md`](../../tools/nat-probe/NEXT-ON-WINDOWS.md) |
+| nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
 
 ## 문서 부채
 

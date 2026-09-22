@@ -7,8 +7,7 @@
 
 **2차 감사가 나왔다.** 근거는 `audit-history/design-audit2.md` (blocker 6 / warn 24 / info 24).
 제어 평면 묶음은 별도 스키마 문서 작업이 커서 뒤로 뺐고, **그와 무관한 것을 Phase 1 착수
-전에 먼저 처리했다.** B-2(keepalive 측정 절차)는 EC2 관측점과 서버 기능을 전제하므로 제어
-평면 묶음으로 분류했다.
+전에 먼저 처리했다.** 그 뒤 스키마 문서(`control_plane.md`)를 쓰면서 제어 평면 묶음을 처리했다.
 
 ### 1차: 제어 평면과 무관한 것 — **끝났다**
 
@@ -17,17 +16,12 @@
 에 있다. 크로스 모델 리뷰 **15라운드**(호출 41회, 지적 139건)를 돌렸고 기각은 7건이며
 전부 사유를 적었다.
 
-### 2차: 제어 평면 묶음 — 스키마 문서와 같이 간다 (Phase 3 착수 전까지)
+### 2차: 제어 평면 묶음 — **끝났다**
 
-| 항목 | 무엇 |
-|------|------|
-| 스키마 문서 신설 | protocol 14장이 미룬 요청/응답 인코딩, 오류 스키마, 상태 전이, 포트. `create_room`/`join_room`/`register_peer`/`register_candidate`/`get_peers`. **`report_*` 는 빠진다.** 텔레메트리 서비스로 옮겼다 ([ADR 0003](decisions/0003-텔레메트리-서비스-분리.md)) |
-| B-3 | roadmap Phase 3에 "착수 전 스키마 확정" 항목, spec M-3에 판정 불가 문구 |
-| B-2 | keepalive 매핑 수명 측정 절차 재설계 (경로 열기 송신 1회, 측정 대상 재정의, probe 형식과 EC2 도구 소속) |
-| B-4 | 기동 입력 목록(STUN 서버 목록, 제어 서버 주소, 방 생성/참가, `room_id`, 식별자)과 전달 방식(CLI/설정 파일)을 architecture에 한 절로 확정. 제어 서버 주소가 입력의 핵심이라 스키마와 같이 정한다 |
-| B-5 | 제어 평면 TCP·DNS의 소유 스레드(또는 논블로킹 계약)를 architecture 3.2에 확정 |
-| W-6, W-11, W-12 | 재참가 시 `peer_id`/가상 IP 유지 계약, 제어 평면 신뢰 가정 명시, 식별자 엔트로피 |
-| info 3, 8, 23, 24 | 포트 8000 출처, 방 수명, 텔레메트리 무인증 한계, `elapsed_since_ready_ms` 단조 시계. **info 23은 텔레메트리 서비스 쪽으로 옮겨 Phase 9 착수 전 항목이 됐다** |
+[`control_plane.md`](control_plane.md) 를 신설해 스키마를 확정하면서 함께 처리했다. 항목별 처리는
+[`commit_history/2026-09-22-control-plane-doc.md`](commit_history/2026-09-22-control-plane-doc.md)
+에 있다. **B-2 는 제어 평면 묶음에서 빠졌다.** 절차 본문은 여전히 `roadmap.md` Phase 4 착수 전
+항목이고 아직 쓰지 않았다.
 
 ## 남은 일이 어디에 있는가
 
@@ -36,15 +30,15 @@
 | 축 | 출처 | 지금 |
 |----|------|------|
 | 구현 | [`roadmap.md`](roadmap.md) | Phase 1은 CMake 구성만. Winsock2 래퍼부터 미착수 |
-| 감사 후속 | 이 파일 "설계 감사 후속" 절 | 2차 감사 54건. **1차 완료, 2차 남음** |
-| 문서 부채 | 이 파일 마지막 절 | 2건 |
+| 감사 후속 | 이 파일 "설계 감사 후속" 절 | 2차 감사 54건. **1차, 2차 모두 완료.** 남은 것은 Phase 착수 전 항목으로 `roadmap.md` 에 있다 |
+| 문서 부채 | 이 파일 마지막 절 | 5건 |
 
 ## 다음에 할 일
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 구현 Phase 1. Winsock2 래퍼 | 1차가 끝나 Phase 1을 막는 것이 없다 |
-| 2 | 감사 후속 2차 (제어 평면 묶음) | Phase 3 착수 전까지. Phase 1과 병행 가능 |
+| 1 | 구현 Phase 1. Winsock2 래퍼 | 설계 쪽에서 Phase 1을 막는 것이 없다 |
+| 2 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
 
 ## 대기 중인 것
 
@@ -61,7 +55,8 @@
 | `experiments.md` 없음 | Phase 9 산출물. 게이트가 예외로 두는 유일한 끊긴 링크다 |
 | `docgate.py` 개수 검사 미구현 | `CLAUDE.md` "리뷰를 돌릴 때" 가 **셀 수 있는 검사를 `docgate.py` 나 스크립트가 맡으라고** 정했다. 아직 규칙만 있고 검사가 없다. 대상은 문서가 적은 개수(계약 수, 항목 수, ADR 건수)와 실제 개수의 대조다 |
 | `31e4240` 기록 없음 | CMake 스모크 커밋. `commit_history/` 항목 미작성 |
-| 영어 미러 | 이번 텔레메트리 분리와 DynamoDB 변경을 `docs/eng` 에 아직 반영하지 않았다. 게이트가 `mirror` 와 `parity` 로 막히는 것이 정상이다 |
+| 영어 미러 | 텔레메트리 분리·DynamoDB 변경과 이번 `control_plane.md` 신설(그리고 그에 따른 `architecture.md`, `protocol.md`, `spec.md`, `roadmap.md`, `windows-prereq.md` 변경)을 `docs/eng` 에 아직 반영하지 않았다. `control_plane.md` 는 미러가 생길 때 다른 문서처럼 `> English version:` 줄을 붙인다. 게이트가 `mirror` 와 `parity` 로 막히는 것이 정상이다 |
+| 케이스 표 이관 | `control_plane.md` 의 케이스 표 6벌은 Phase 3 착수 시 `control-server/tests/` 로 옮긴다. 그때까지는 문서가 유일한 사본이다 |
 
 ## 세션을 시작할 때
 

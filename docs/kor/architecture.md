@@ -76,7 +76,7 @@
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
 | `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
-| `control/control_client` | 제어 평면 REST/JSON 호출 | Winsock2 |
+| `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (3.2.8). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
 
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 3.2에 있다.
 
@@ -97,8 +97,9 @@
 | `[loop]` | UDP 수신, Wintun 수신, 콘솔 명령, 타이머, 세션 상태, 라우팅, 모든 송신 | **터널 상태 없음.** 텔레메트리 큐와 종료/정리 이벤트만 공유한다 |
 | `[telemetry]` | 지표 큐 소비, 텔레메트리 서비스 업로드 | 큐 하나 |
 | `[console]` | 표준 입력 읽기. Phase 1~5 스캐폴딩 | 명령 큐 하나 |
+| `[control]` | 제어 평면 TCP 호출, DNS 해석. Phase 3 이후 | 요청 큐와 응답 큐 하나씩 (3.2.8) |
 
-Phase 6 이후는 두 스레드, Phase 1~5는 세 스레드다. `[loop]`가 프로세스 주 스레드다. `[console]`은 Phase 1~5에만 있다. `[loop]`가 표준 입력에서 블록할 수 없으므로 별도 스레드가 읽어 큐에 넣는다. Phase 6에서 어댑터가 들어올 때는 Wintun 읽기 이벤트가 `[loop]`의 대기 집합에 직접 합류하므로 스레드가 늘지 않는다.
+Phase 1~2는 세 스레드, Phase 3~5는 네 스레드, Phase 6 이후는 세 스레드다. `[loop]`가 프로세스 주 스레드다. `[console]`은 Phase 1~5에만 있다. `[loop]`가 표준 입력에서 블록할 수 없으므로 별도 스레드가 읽어 큐에 넣는다. Phase 6에서 어댑터가 들어올 때는 Wintun 읽기 이벤트가 `[loop]`의 대기 집합에 직접 합류하므로 스레드가 늘지 않는다.
 
 #### 3.2.2 대기
 
@@ -112,8 +113,9 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 | 1 | UDP 소켓 이벤트 | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | 항상 |
 | 2 | Wintun 읽기 이벤트 | `WintunGetReadWaitEvent(session)` | Phase 6 이후 |
 | 3 | 콘솔 명령 이벤트 | `CreateEvent` (자동 리셋). `[console]`이 신호 | Phase 1~5 |
+| 4 | 제어 응답 이벤트 | `CreateEvent` (자동 리셋). `[control]`이 응답 큐에 넣은 뒤 신호 | Phase 3 이후 |
 
-**위 번호는 논리적 순위이지 배열 인덱스가 아니다.** `WaitForMultipleObjects`는 유효한 핸들이 빈틈없이 채워진 배열을 요구한다. 빈자리에 `NULL`을 넣으면 `WAIT_FAILED`가 난다. 구성이 바뀌는 시점마다 살아 있는 핸들만 모아 조밀한 배열을 만들고, 논리적 출처에서 실제 인덱스로 가는 대응표를 따로 둔다. Phase 1~5에는 Wintun 이벤트가 없어 배열 길이가 3이다.
+**위 번호는 논리적 순위이지 배열 인덱스가 아니다.** `WaitForMultipleObjects`는 유효한 핸들이 빈틈없이 채워진 배열을 요구한다. 빈자리에 `NULL`을 넣으면 `WAIT_FAILED`가 난다. 구성이 바뀌는 시점마다 살아 있는 핸들만 모아 조밀한 배열을 만들고, 논리적 출처에서 실제 인덱스로 가는 대응표를 따로 둔다. Phase 1~2에는 배열 길이가 3, Phase 3~5에는 4(제어 응답 이벤트가 들어온다), Phase 6 이후에는 콘솔 이벤트가 빠지고 Wintun 이벤트가 들어와 4다.
 
 `timeout_ms`는 아래처럼 계산한다. **뺄셈을 먼저 하면 안 된다.** `GetTickCount64()`는 부호 없는 값이라 마감이 이미 지났을 때 뺄셈이 언더플로해 거대한 값이 되고, `DWORD`로 좁히면 `0xFFFFFFFF`, 즉 `INFINITE`에 착지할 수 있다. 그러면 루프가 영원히 깨지 않는다.
 
@@ -149,6 +151,7 @@ loop:
         어댑터 세션 재생성 -> 실패하면 shutdown(); break
         성공하면 살아 있는 핸들로 배열과 인덱스 대응표 재구성
     drain_console()
+    drain_control()                           # 3.2.8. Phase 3 이후
     run_expired_timers(now())
     busy = (u == BUDGET) or (w == BUDGET)
 ```
@@ -209,7 +212,7 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
 
 **"링이 찬 것"을 별도 카운터로 나누는 것은 확인한 뒤에 한다.** 실패가 어느 호출에서 어떤 형태로(반환값인지 `GetLastError`인지, 애초에 보고되는지) 나오는지는 **쓰는 Wintun 헤더와 그 문서가 정한다.** 이 레포에는 그 헤더가 없고 확인하지 않았다. **확인하지 않은 API 모양을 여기 적으면 구현이 그것을 그대로 믿는다.** 확인한 뒤에 이 절에 세부 카운터를 추가한다. 언제 확인하는지는 [`roadmap.md`](roadmap.md)가 갖는다.
 
-`drain_console`은 `[console]`이 큐에 넣은 명령 줄을 비운다. 이벤트가 자동 리셋이라 별도 리셋 호출이 필요 없다. Phase 6 이후에는 이 핸들도 스레드도 사라진다.
+`drain_console`은 `[console]`이 큐에 넣은 명령 줄을 비운다. 이벤트가 자동 리셋이라 별도 리셋 호출이 필요 없다. Phase 6 이후에는 이 핸들도 스레드도 사라진다. `drain_control`은 `[control]`이 응답 큐에 넣은 결과를 비우고 세션 상태에 반영한다(3.2.8). 두 큐는 작고 요청이 사람 속도이므로 예산을 두지 않는다.
 
 Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀한 뒤 이벤트를 기다리라고 권한다. **스핀하지 않는다.** 이 루프는 타이머도 책임지므로 스핀이 keepalive와 `HELLO` 재전송을 그만큼 지연시킨다. 스핀은 처리량 최적화이고 우리 목표는 지연(NFR-1)이다. Phase 7 실측에서 수신이 병목으로 나오면 그때 재검토한다.
 
@@ -225,7 +228,7 @@ Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀�
 
 다음은 전부 `[loop]`가 단독 소유한다. 뮤텍스도 원자 변수도 쓰지 않는다. 필요가 없어서다.
 
-세션 상태 머신, `session_epoch`, 송신 `sequence`, 재생 방지 비트맵, `peer_endpoint`, 마지막 수신 시각, 후보 목록, `pending_pings`, 모든 폐기 카운터.
+세션 상태 머신, `session_epoch`, 송신 `sequence`, 재생 방지 비트맵, `peer_endpoint`, 마지막 수신 시각, 후보 목록, `pending_pings`, 모든 폐기 카운터, 그리고 `room_id`·`peer_id`·`peer_token`·상대 피어 정보 같은 **제어 평면에서 받은 값.** `[control]`은 그 값을 응답 큐로 넘길 뿐 자기 상태로 들고 있지 않다. 예외는 3.2.8이 적은 해석된 서버 주소 하나다.
 
 **송신 `sequence` 증가는 반드시 `[loop]`에서만 일어난다.** `DATA`와 `KEEPALIVE`가 같은 카운터를 쓰므로 두 스레드에서 증가시키면 같은 번호를 단 패킷 두 개가 나간다. 받는 쪽 중복 억제([`protocol.md`](protocol.md) 4.5)는 뒤엣것을 정확히 버린다. 자기가 만든 위조 중복이다.
 
@@ -251,41 +254,43 @@ Phase 5의 "서버 중단 10분" 시험(NFR-3)은 이 격리 없이는 통과할
 - `[telemetry]`는 업로드 소켓에 `SO_SNDTIMEO` / `SO_RCVTIMEO` 1.5초를 건다. 업로드와 업로드 사이마다 종료 이벤트를 확인한다. **이 값이 업로드 한 번의 총 시간을 2초 아래로 만들지는 못한다.** 두 타임아웃은 연산별이라 송신과 수신이 각각 걸리면 합이 3초까지 간다. 그래서 join 상한을 지키는 것은 이 값이 아니라 아래의 `_exit`다. 1.5초를 쓰는 이유는 **흔한 경우를 빨리 끝내는 것**이고, 더 키우면 그 효과마저 사라진다.
 - `SetConsoleCtrlHandler`가 종료 이벤트를 신호한다. **핸들러는 `[loop]` 소유 상태를 절대 건드리지 않는다.** 다른 스레드 컨텍스트에서 실행되기 때문이다.
 - **제어 신호 종류에 따라 반환 시점이 다르다.** `CTRL_C_EVENT`와 `CTRL_BREAK_EVENT`는 이벤트를 신호하고 즉시 `TRUE`를 반환하면 된다. 그러나 `CTRL_CLOSE_EVENT`, `CTRL_LOGOFF_EVENT`, `CTRL_SHUTDOWN_EVENT`는 **핸들러가 반환하는 순간 Windows가 프로세스를 종료한다.** 신호만 하고 돌아오면 `CLOSE` 송신도 어댑터 정리도 실행되지 않는다. 이 세 경우에는 종료 이벤트를 신호한 뒤 정리 완료 이벤트를 OS 유예 시간 안쪽(3초)까지 기다렸다가 반환한다. 콘솔 창을 닫는 것은 이 프로그램의 정상적인 종료 방법이므로 예외 처리가 아니라 주 경로다.
-- `[loop]`의 `shutdown()`은 순서대로 (1) 종료 이벤트 신호(아직 안 됐으면), (2) [`protocol.md`](protocol.md) 5.6이 정한 대상 세션마다 `CLOSE` 1회 송신 (대상과 reason 값은 그 절이 정한다. 여기에 조건을 다시 적지 않는다), (3) 어댑터 세션 종료, (4) 어댑터/주소/라우트 정리, (5) **정리 완료 이벤트 신호**, (6) `[telemetry]` join을 수행한다.
+- `[loop]`의 `shutdown()`은 순서대로 (1) 종료 이벤트 신호(아직 안 됐으면), (2) [`protocol.md`](protocol.md) 5.6이 정한 대상 세션마다 `CLOSE` 1회 송신 (대상과 reason 값은 그 절이 정한다. 여기에 조건을 다시 적지 않는다), (3) 어댑터 세션 종료, (4) 어댑터/주소/라우트 정리, (5) **정리 완료 이벤트 신호**, (6) `[telemetry]`와 `[control]` join을 수행한다. `[control]`은 Phase 3 이후에만 있으므로 그 전에는 (6)이 `[telemetry]`만이다.
 - **큐에 종료 표식을 넣지 않는다.** 큐는 가득 차면 새 항목을 버리므로 하필 그때 표식이 버려지면 `[telemetry]`가 종료를 영영 못 본다. 종료는 큐 밖의 이벤트로만 전달한다.
 - **정리가 join보다 먼저다.** 이 순서 덕분에 콘솔 핸들러는 텔레메트리를 기다리지 않고 반환할 수 있고, OS가 그 시점에 프로세스를 죽여도 잃는 것은 지표 몇 건뿐이다.
-- join 상한은 2초다. 넘기면 남은 레코드를 포기하고 join을 건너뛴 채 `_exit`로 즉시 끝낸다. 정리가 (5)에서 이미 끝났으므로 안전하다. **상한을 실제로 강제하는 것은 소켓 타임아웃이 아니라 이 `_exit`다.** 소켓 타임아웃은 흔한 경우를 깔끔하게 끝내줄 뿐이고, 어떤 경우에도 종료가 텔레메트리 서비스 가용성에 인질 잡히지 않게 하는 것은 `_exit`다.
+- join 상한은 두 스레드 합쳐 2초다. 넘기면 남은 레코드와 진행 중인 제어 요청을 포기하고 join을 건너뛴 채 `_exit`로 즉시 끝낸다. 정리가 (5)에서 이미 끝났으므로 안전하다. **상한을 실제로 강제하는 것은 소켓 타임아웃이 아니라 이 `_exit`다.** 소켓 타임아웃은 흔한 경우를 깔끔하게 끝내줄 뿐이고, 어떤 경우에도 종료가 텔레메트리 서비스 가용성에 인질 잡히지 않게 하는 것은 `_exit`다.
 - **`[console]`은 join하지 않는다.** 이 스레드는 표준 입력 읽기에서 블록한다. **이 설계는 그 읽기를 밖에서 취소하는 수단을 쓰지 않는다.** 그래서 join하면 사용자가 한 줄을 더 입력할 때까지 종료가 멈춘다. 종료 이벤트를 신호한 뒤 그대로 두고 프로세스 종료에 맡긴다. `[console]`이 소유한 것은 명령 큐뿐이고 정리할 외부 자원이 없으므로 잃는 것이 없다.
 - 어댑터, 가상 IP 주소, 라우트의 정리와 비정상 종료 후 잔존물 처리는 [`windows-prereq.md`](windows-prereq.md) 3절에 있다.
+
+#### 3.2.8 `[control]` 스레드
+
+제어 평면 TCP 호출과 DNS 해석은 `[loop]`에서 하지 않는다. 제어 서버가 죽어 있으면 TCP `connect`가 SYN 재시도로 수십 초를 소모한다. Phase 4 검증이 일부러 만드는 상황이다. 그 시간이 `[loop]`에서 흐르면 `HELLO` 재전송(200ms)과 keepalive(15s)와 종료 이벤트 응답이 전부 멈춘다. 3.2.6이 4스레드 안을 폐기한 사유가 다른 문으로 돌아오는 것이고 [`spec.md`](spec.md) NFR-3 위반이다. `getaddrinfo`도 동기 호출이라 같은 자리다.
+
+**논블로킹 소켓을 `[loop]`의 대기 집합에 넣는 안을 쓰지 않는다.** TCP 연결, HTTP 파싱, DNS를 전부 상태 머신으로 다시 써야 하고, `getaddrinfo`는 논블로킹 형태가 없다. 스레드 하나가 싸다.
+
+| 항목 | 값 |
+|------|-----|
+| 큐 | `[loop]` -> `[control]` 요청 큐, `[control]` -> `[loop]` 응답 큐. 각각 SPSC 링 **8 항목**. 3.2.6의 텔레메트리 링과 같은 구현이고 락이 없다 |
+| 가득 찼을 때 | 요청 큐가 차면 `[loop]`는 그 요청을 버리고 `control_queue_dropped`를 올린 뒤 **그 시도를 `CONTROL_PLANE_EXCHANGE_FAILED`로 끝낸다.** 요청은 한 번에 하나만 미결이므로(아래) 정상 경로에서는 차지 않는다. 차면 `[control]`이 멈춘 것이다 |
+| 미결 요청 | **한 번에 하나.** `[loop]`는 응답을 받기 전에 다음 요청을 넣지 않는다. `get_peers` 폴링은 "응답 수신 후 500ms" 이다. 폴링 타이머가 만료했는데 앞 요청이 미결이면 그 바퀴는 건너뛴다 |
+| 깨우기 | `[control]`은 `WaitForMultipleObjects`로 종료 이벤트와 요청 이벤트(자동 리셋, `[loop]`가 신호)를 기다린다. `[loop]`는 응답 이벤트(3.2.2의 순위 4)로 깨어난다 |
+| 소켓 | 요청마다 새 TCP 소켓. 논블로킹 `connect` + `select`로 연결 시간 제한, `SO_SNDTIMEO`/`SO_RCVTIMEO`로 송수신 시간 제한. 값은 [`control_plane.md`](control_plane.md) 8.2 |
+| DNS | 기동 시 한 번. 결과 IPv4 주소 하나를 `[control]`이 들고 이후 모든 요청에 쓴다. 이것이 `[control]`이 갖는 유일한 상태다 |
+| 종료 | 종료 이벤트를 보면 진행 중인 요청의 응답을 기다리지 않고 소켓을 닫고 반환한다. 소켓 시간 제한 때문에 최대 한 요청 상한([`control_plane.md`](control_plane.md) 8.2)만큼 늦을 수 있고, 그것을 3.2.7의 join 상한 2초와 `_exit`가 가둔다 |
+
+**`[control]`은 세션 상태를 읽지도 쓰지도 않는다.** 요청 큐에서 꺼낸 것을 보내고 받은 것을 응답 큐에 넣는다. 응답을 세션 상태에 반영하는 것은 `drain_control`이고 그것은 `[loop]`다. 응답 해석(JSON 파싱, 오류 분류)은 `[control]`이 해도 된다. 그 결과는 값이고 공유 상태가 아니다.
+
+**`[telemetry]`와 합치지 않는다.** 텔레메트리 업로드는 유실을 허용하고 실패를 보고하지 않는다. 제어 요청은 응답이 필요하고 실패가 곧 `CONTROL_PLANE_EXCHANGE_FAILED`다. 한 스레드에서 두 성질을 섞으면 텔레메트리 서비스 장애가 제어 요청을 지연시켜 `get_peers` 마감(60s)을 잡아먹는다. 두 서비스를 분리한 이유(3.4)를 클라이언트 안에서 다시 무너뜨리는 셈이다.
 
 ---
 
 ### 3.3 제어 평면 (Python)
 
-| 모듈 | 책임 |
-|------|------|
-| `server.py` | HTTP/JSON 엔드포인트, 요청 디스패치 |
-| `room.py` | 방 생성/참가, 가상 IP 풀 관리, 방 상태 |
-| `peer.py` | 피어 등록, 후보 엔드포인트 저장, 피어 목록 조회 |
-| `store.py` | DynamoDB 접근. 방·피어 항목의 읽기와 조건부 쓰기 |
+**제어 평면의 단일 출처는 [`control_plane.md`](control_plane.md)다.** 연산, 인코딩, 오류, 식별자, 방과 피어의 상태 전이, DynamoDB 테이블 설계, 저장 계약, 서버 모듈 구조, 클라이언트 쪽 호출 계약이 전부 그 문서에 있다. 이 절은 아키텍처 수준의 사실만 적는다.
 
-표준 라이브러리(`asyncio`, `json`)와 AWS SDK(`boto3`)를 쓴다. 웹 프레임워크는 필요성이 입증되고 승인된 뒤에 도입한다. **`boto3` 는 표준 라이브러리가 아니다.** [`spec.md`](spec.md) NFR-5 에 따라 승인받았다.
-
-#### 저장소 계약
-
-상태는 Amazon DynamoDB 에 둔다. 계약은 다섯이다. **왜 이렇게 정했고 무엇을 버렸는지는** [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)가 갖는다.
-
-| 계약 | 내용 |
-|------|------|
-| 저장 1 | 읽은 값으로 판정하는 읽기는 **테이블에 `ConsistentRead=true`** 를 건다. 저장 5 때문에 **연산이 방·피어 항목을 읽는 모든 자리가 여기에 해당한다.** `get_peers` 만이 아니다. 기본 읽기는 최종 일관성이라 방금 등록된 후보가 빠질 수 있고, 그러면 펀칭이 `HOLE_PUNCH_TIMEOUT` 으로 끝나 **NAT 실패로 위장한다** |
-| 저장 2 | 강한 일관성 읽기는 테이블과 LSI 에서만 된다. **GSI 로 "이 가상 IP 가 비었는가" 를 판정하지 않는다** |
-| 저장 3 | 가상 IP 배정은 아이템 하나를 키로 두고 **조건부 쓰기(`attribute_not_exists`)로 선점**한다. 원자적 카운터를 쓰지 않는다. 그것은 멱등하지 않아 재시도가 주소를 건너뛴다. **선점에 실패하면 다음 후보 주소로 넘어간다.** 시도 횟수에 상한을 두고, 상한에 닿으면 주소가 남았는지와 무관하게 명확한 오류로 끝낸다. 무한히 돌지 않는다. 상한값과 후보 순회 방법은 테이블 설계와 같이 정한다 |
-| 저장 4 | 방 만료 **판정은 애플리케이션이 한다.** TTL 은 저장 공간 회수 수단이며, 만료 시각이 지난 항목도 삭제 전까지 조회에 보인다 |
-| 저장 5 | 제어 서버는 방·피어 상태를 **메모리에 들고 있지 않는다.** 요청마다 DynamoDB 에서 읽는다 |
-
-**저장 5 때문에 "재시작 복원" 절차가 없다.** 기동 시 방 목록을 읽어 들이는 단계가 없고, 재시작 직후의 첫 요청이 평소와 똑같이 읽는다. [`spec.md`](spec.md) NFR-3 이 요구하는 재시작 후 방 상태 유지는 **복원 절차가 아니라 이 계약으로 성립한다.** 저장소가 SQLite 파일이었을 때와 다른 점이다. 캐시를 두면 그 캐시가 최종 일관성 읽기와 같은 문제를 다시 만들므로, 캐시가 필요해지면 저장 1과 함께 다시 정한다.
-
-테이블 설계(파티션 키, 정렬 키, 항목 표현, 빈 주소 탐색 방법)와 용량 모드는 [`roadmap.md`](roadmap.md) Phase 3 의 착수 전 항목이 갖는다.
+- Python 표준 라이브러리(`asyncio`, `json`)와 AWS SDK(`boto3`)를 쓴다. 웹 프레임워크는 쓰지 않는다. **`boto3` 는 표준 라이브러리가 아니다.** [`spec.md`](spec.md) NFR-5 에 따라 승인받았다
+- 상태는 Amazon DynamoDB 에 두고 서버는 방·피어 상태를 메모리에 들지 않는다. **왜 이렇게 정했고 무엇을 버렸는지는** [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)가 갖는다. 저장 계약 다섯은 [`control_plane.md`](control_plane.md) 6.1 이 갖는다
+- 그래서 "재시작 복원" 절차가 없다. [`spec.md`](spec.md) NFR-3 이 요구하는 재시작 후 방 상태 유지는 복원 절차가 아니라 저장 계약으로 성립한다
+- 게임 트래픽도, 지표도, UDP 도 다루지 않는다. 하지 않는 것의 목록은 [`control_plane.md`](control_plane.md) 1.1
 
 ### 3.4 텔레메트리 서비스 (Python)
 
@@ -308,6 +313,44 @@ Phase 5의 "서버 중단 10분" 시험(NFR-3)은 이 격리 없이는 통과할
 **접점이 식별자뿐이라서 텔레메트리가 받은 값은 신뢰할 수 없다.** 제어 평면이 발급한 적 없는 `room_id` 도 그대로 저장된다. 이것을 수집 시점에 막으려면 텔레메트리가 제어 평면에 물어봐야 하고 그러면 분리 2가 깨진다. 그래서 **막지 않는다.** 대신 분석 시점에 제어 평면 쪽 기록과 대조해 걸러낸다. 이 한계와 대조 방법은 [`roadmap.md`](roadmap.md) Phase 9 가 갖는다.
 
 **같은 EC2 인스턴스에 두는 것은 배포 편의지 결합이 아니다.** 다만 한 대에 있는 동안은 CPU와 디스크를 공유한다. **분리 4는 그 위험을 덮지 않는다.** 텔레메트리가 디스크나 CPU를 고갈시키면 제어 평면도 같이 멈추고, 그것은 이 계약을 지켜도 일어난다. 설계상의 의존이 없다는 것과 자원이 격리됐다는 것은 다른 말이다. **자원 격리는 아직 없다.** 무엇으로 나눌지는 [`roadmap.md`](roadmap.md) Phase 9 의 착수 전 항목이 갖는다.
+
+---
+
+### 3.5 기동 입력
+
+클라이언트가 기동 시 받는 값과 전달 방식이다. **Phase 1~5 는 CLI 인자만 쓴다.** 설정 파일은 두지 않는다. 값이 적고, 시험마다 바뀌는 값을 파일에 두면 어느 파일로 돌렸는지가 기록에 남지 않는다. 파일이 필요해지는 시점은 [`roadmap.md`](roadmap.md) 가 정한다.
+
+| 입력 | 인자 | 필수 | 값 |
+|------|------|:---:|-----|
+| 역할 | 첫 위치 인자 `host` 또는 `player` | 예 | `host` 는 `create_room`, `player` 는 `join_room` 을 부른다 |
+| 제어 서버 주소 | `--server <이름 또는 IPv4>[:<포트>]` | Phase 3 이후 예. Phase 1~2 는 받아서 보관만 하고 없어도 기동한다 | DNS 이름 또는 IPv4 리터럴. 포트를 생략하면 [`control_plane.md`](control_plane.md) 2.6 의 `CONTROL_PORT`. 문서에 실제 주소를 박지 않는다 |
+| 방 코드 | `--room <6자>` | `player` 만. Phase 3 이후 | [`control_plane.md`](control_plane.md) 2.1 의 형식. 소문자를 쳐도 된다. 서버가 대문자로 정규화한다 |
+| 재참가 증명 | `--rejoin <peer_id>:<peer_token>` | 아니오 | 있으면 `join_room` 을 재참가 형식으로 부른다 ([`control_plane.md`](control_plane.md) 4.3). `host` 역할에도 쓸 수 있다. 재시작한 호스트도 재참가다 |
+| STUN 서버 | `--stun <이름 또는 IPv4>:<포트>` 반복 | 아니오 | 주면 아래 기본 목록을 **통째로 대체**한다. 한 개만 주면 목록이 한 개이고 그러면 [`spec.md`](spec.md) M-2 판정(서로 다른 두 서버)을 할 수 없다. 클라이언트는 그 경우 `WARN` 한 줄을 남기고 진행한다. 판정 불가를 실패로 바꾸지 않고, 실패로 위장하지도 않는다 |
+
+**STUN 기본 목록.** 출처는 [`tools/nat-probe/natprobe.py`](../../tools/nat-probe/natprobe.py) 의 `DEFAULT_STUN_SERVERS` 다. 실측 22건이 그 목록으로 돌았다. **두 곳의 값이 같아야 한다.** 한쪽을 바꾸면 다른 쪽도 같이 바꾼다.
+
+```text
+stun.l.google.com:19302
+stun1.l.google.com:19302
+stun.cloudflare.com:3478
+stun.nextcloud.com:3478
+```
+
+**서버 선택.** 목록의 앞 두 서버에 같은 소켓으로 **동시에** 질의한다. 트랜잭션 ID 가 응답을 가른다([`protocol.md`](protocol.md) 13장). 한 서버가 STUN 마감([`protocol.md`](protocol.md) 11장)에 걸리면 목록의 다음 서버로 바꿔 다시 질의한다. 목록을 다 써도 응답이 둘이 되지 않으면 `STUN_DISCOVERY_FAILED` 다. **응답이 하나뿐이어도 실패다.** M-2 와 "지원 네트워크 조건" 판정에 둘이 필요하고, 하나로 진행하면 목적지 의존 매핑을 구분하지 못한 채 펀치에 들어가 그 실패가 NAT 실패로 기록된다.
+
+**재참가 증명의 보관.** `join_room` 과 `create_room` 응답의 `peer_id` 와 `peer_token` 을 클라이언트가 **표준 출력**에 한 줄 낸다. 사람이 그것을 복사해 `--rejoin` 으로 넘긴다. 파일에 자동 보관하지 않는다. 자동 재시도가 미정이라([`protocol.md`](protocol.md) 10.4) 그것을 정할 때 보관 방식도 같이 정한다.
+
+**방 코드도 표준 출력이다.** 호스트는 `create_room` 응답의 `room_id` 를 상대에게 전해야 한다. 표준 오류의 로그(9장)에는 싣지 않는다. 로그 파일이 곧 방 코드 목록이 되면 로그 열람이 방 탈취다. 표준 출력은 사람이 보는 화면이고 리다이렉트하지 않는 것이 기본이다.
+
+```text
+ROOM <room_id>
+REJOIN <peer_id>:<peer_token>
+```
+
+두 줄의 첫 낱말은 고정이다. 시험이 이것으로 값을 읽는다.
+
+**기동 입력이 아닌 것.** 로컬 기록 파일 경로는 9장의 계약이 정해지면 그때 같이 정한다. 텔레메트리 서비스 주소는 Phase 9 다. 둘 다 여기 표에 없다는 것이 현재 상태다.
 
 ---
 
@@ -428,13 +471,7 @@ UDP `sendto`의 성공은 전달을 보장하지 않는다. 따라서 두 전이
 
 ### 6.1 연산
 
-| 연산 | 입력 | 출력 |
-|------|------|------|
-| `create_room` | 호스트 식별자 | room_id, 할당된 가상 IP |
-| `join_room` | room_id, 피어 식별자 | 할당된 가상 IP, 방 정보 |
-| `register_peer` | room_id, peer_id | 등록 확인. `create_room` / `join_room` 이 내부적으로 수행하므로 클라이언트가 따로 호출하지 않는다 (재연결 시에만 사용) |
-| `register_candidate` | room_id, peer_id, 로컬/공인 엔드포인트 | 등록 확인 |
-| `get_peers` | room_id, peer_id | 다른 피어들의 가상 IP와 후보 엔드포인트 |
+연산은 넷이다. `create_room`, `join_room`, `register_candidate`, `get_peers`. 입력, 출력, 오류, 인코딩은 [`control_plane.md`](control_plane.md) 4장이 갖는다. **`register_peer` 는 없다.** 재참가는 `join_room` 의 한 형식이다.
 
 **`report_connection` 과 `report_telemetry` 는 여기에 없다.** 둘 다 텔레메트리 서비스의 연산이고 6.3이 갖는다. 연결 결과는 9장 지표 표의 첫 줄(`연결 성공/실패 + 실패 단계`)이므로 지표와 같은 곳으로 간다.
 
@@ -482,7 +519,7 @@ Host                 AWS (조율 / 텔레메트리)            Player
 - 대역: `10.100.0.0/24`
 - `10.100.0.1`: 방 생성자(호스트). 게임 서버가 여기서 돈다.
 - `10.100.0.2` 이상: 참가자. 제어 평면이 순차 할당한다.
-- 가상 IP는 방 단위로 유효하며, 방이 사라지면 회수한다.
+- 가상 IP는 방 단위로 유효하며, 방이 사라지면 회수한다. 방이 언제 사라지는지와 살아 있는 동안 자리를 회수하지 않는 이유는 [`control_plane.md`](control_plane.md) 2.5와 5.1이 갖는다.
 
 플레이어는 Minecraft 서버 주소란에 `10.100.0.1:25565`를 입력한다. 공인 IP나 포트를 알 필요가 없다.
 
@@ -589,8 +626,10 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `session.failed` | `code` (8장 문자열) | Phase 2~5 실패 코드 확인 |
 | `counter` | `name`, `value` | 폐기 카운터를 보는 모든 항목 |
 | `socket.error` | `op` (호출 이름), `code` (Winsock 오류 코드) | Phase 1 소켓 오류에도 프로세스가 죽지 않는지 |
+| `control.result` | `op`, `ok`, `error` (실패 코드 문자열, 성공이면 `-`) | Phase 3 연산 검증, `CONTROL_PLANE_EXCHANGE_FAILED` 원인 확인. **`room_id` 와 `peer_token` 을 싣지 않는다** (3.5) |
+| `control.peers` | `peer_id`, `virtual_ip`, `candidates` (상대 후보 `ip:port` 를 쉼표로 이어 붙인 것) | [`spec.md`](spec.md) M-3, Phase 3 `get_peers` 검증 |
 
-여기 없는 이벤트는 자유롭게 늘려도 된다. **이 여섯 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
+여기 없는 이벤트는 자유롭게 늘려도 된다. **이 여덟 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
 
 **검증이 값을 비교하는 필드는 형식도 고정한다.** 형식을 정하지 않으면 `256KB` 와 `262144` 와 `0x40000` 중 무엇을 비교할지 검증자가 정하게 된다.
 
@@ -598,7 +637,10 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 |------|------|
 | `rcvbuf_requested`, `rcvbuf_applied` | 10진 바이트 수. 단위 접미사를 붙이지 않는다 |
 | `local`, `mapped` | `IPv4:port` 10진 표기 |
+| `virtual_ip` | 점 십진 IPv4 |
+| `candidates` | `IPv4:port` 를 쉼표로 이어 붙인 것. 공백 없음 |
 | `code` | 8장의 실패 코드 문자열, 또는 `socket.error` 에서는 10진 오류 코드 |
+| `error` (`control.result`) | [`control_plane.md`](control_plane.md) 4.1 의 오류 코드 문자열, 전송 오류면 `transport`, 성공이면 `-` |
 | `value` (`counter`) | 10진 정수 |
 
 나머지 필드의 값 형식은 정하지 않는다. 사람이 읽는 진단이다.
@@ -635,11 +677,14 @@ Sangtachi/
 |   |   +-- telemetry/   telemetry
 |   |   +-- control/     control_client
 |   +-- CMakeLists.txt
-+-- control-server/
++-- control-server/      모듈 책임은 control_plane.md 7.1
 |   +-- server.py
-|   +-- room.py
-|   +-- peer.py
+|   +-- ops.py
+|   +-- ids.py
+|   +-- candidates.py
+|   +-- clock.py
 |   +-- store.py
+|   +-- tests/
 +-- telemetry-server/
 |   +-- server.py
 |   +-- ingest.py
@@ -653,6 +698,7 @@ Sangtachi/
 |   |   +-- plan.md              다음 세션 인수인계
 |   |   +-- first_design.md      초기 기획서 (참고용)
 |   |   +-- protocol.md          터널 프로토콜 확정본
+|   |   +-- control_plane.md     제어 평면 확정본
 |   |   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)
 |   |   +-- audit-history/       전면 설계 점검 기록 보관소
 |   |   +-- decisions/           설계 결정 기록

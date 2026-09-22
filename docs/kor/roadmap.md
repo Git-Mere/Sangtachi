@@ -95,7 +95,8 @@ Client A <------ UDP ------> Client B
 - RFC 5389 중 Binding Request/Response 부분 학습
 - Binding Request 패킷 구성 (헤더, magic cookie)
 - 트랜잭션 ID 생성 및 응답 매칭
-- 공개 STUN 서버로 요청 송신
+- 공개 STUN 서버로 요청 송신. **어느 서버인지, 두 서버를 어떻게 고르고 실패 시 어떻게 바꾸는지는 [`architecture.md`](architecture.md) 3.5 가 정한다.** 코드에 서버 주소를 박지 않는다
+- 기동 입력 처리. 인자 목록과 형식은 [`architecture.md`](architecture.md) 3.5. 이 Phase 에 필요한 것은 `--stun` 이고 `--server`, `--room`, `--rejoin` 은 받아서 보관만 한다
 - Binding Response 파싱
 - STUN 속성(TLV) 순회
 - `XOR-MAPPED-ADDRESS` 디코드
@@ -128,19 +129,24 @@ Public endpoint: x.x.x.x:xxxxx
 
 ### 작업
 
-- **착수 전 DynamoDB 테이블 설계 확정.** 파티션 키와 정렬 키, 방·피어 항목의 표현, 가상 IP를 중복 없이 배정하는 쓰기 방법, 방 만료 처리를 정한다. 저장소를 SQLite에서 바꾼 결정과 그 대가는 [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)에 있다
+- **제어 평면 스키마는 [`control_plane.md`](control_plane.md) 가 확정했다.** 연산, 인코딩, 오류, 식별자, 상태 전이, DynamoDB 테이블 설계(파티션 키, 정렬 키, 항목, 조건부 쓰기, TTL)가 거기 있다. 이 Phase 는 그 문서를 구현한다. **설계하지 않는다.** 문서에 빠진 값을 만나면 코드에서 정하지 않고 그 문서를 먼저 고친다. 저장소를 SQLite에서 바꾼 결정과 그 대가는 [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)에 있다
+- **착수 전 Elastic IP 와 DNS 이름 확보.** 클라이언트는 DNS 이름을 받고 그 이름은 Elastic IP 를 가리킨다 ([`control_plane.md`](control_plane.md) 3.2, [`windows-prereq.md`](windows-prereq.md) 10절). 실제 값은 문서에 적지 않는다
+- **착수 전 테이블 이름, 리전, 용량 값을 배포 설정으로 정한다.** 코드에 박지 않는다 ([`control_plane.md`](control_plane.md) 7.6)
+- **착수 전 배포 인스턴스에서 시계 전제 둘을 확인한다.** `time.get_clock_info('monotonic')` 의 구현이 `clock_gettime(CLOCK_MONOTONIC)` 인지, 재부팅 전후에 `/proc/sys/kernel/random/boot_id` 가 바뀌는지. [`control_plane.md`](control_plane.md) 7.4 가 이 둘을 전제로 두고 확인하지 않았다고 적었다. 어긋나면 그 절을 고친다
 - **착수 전 EC2의 자격 증명 방식 확정.** 액세스 키를 소스나 문서에 적지 않는다. 문서 권장은 IAM 역할이다 ([ADR 0004](decisions/0004-상태-저장소-dynamodb.md))
 - **착수 전 프리 티어 적용 범위를 계정에서 직접 확인.** 문서만으로는 25 WCU / 25 RCU / 25 GB 가 영구인지 확인되지 않았다 ([ADR 0004](decisions/0004-상태-저장소-dynamodb.md) "확인하지 못한 것")
 - 로컬 시험은 DynamoDB local 로 돌린다. **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 ([ADR 0004](decisions/0004-상태-저장소-dynamodb.md))
-- Python 제어 서버를 AWS EC2에 배포
-- 방 생성 구현
-- 방 참가 구현
-- 피어 등록
-- 가상 IP 할당 (`10.100.0.0/24` 풀 관리)
-- 후보 엔드포인트 등록 (로컬, 공인). 로컬 후보는 두 피어가 같은 LAN일 때 쓰인다
-- 피어 정보 교환 (`get_peers`)
+- **착수 시 [`control_plane.md`](control_plane.md) 의 케이스 표(2.1, 3.3, 4.4, 5.1, 6.4, 7.4)를 `control-server/tests/` 로 옮기고 문서는 그 파일을 가리키게 고친다.** 표 한 벌이 두 곳에 있으면 한쪽만 고쳐져 어긋난다. 옮긴 표마다 변이 시험을 붙인다
+- Python 제어 서버를 AWS EC2에 배포. systemd 서비스, 보안 그룹 TCP 8000. **배포 절차를 실제로 한 번 돌린 뒤 도구로 넣고 문서는 가리킨다** ([`control_plane.md`](control_plane.md) 7.6)
+- 방 생성 구현 (`create_room`, 멱등성 nonce)
+- 방 참가 구현 (`join_room` 새 참가와 재참가 두 형식)
+- 가상 IP 할당 (`VIP#` 조건부 쓰기 선점)
+- 후보 엔드포인트 등록 (`register_candidate`, 서버 쪽 위생, 준비 완료 1회 기록). 로컬 후보는 두 피어가 같은 LAN일 때 쓰인다
+- 피어 정보 교환 (`get_peers`, 단조 시계 `elapsed_since_ready_ms`)
+- 출발지별 속도 제한과 `MAX_INFLIGHT`
 - DynamoDB에 방/피어 상태 저장
-- C++ 측 제어 평면 클라이언트 구현
+- C++ 측 제어 평면 클라이언트 구현. `[control]` 스레드와 두 큐 ([`architecture.md`](architecture.md) 3.2.8), 최소 HTTP/1.1 클라이언트, 오류 분류와 재시도 ([`control_plane.md`](control_plane.md) 8장)
+- 기동 입력 처리 완성. `--server`, `--room`, `--rejoin` 이 실제로 쓰인다 ([`architecture.md`](architecture.md) 3.5)
 
 ### 산출물
 
@@ -151,12 +157,24 @@ Public endpoint: x.x.x.x:xxxxx
 - 방 생성자가 `10.100.0.1`, 참가자가 `10.100.0.2`를 받음
 - 같은 방에 두 번 참가해도 가상 IP가 중복 할당되지 않음
 - `get_peers` 응답에 상대의 가상 IP와 공인 엔드포인트가 포함됨
-- 서버 재시작 후에도 방 상태가 유지됨. **복원 절차를 거치지 않고** 재시작 직후 첫 요청이 DynamoDB 에서 바로 읽는다 ([`architecture.md`](architecture.md) 3.3 저장 5)
+- 서버 재시작 후에도 방 상태가 유지됨. **복원 절차를 거치지 않고** 재시작 직후 첫 요청이 DynamoDB 에서 바로 읽는다 ([`control_plane.md`](control_plane.md) 6.1 저장 5)
 - 존재하지 않는 방에 참가 시도 시 명확한 오류 응답
 - **제어 서버에 지표 수집 엔드포인트가 없음.** 텔레메트리는 별개 서비스이고 Phase 9다 ([`architecture.md`](architecture.md) 3.4)
-- **`get_peers` 가 `ConsistentRead=true` 로 읽음** ([`architecture.md`](architecture.md) 3.3 저장 1). 코드를 직접 본다. **동작 시험으로는 판정할 수 없다.** 최종 일관성 읽기도 대개 최신 값을 돌려주므로 빠뜨려도 시험이 통과한다
+- **방·피어 항목을 읽는 모든 자리가 `ConsistentRead=true`** ([`control_plane.md`](control_plane.md) 6.1 저장 1). `get_peers` 만이 아니다. 코드를 직접 본다. **동작 시험으로는 판정할 수 없다.** 최종 일관성 읽기도 대개 최신 값을 돌려주므로 빠뜨려도 시험이 통과한다
 - 두 피어가 **동시에** 참가해도 가상 IP 가 겹치지 않음. 순차 참가만 보는 위 항목과 다른 시험이다 (저장 3)
-- 만료 시각이 지난 방에 참가 시도 시 오류 응답. **TTL 삭제를 기다리지 않는다** (저장 4)
+- 만료 시각이 지난 방에 참가 시도 시 `room_expired`. 존재하지 않는 방은 `room_not_found`. **둘이 다른 코드다.** TTL 삭제를 기다리지 않는다 (저장 4, [`control_plane.md`](control_plane.md) 4.1). `now == expires_at_ms` 경계가 만료 쪽인 것도 본다
+- 재참가. `join_room` 을 같은 `peer_id` 와 `peer_token` 으로 다시 부르면 **같은 `peer_id` 와 같은 가상 IP** 가 돌아오고 후보 목록은 비어 있다. 토큰이 틀리면 `unauthorized`. 존재하지 않는 `peer_id` 도 `unauthorized` 이고 `room_not_found` 가 아니다 ([`control_plane.md`](control_plane.md) 4.3)
+- 멱등성. 같은 `client_nonce` 로 `join_room` 을 두 번 부르면 두 번째가 첫 번째와 같은 응답을 돌려주고 **`VIP#` 항목이 하나만 생긴다.** 다른 nonce 로 부르면 `room_full`. `create_room` 도 같은 nonce 면 같은 방이다 ([`control_plane.md`](control_plane.md) 4.2, 4.3)
+- 준비 완료가 **방마다 정확히 한 번** 기록된다. 두 피어가 `register_candidate` 를 동시에 보내도 서버 로그의 `room.ready` 가 한 줄이고, 그 뒤 어느 피어가 후보를 다시 등록해도 `punch_delay_ms` 와 `elapsed_since_ready_ms` 의 기준점이 바뀌지 않는다 ([`control_plane.md`](control_plane.md) 4.4, 5.2)
+- 재참가가 후보를 지워도 `get_peers` 는 `ready: true` 를 유지한다. 준비 완료의 정의가 `ready_at` 의 존재이기 때문이다. 후보 수를 다시 세는 구현은 여기서 걸린다 ([`control_plane.md`](control_plane.md) 4.5)
+- HTTP 파싱 케이스 표([`control_plane.md`](control_plane.md) 3.3) 전 행 통과. 특히 `Content-Length` 두 번, `Transfer-Encoding`, 본문 4097 바이트, `HTTP/1.0` 이 거부된다. 행마다 규칙을 지운 변이가 그 행에서 `FAIL` 한다
+- `room_id` 정규화 케이스 표([`control_plane.md`](control_plane.md) 2.1) 전 행 통과. `0` 을 `O` 로 고쳐 받는 구현이 걸린다
+- 후보 위생 케이스 표([`control_plane.md`](control_plane.md) 4.4) 전 행 통과. 전부 거부되면 `bad_request` 이고 `ok` 가 아니다. `ipaddress` 술어로 판정하지 않는 것은 코드를 읽어 본다
+- 속도 제한 케이스 표([`control_plane.md`](control_plane.md) 6.4) 전 행 통과. 11번째 실패 요청이 `rate_limited` 이고 **저장소 호출이 없다**(store 계층 호출 수를 센다). 성공과 `bad_request` 는 세지 않는다
+- 서버 로그에 `room_id` 와 `peer_token` 이 없다. 정상 경로와 모든 오류 경로를 한 번씩 밟은 뒤 로그 전체를 두 값으로 `grep` 한다. **0 건이어야 한다.** 이것은 필요 조건이고 충분 조건이 아니다. 어느 경로에서도 나오지 않는다는 것은 코드를 읽어 본다 ([`control_plane.md`](control_plane.md) 7.5)
+- `elapsed_since_ready_ms` 가 단조 시계에서 나온다. 준비 완료 뒤 서버 프로세스를 재시작하고 `get_peers` 를 부르면 값이 이어지고 `elapsed_wall_fallback` 카운터가 0 이다. 서버 벽시계를 1분 앞으로 돌려도 값이 1분 뛰지 않는다 ([`control_plane.md`](control_plane.md) 7.4)
+- 제어 서버가 죽어 있을 때 클라이언트의 `[loop]` 가 멈추지 않는다. 연결 거부 또는 무응답 주소를 `--server` 로 주고, `HELLO` 재전송 대신 이 Phase 에서 관측할 수 있는 것으로 **콘솔 명령 응답과 주기 타이머 로그**가 계속 나오는지 본다. `connect` 가 `[loop]` 에 있는 구현은 여기서 걸린다 ([`architecture.md`](architecture.md) 3.2.8)
+- 클라이언트가 `rate_limited`, `room_full`, `unauthorized` 를 받으면 재시도 없이 즉시 `CONTROL_PLANE_EXCHANGE_FAILED` 이고, `internal`/`unavailable`/connect 타임아웃은 같은 `client_nonce` 로 3회까지 재시도한다. 서버 로그에서 nonce 가 같은지는 볼 수 없으므로(로그에 싣지 않는다) `VIP#` 항목 수로 본다 ([`control_plane.md`](control_plane.md) 8.3)
 
 ---
 
@@ -168,7 +186,7 @@ Public endpoint: x.x.x.x:xxxxx
 
 ### 작업
 
-- **착수 전 keepalive 매핑 수명 측정 절차 재설계.** 지금 적혀 있던 절차는 실행할 수 없어 뺐다. EC2가 클라이언트의 공인 엔드포인트로 UDP probe를 보내는 형태였는데, 클라이언트는 EC2에 UDP를 보낸 적이 없으므로(제어 평면은 TCP다) 그 probe는 **요청하지 않은 인바운드**다. [`protocol.md`](protocol.md) 10.4의 실측(출발지 포트만 달라도 3쌍 전부 차단)과 [`windows-prereq.md`](windows-prereq.md) 2절의 실측(요청하지 않은 인바운드 6건 전부 차단)이 도착 0을 예고하고, 그러면 "매핑이 만료됐다"와 "필터가 애초에 닫혀 있다"를 구분할 수 없어 매핑 수명을 0으로 오판한다. 유휴 구간을 만드는 부분(그 소켓의 **모든** UDP 송신을 멈춘다. `PING`과 `DATA`를 포함한다. keepalive만 끄는 시험은 게임/`PING` 트래픽이 매핑을 갱신하므로 무효다)은 그대로 쓴다. 다시 정할 것은 셋이다. 유휴 직전에 경로를 여는 송신, probe 형식과 EC2 쪽 송신 도구, 클라이언트의 도착 시각 기록 방법. **측정 대상이 "매핑 수명"이 아니라 "그 경로의 필터+매핑 수명"임을 함께 적는다.** 제어 평면 스키마와 같이 정한다. 11장의 15초와 50초는 그때까지 초기값이다
+- **착수 전 keepalive 매핑 수명 측정 절차 재설계.** 지금 적혀 있던 절차는 실행할 수 없어 뺐다. EC2가 클라이언트의 공인 엔드포인트로 UDP probe를 보내는 형태였는데, 클라이언트는 EC2에 UDP를 보낸 적이 없으므로(제어 평면은 TCP다) 그 probe는 **요청하지 않은 인바운드**다. [`protocol.md`](protocol.md) 10.4의 실측(출발지 포트만 달라도 3쌍 전부 차단)과 [`windows-prereq.md`](windows-prereq.md) 2절의 실측(요청하지 않은 인바운드 6건 전부 차단)이 도착 0을 예고하고, 그러면 "매핑이 만료됐다"와 "필터가 애초에 닫혀 있다"를 구분할 수 없어 매핑 수명을 0으로 오판한다. 유휴 구간을 만드는 부분(그 소켓의 **모든** UDP 송신을 멈춘다. `PING`과 `DATA`를 포함한다. keepalive만 끄는 시험은 게임/`PING` 트래픽이 매핑을 갱신하므로 무효다)은 그대로 쓴다. 다시 정할 것은 셋이다. 유휴 직전에 경로를 여는 송신, probe 형식과 EC2 쪽 송신 도구, 클라이언트의 도착 시각 기록 방법. **측정 대상이 "매핑 수명"이 아니라 "그 경로의 필터+매핑 수명"임을 함께 적는다.** **EC2 쪽 송신기는 제어 서버의 기능이 아니다.** 제어 평면도 텔레메트리 서비스도 UDP 를 열지 않으므로([`control_plane.md`](control_plane.md) 1.1) 이 송신기는 `tools/` 아래의 별도 도구이고 측정할 때만 EC2 에서 띄운다. `tools/nat-probe` 와 같은 성격이다. probe 형식은 [`protocol.md`](protocol.md) 7장 분류에 걸리는 문제라 그 문서를 고쳐서 정한다. 11장의 15초와 50초는 그때까지 초기값이다
 
 - **착수 전 `tools/nat-probe` 재측정.** 직접 연결이 성립한다는 판정이 아직 유효한지 확인한다. 여기서 조건이 바뀐 것을 발견하면 설계를 되돌릴 시간이 있다 ([ADR 0001](decisions/0001-직접-연결-대비책-미도입.md))
 - **착수 전 로컬 기록 파일의 경로와 줄 형식 확정.** [`architecture.md`](architecture.md) 9장에 계약 4개만 있고 형식이 없다. **정하기 전에는 M-6을 판정할 수 없다.** 코드에서 임의로 정하지 않고 그 문서를 먼저 고친다

@@ -23,6 +23,7 @@ docs/eng/    영어. 미러
 3. `docs/kor/decisions/`
 4. `docs/kor/plan.md`
 5. `docs/kor/roadmap.md` 중 착수할 Phase
+6. 제어 평면을 건드리는 작업이면 `docs/kor/control_plane.md`
 
 **살아 있는 상태는 `plan.md`에서 읽는다.** 감사 기록은 그 시점의 스냅숏이라 현재 상태의
 출처가 아니다.
@@ -42,7 +43,8 @@ docs/eng/    영어. 미러
 | `spec.md` | 요구사항 FR/NFR/C, 성공 기준 M/T/A |
 | `roadmap.md` | Phase 1~9. 목표, 작업, 산출물, 검증 |
 | `architecture.md` | 시스템 구성, 모듈 분해, 동시성 모델(3.2), 데이터 평면 경로 |
-| `protocol.md` | **터널/STUN 와이어 프로토콜의 단일 출처.** 상수, 오프셋, 타이머 값, 전이표, 검증 파이프라인. 14장은 제어 평면이 지켜야 할 계약만 적고 REST/JSON 인코딩은 정하지 않는다 |
+| `protocol.md` | **터널/STUN 와이어 프로토콜의 단일 출처.** 상수, 오프셋, 타이머 값, 전이표, 검증 파이프라인. 14장은 제어 평면이 지켜야 할 계약만 적고 HTTP/JSON 인코딩은 정하지 않는다 |
+| `control_plane.md` | **제어 평면의 단일 출처.** 연산, HTTP/JSON 인코딩, 오류, 식별자, 방·피어 상태 전이, DynamoDB 테이블 설계, 서버 모듈, 클라이언트 호출 계약. `architecture.md` 3.3·6장과 `protocol.md` 14장은 이 문서를 가리키는 요약이다 |
 | `windows-prereq.md` | **실행 전제의 단일 출처.** 관리자 권한, 방화벽, 어댑터 정리, 서브넷 충돌, Wintun 패키징, EC2. 절마다 확인 방법과 통과 조건을 적는다. 명령이 없는 절도 있다 |
 | `plan.md` | **다음 세션 인수인계.** 남은 일, 대기 중인 것, 문서 부채. 끝난 일의 경과는 담지 않는다. **한국어만 둔다** |
 | `first_design.md` | 최초 기획서. **참고 자료이며 확정 사양이 아니다.** 충돌 시 다른 문서가 우선 |
@@ -60,7 +62,7 @@ docs/eng/    영어. 미러
 때문이다.
 
 **막는 것은 둘이다.** (1) 살아 있는 문서(`spec.md`, `roadmap.md`, `architecture.md`,
-`protocol.md`, `plan.md`, `windows-prereq.md`)가 기록을 근거로 링크하는 것. 그러면 확정
+`protocol.md`, `control_plane.md`, `plan.md`, `windows-prereq.md`)가 기록을 근거로 링크하는 것. 그러면 확정
 문서가 아닌 것이 출처가 된다. (2) 이 파일이 `audit-history/`를 가리키는 것. 규칙의 원문이
 여기로 왔으므로 가리킬 이유가 없다.
 
@@ -82,7 +84,7 @@ python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료
 `experiments.md` 하나뿐이다 (Phase 9 산출물). 미러 짝이 없어도 되는 문서는 `plan.md` 하나뿐이다.
 
 **살아 있는 문서에는 날짜와 감사 식별자를 적지 않는다.** `spec.md`, `roadmap.md`,
-`architecture.md`, `protocol.md`, `windows-prereq.md` 는 **현재 사양**만 담는다. 언제 무엇이
+`architecture.md`, `protocol.md`, `control_plane.md`, `windows-prereq.md` 는 **현재 사양**만 담는다. 언제 무엇이
 해소됐는지는 `commit_history/` 와 `audit-history/` 가 갖는다. 근거가 필요하면 날짜로
 대신하지 말고 **무엇을 어떻게 측정했는지를 그 자리에 적는다.** 날짜는 근거가 아니다.
 `plan.md` 는 예외다. 작업 추적이 그 문서의 일이다.
@@ -302,6 +304,8 @@ Winsock2 래퍼부터는 미착수다.
 **텔레메트리 수집은 제어 평면이 맡지 않는다. 별개 서비스다** ([ADR 0003](docs/kor/decisions/0003-텔레메트리-서비스-분리.md)).
 **제어 평면 상태 저장소는 SQLite 가 아니라 Amazon DynamoDB 다** ([ADR 0004](docs/kor/decisions/0004-상태-저장소-dynamodb.md)).
 `boto3` 는 NFR-5 승인을 받았다. 둘 다 제어 평면 스키마 문서를 쓰기 전에 정한 것이다.
+**제어 평면 스키마는 `docs/kor/control_plane.md` 가 확정했다.** 설계 감사 2차 후속(제어 평면 묶음)도 그 문서로 끝났다.
+클라이언트에 `[control]` 스레드가 하나 늘었고(`architecture.md` 3.2.8) 기동 입력은 `architecture.md` 3.5 다.
 4번에서 `DATA` 최소 왕복과 로컬 기록을 Phase 4로 당겨 **최소 성공 M-1 ~ M-6이 P0만으로
 성립**하게 했고, **마일스톤 구분을 없앴다.** Phase를 주차에 못박지 않는다.
 

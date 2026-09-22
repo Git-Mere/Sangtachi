@@ -367,7 +367,8 @@ Get-NetTCPConnection -LocalPort 25565 -State Listen -ErrorAction SilentlyContinu
 **분류: 사람.**
 
 인스턴스 안에서 바인드 주소를 본다. **제어 평면은 Linux EC2 다**([`spec.md`](spec.md)).
-아래는 Linux 명령이다.
+포트 8000 의 출처는 [`control_plane.md`](control_plane.md) 2.6 의 `CONTROL_PORT` 다. 그 값이 바뀌면 아래 명령의
+포트도 따라 바뀐다. 아래는 Linux 명령이다.
 
 ```bash
 ss -ltnp 'sport = :8000'
@@ -586,7 +587,9 @@ Set-NetIPInterface -InterfaceAlias '<어댑터 이름>' -AddressFamily IPv4 -Dad
 **자동 할당된** 공인 IPv4 는 인스턴스를 중지했다 켜면 바뀐다. 클라이언트에 주소를 박아 두면
 그날 시연이 깨진다. **Elastic IP 를 붙이면 바뀌지 않는다.** 그것이 아래 조치다.
 
-**분류: 사람.** Elastic IP 를 붙이거나 DNS 이름을 쓴다.
+**분류: 사람.** Elastic IP 를 붙이고 DNS 이름이 그것을 가리키게 한다. 클라이언트는 DNS 이름을 받는다
+([`control_plane.md`](control_plane.md) 3.2). 둘 중 하나가 아니라 둘 다다. DNS 만 쓰고 뒤의 주소가 바뀌면
+클라이언트가 기동 시 한 번만 해석하므로([`architecture.md`](architecture.md) 3.2.8) 켜 둔 클라이언트는 옛 주소로 간다.
 
 ```bash
 aws ec2 describe-addresses \

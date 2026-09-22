@@ -157,6 +157,7 @@ Two clients on different networks obtain each other's endpoint through AWS.
 ### Tasks
 
 - **Re-run the `tools/nat-probe` measurement before starting.** Confirm that the verdict "a direct connection is established" still holds. A changed condition found here still leaves time to revise the design ([ADR 0001](decisions/0001-no-direct-connection-fallback.md))
+- **Fix the path and the line format of the local record file before starting.** Chapter 9 of [`architecture.md`](architecture.md) has 4 contracts and no format. **Until they are fixed, M-6 cannot be judged.** The code does not pick one on its own; that document is edited first
 
 Follow the section 15 implementation checklist in [`protocol.md`](protocol.md) exactly. This phase is implementation, not design.
 

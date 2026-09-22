@@ -681,6 +681,49 @@ def parse_punch(data: bytes) -> "tuple | None":
     return kind, session, seq, ts_ns
 
 
+def _timed_send_recv(socks, start: float, duration_s: float, interval_s: float):
+    """`duration_s` 동안 `interval_s` 마다 송신 차례를 주고, 그 사이 도착한 것을 낸다.
+
+    두 측정 루프가 같은 뼈대를 쓴다. 한 곳에 두어 타이밍 규칙이 갈라지지 않게 한다.
+    실제 송신과 해석은 호출자가 한다. 이 함수는 **언제**만 정한다.
+
+      ("send", (seq, ts_ns))        송신할 차례다
+      ("recv", (sock, data, src))   데이터그램이 도착했다
+
+    **밀린 주기를 따라잡지 않는다.** `next_send` 가 이미 지났으면 지금을 기준으로 다시
+    잡는다. 따라잡으면 한 바퀴에 여러 번 송신해 간격 가정이 깨진다.
+
+    **`recvfrom` 의 `OSError` 는 여기서 삼킨다.** Windows 에서 `SIO_UDP_CONNRESET` 끄기가
+    실패하면 ICMP port unreachable 이 이 경로로 올라온다. 펀치 초반에는 정상이다.
+
+    `start` 는 호출자가 잰 값을 그대로 받는다. 파생 시각이 어긋나지 않게 하기 위해서다.
+    `KeyboardInterrupt` 는 잡지 않는다. 중단 표시가 호출자마다 다르다.
+    """
+    end = start + duration_s
+    next_send = start
+    seq = 0
+    while True:
+        now = time.monotonic()
+        if now >= end:
+            return
+
+        if now >= next_send:
+            seq += 1
+            yield "send", (seq, time.monotonic_ns())
+            next_send += interval_s
+            if next_send < now:
+                next_send = now + interval_s
+
+        timeout = max(0.0, min(next_send, end) - time.monotonic())
+        ready, _, _ = select.select(socks, [], [], timeout)
+        for sock in ready:
+            try:
+                data, src = sock.recvfrom(2048)
+            except OSError:
+                continue
+            yield "recv", (sock, data, src)
+
+
 def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
     """양쪽이 동시에 실행해야 한다. 200ms 간격으로 PING 을 쏘며 PONG 을 기다린다.
 
@@ -692,8 +735,6 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
     """
     session = secrets.randbits(32)  # 이전 회차의 지연 패킷을 이번 회차로 오인하지 않는다
     start = time.monotonic()
-    end = start + duration_s
-    next_send = start
     seq = 0
 
     sent_pings: dict = {}   # seq -> ts_ns. 내가 실제로 보낸 것
@@ -715,14 +756,9 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
     print(f"  {peer[0]}:{peer[1]} 로 {duration_s:.0f}초 동안 펀치 시도. Ctrl+C 로 중단")
 
     try:
-        while True:
-            now = time.monotonic()
-            if now >= end:
-                break
-
-            if now >= next_send:
-                seq += 1
-                ts = time.monotonic_ns()
+        for event, payload in _timed_send_recv([sock], start, duration_s, PUNCH_INTERVAL_S):
+            if event == "send":
+                seq, ts = payload
                 try:
                     sock.sendto(build_punch(PUNCH_PING, session, seq, ts), peer)
                     sent_pings[seq] = ts
@@ -731,20 +767,9 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
                         sent_after_first_inbound += 1
                 except OSError as exc:
                     print(f"  [warn] sendto 실패: {exc}")
-                next_send += PUNCH_INTERVAL_S
-                if next_send < now:  # 밀렸으면 따라잡지 않고 재기준
-                    next_send = now + PUNCH_INTERVAL_S
-
-            timeout = max(0.0, min(next_send, end) - time.monotonic())
-            ready, _, _ = select.select([sock], [], [], timeout)
-            if not ready:
-                continue
-            try:
-                data, src = sock.recvfrom(2048)
-            except OSError:
-                # Windows 에서 SIO_UDP_CONNRESET off 가 실패했을 때의 ICMP 경로
                 continue
 
+            _, data, src = payload
             parsed = parse_punch(data)
             if parsed is None:
                 other += 1
@@ -961,9 +986,6 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
     probe_port = probe.getsockname()[1]
 
     start = time.monotonic()
-    end = start + duration_s
-    next_send = start
-    seq = 0
     sent = recv = ack_recv = 0
     rejected = 0
     sent_probes: dict = {}   # seq -> ts_ns. 내가 실제로 보낸 것
@@ -991,14 +1013,10 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
         return True
 
     try:
-        while True:
-            now = time.monotonic()
-            if now >= end:
-                break
-
-            if now >= next_send:
-                seq += 1
-                ts = time.monotonic_ns()
+        for event, payload in _timed_send_recv([main_sock, probe], start, duration_s,
+                                               UNSOL_INTERVAL_S):
+            if event == "send":
+                seq, ts = payload
                 try:
                     probe.sendto(build_punch(PUNCH_UNSOL, my_session, seq, ts), peer)
                     sent_probes[seq] = ts
@@ -1008,52 +1026,43 @@ def run_unsolicited(main_sock: socket.socket, peer: tuple, duration_s: float,
                 # 측정 중에도 READY 를 계속 보낸다. 상대가 나보다 늦게 단계에 들어오면
                 # 이것을 보고 맞춘다. 멈추면 늦은 쪽이 영영 나를 못 본다.
                 _send_ready(main_sock, peer, my_session, sent)
-                next_send += UNSOL_INTERVAL_S
-                if next_send < now:
-                    next_send = now + UNSOL_INTERVAL_S
+                continue
 
-            timeout = max(0.0, min(next_send, end) - time.monotonic())
-            ready, _, _ = select.select([main_sock, probe], [], [], timeout)
+            sock, data, src = payload
+            parsed = parse_punch(data)
+            if parsed is None:
+                continue
+            kind, rsession, rseq, ts_ns = parsed
+            key = f"{src[0]}:{src[1]}"
 
-            for sock in ready:
+            if sock is main_sock and kind == PUNCH_PHASE_READY:
+                # 상대의 성공 송신 수를 seq 자리에 싣고 온다. 본 엔드포인트에서
+                # 오는 것이 정상이므로 src == peer 를 거부하지 않는다.
+                if src[0] == peer[0] and (peer_session is None or rsession == peer_session):
+                    peer_sent = max(peer_sent, rseq)
+            elif sock is main_sock and kind == PUNCH_UNSOL:
+                if not authentic(src, rsession):
+                    rejected += 1
+                    continue
+                recv += 1
+                sources[key] = sources.get(key, 0) + 1
                 try:
-                    data, src = sock.recvfrom(2048)
+                    # 본 소켓에서 되돌려 준다. 상대의 새 소켓은 이미 송신했으므로
+                    # 그쪽 방화벽은 이 응답을 요청된 것으로 본다.
+                    main_sock.sendto(
+                        build_punch(PUNCH_UNSOL_ACK, rsession, rseq, ts_ns), src)
                 except OSError:
+                    pass
+            elif sock is probe and kind == PUNCH_UNSOL_ACK:
+                # 내가 실제로 보낸 탐침의 응답인지 확인한다. 중복은 한 번만 센다.
+                if (src[0] != peer[0] or rsession != my_session
+                        or rseq not in sent_probes or sent_probes[rseq] != ts_ns
+                        or rseq in acked):
+                    rejected += 1
                     continue
-                parsed = parse_punch(data)
-                if parsed is None:
-                    continue
-                kind, rsession, rseq, ts_ns = parsed
-                key = f"{src[0]}:{src[1]}"
-
-                if sock is main_sock and kind == PUNCH_PHASE_READY:
-                    # 상대의 성공 송신 수를 seq 자리에 싣고 온다. 본 엔드포인트에서
-                    # 오는 것이 정상이므로 src == peer 를 거부하지 않는다.
-                    if src[0] == peer[0] and (peer_session is None or rsession == peer_session):
-                        peer_sent = max(peer_sent, rseq)
-                elif sock is main_sock and kind == PUNCH_UNSOL:
-                    if not authentic(src, rsession):
-                        rejected += 1
-                        continue
-                    recv += 1
-                    sources[key] = sources.get(key, 0) + 1
-                    try:
-                        # 본 소켓에서 되돌려 준다. 상대의 새 소켓은 이미 송신했으므로
-                        # 그쪽 방화벽은 이 응답을 요청된 것으로 본다.
-                        main_sock.sendto(
-                            build_punch(PUNCH_UNSOL_ACK, rsession, rseq, ts_ns), src)
-                    except OSError:
-                        pass
-                elif sock is probe and kind == PUNCH_UNSOL_ACK:
-                    # 내가 실제로 보낸 탐침의 응답인지 확인한다. 중복은 한 번만 센다.
-                    if (src[0] != peer[0] or rsession != my_session
-                            or rseq not in sent_probes or sent_probes[rseq] != ts_ns
-                            or rseq in acked):
-                        rejected += 1
-                        continue
-                    acked.add(rseq)
-                    ack_recv += 1
-                    ack_sources[key] = ack_sources.get(key, 0) + 1
+                acked.add(rseq)
+                ack_recv += 1
+                ack_sources[key] = ack_sources.get(key, 0) + 1
     except KeyboardInterrupt:
         print("  중단됨")
     finally:
@@ -1176,6 +1185,73 @@ def save(record: dict, out_dir: Path, label: str, mode: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _run_check_peer(args) -> int:
+    """`check-peer` 하위 명령. 소켓을 열지 않고 종료 코드로만 답한다.
+
+    **주소는 성공·실패 어느 쪽에도 출력하지 않는다.** 터미널 기록과 수집 로그에 남기지
+    않기 위해서다. 조용한 검증 명령이라 다른 스크립트가 종료 코드로 읽는다.
+    """
+    if args.stdin and args.address is not None:
+        # 둘 다 주면 어느 쪽을 검증했는지 호출자가 알 수 없다. 조용히 하나를
+        # 고르면 입력한 주소와 다른 값을 검증하고 통과시킬 수 있다.
+        sys.stderr.write("address 와 --stdin 을 함께 줄 수 없다\n")
+        return 2
+    if args.stdin:
+        # 첫 줄만 읽고 strip 하면 나머지 입력이 검증되지 않은 채 남는다.
+        # 전부 읽고, 끝의 줄바꿈 하나만 허용한다.
+        raw = sys.stdin.read()
+        address = raw[:-1] if raw.endswith("\n") else raw
+        if not address or any(ch.isspace() for ch in address):
+            sys.stderr.write("표준 입력은 공백 없는 주소 한 줄이어야 한다\n")
+            return 2
+    elif args.address is not None:
+        address = args.address
+    else:
+        sys.stderr.write("주소를 인자로 주거나 --stdin 을 쓴다\n")
+        return 2
+
+    ok = is_public_unicast(address)
+    if ok and args.ipv4:
+        ok = isinstance(ipaddress.ip_address(address), ipaddress.IPv4Address)
+    if ok:
+        return 0
+    sys.stderr.write("도달 가능한 공인 유니캐스트 주소가 아니다"
+                     + (" (IPv4 만 허용)" if args.ipv4 else "") + "\n")
+    return 2
+
+
+def _new_record(args, local_ip: str, local_port: int) -> dict:
+    """결과 JSON 의 뼈대. 측정 전에 알 수 있는 값만 채운다.
+
+    나머지는 `None` 으로 두고 각 단계가 덮어쓴다. **키를 미리 만들어 두는 이유는**
+    단계가 중간에 실패해도 기록의 모양이 같아야 나중에 읽는 쪽이 분기하지 않기 때문이다.
+    """
+    return {
+        "schema": SCHEMA,
+        "label": args.label,
+        "mode": args.mode,
+        "started_utc": _utcnow_iso(),
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "python": platform.python_version(),
+        },
+        "socket": {
+            "local_ip": local_ip,
+            "local_port": local_port,
+            "reused_for_punch": args.mode == "punch",
+            "udp_connreset_disabled": _connreset_state["disabled"],
+            "udp_connreset_detail": _connreset_state["detail"],
+            "behind_nat": None,
+            "local_ip_scope": None,
+            "nat_note": None,
+        },
+        "stun": None,
+        "punch": None,
+        "unsolicited": None,
+    }
+
+
 def main(argv=None) -> int:
     setup_console()
     default_out = Path(__file__).resolve().parent / "results"
@@ -1218,35 +1294,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.mode == "check-peer":
-        # 소켓을 열지 않는다. 주소는 출력하지 않는다 — 터미널 기록에 남는다.
-        if args.stdin and args.address is not None:
-            # 둘 다 주면 어느 쪽을 검증했는지 호출자가 알 수 없다. 조용히 하나를
-            # 고르면 입력한 주소와 다른 값을 검증하고 통과시킬 수 있다.
-            sys.stderr.write("address 와 --stdin 을 함께 줄 수 없다\n")
-            return 2
-        if args.stdin:
-            # 첫 줄만 읽고 strip 하면 나머지 입력이 검증되지 않은 채 남는다.
-            # 전부 읽고, 끝의 줄바꿈 하나만 허용한다.
-            raw = sys.stdin.read()
-            address = raw[:-1] if raw.endswith("\n") else raw
-            if not address or any(ch.isspace() for ch in address):
-                sys.stderr.write("표준 입력은 공백 없는 주소 한 줄이어야 한다\n")
-                return 2
-        elif args.address is not None:
-            address = args.address
-        else:
-            sys.stderr.write("주소를 인자로 주거나 --stdin 을 쓴다\n")
-            return 2
-        ok = is_public_unicast(address)
-        if ok and args.ipv4:
-            ok = isinstance(ipaddress.ip_address(address), ipaddress.IPv4Address)
-        if ok:
-            # 아무것도 출력하지 않는다. 종료 코드만으로 답한다는 계약이고,
-            # 조용한 검증 명령으로 다른 스크립트에서 쓸 수 있어야 한다.
-            return 0
-        sys.stderr.write("도달 가능한 공인 유니캐스트 주소가 아니다"
-                         + (" (IPv4 만 허용)" if args.ipv4 else "") + "\n")
-        return 2
+        return _run_check_peer(args)
 
     try:
         local_port = valid_port(args.port, allow_zero=True)
@@ -1275,30 +1323,7 @@ def main(argv=None) -> int:
     local_ip = primary_local_ip()
     local_port = sock.getsockname()[1]  # --port 0 이면 여기서 실제 포트가 정해진다
 
-    record = {
-        "schema": SCHEMA,
-        "label": args.label,
-        "mode": args.mode,
-        "started_utc": _utcnow_iso(),
-        "platform": {
-            "system": platform.system(),
-            "release": platform.release(),
-            "python": platform.python_version(),
-        },
-        "socket": {
-            "local_ip": local_ip,
-            "local_port": local_port,
-            "reused_for_punch": args.mode == "punch",
-            "udp_connreset_disabled": _connreset_state["disabled"],
-            "udp_connreset_detail": _connreset_state["detail"],
-            "behind_nat": None,
-            "local_ip_scope": None,
-            "nat_note": None,
-        },
-        "stun": None,
-        "punch": None,
-        "unsolicited": None,
-    }
+    record = _new_record(args, local_ip, local_port)
 
     print()
     print(f"natprobe {args.mode}  label={args.label}")

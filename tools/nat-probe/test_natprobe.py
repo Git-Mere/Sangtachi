@@ -357,6 +357,117 @@ if os.name == "nt":
             _rc = f"실행 실패: {_exc}"
         cases.append(("Windows PowerShell 이 ps1 을 파싱한다", _rc == 0, _rc))
 
+# --- _timed_send_recv -------------------------------------------------------
+# run_punch 와 run_unsolicited 가 공유하는 타이밍 뼈대다. 둘 다 이것에 달려 있으므로
+# 여기가 틀리면 두 측정이 함께 틀린다. 실제 소켓으로 돌린다.
+import time as _t
+
+def _loop_case(duration, interval, feed=0):
+    """루프를 한 번 돌리고 (송신 횟수, 수신 횟수, 경과, seq 목록) 을 낸다.
+
+    `feed` 만큼 다른 소켓에서 패킷을 밀어 넣는다.
+    """
+    a = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); a.bind(("127.0.0.1", 0))
+    b = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); b.bind(("127.0.0.1", 0))
+    try:
+        sends = []; recvs = 0; left = feed
+        t0 = _t.monotonic()
+        for ev, pay in np._timed_send_recv([a], t0, duration, interval):
+            if ev == "send":
+                seq, ts = pay
+                sends.append((seq, ts))
+                if left > 0:
+                    b.sendto(b"x" * 8, a.getsockname()); left -= 1
+            else:
+                sock, data, src = pay
+                recvs += 1
+        return sends, recvs, _t.monotonic() - t0
+    finally:
+        a.close(); b.close()
+
+_sends, _recvs, _dt = _loop_case(0.6, 0.1, feed=3)
+cases.append(("정해진 시간 안에 끝난다", 0.55 <= _dt <= 1.2, _dt))
+cases.append(("간격대로 송신 차례가 온다", 5 <= len(_sends) <= 7, len(_sends)))
+cases.append(("seq 는 1부터 하나씩 는다",
+              [s for s, _ in _sends] == list(range(1, len(_sends) + 1)), _sends))
+cases.append(("ts_ns 는 단조 증가한다",
+              all(_sends[i][1] < _sends[i + 1][1] for i in range(len(_sends) - 1)), _sends))
+cases.append(("밀어 넣은 패킷이 수신 이벤트로 나온다", _recvs == 3, _recvs))
+
+_s0, _r0, _dt0 = _loop_case(0.0, 0.1)
+cases.append(("duration 0 이면 아무것도 내지 않는다",
+              _s0 == [] and _r0 == 0, (_s0, _r0)))
+
+# 간격이 남은 시간보다 길어도 첫 송신은 나온다. 나오지 않으면 짧은 측정이 조용히 빈다.
+_s1, _r1, _dt1 = _loop_case(0.1, 10.0)
+cases.append(("간격이 duration 보다 길어도 첫 송신은 나온다", len(_s1) == 1, _s1))
+
+# 밀린 주기를 따라잡지 않는다.
+#
+# 앞의 두 번만 일부러 느리게 처리해 예정 시각을 크게 밀어 둔다. 그다음부터는 바로
+# 반환한다. 따라잡기를 하면 밀린 만큼을 몰아서 내보내므로 **간격이 0 에 가까운 송신이
+# 연달아** 나온다. 따라잡지 않으면 느린 구간이 끝나는 즉시 간격이 제자리로 돌아온다.
+# 송신 횟수로는 구분되지 않는다. 느린 처리 자체가 횟수를 눌러 버리기 때문이다.
+def _catchup_gaps():
+    a = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); a.bind(("127.0.0.1", 0))
+    try:
+        stamps = []
+        t0 = _t.monotonic()
+        for ev, pay in np._timed_send_recv([a], t0, 1.0, 0.05):
+            if ev == "send":
+                stamps.append(_t.monotonic())
+                if len(stamps) <= 2:
+                    _t.sleep(0.3)   # 간격의 6배. 예정 시각이 크게 밀린다
+        return [stamps[i + 1] - stamps[i] for i in range(2, len(stamps) - 1)]
+    finally:
+        a.close()
+
+_gaps = _catchup_gaps()
+cases.append(("밀린 주기를 따라잡지 않는다",
+              bool(_gaps) and min(_gaps) >= 0.02, _gaps[:6]))
+
+
+# --- run_punch 실동작 -------------------------------------------------------
+# 루프프백으로 상대를 흉내 내 한 번 돌린다. 함수 단위 시험만으로는 송신 분기와 수신 분기가
+# 이어 붙는 자리를 확인할 수 없다. 크로스 모델 리뷰가 바로 그 자리를 결함으로 지목했고,
+# 이 케이스가 있었으면 한 번에 반박됐다.
+import threading as _th
+
+def _punch_roundtrip():
+    peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); peer.bind(("127.0.0.1", 0))
+    mine = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); mine.bind(("127.0.0.1", 0))
+    stop = _th.Event()
+
+    def peer_loop():
+        peer.settimeout(0.1)
+        while not stop.is_set():
+            try:
+                data, src = peer.recvfrom(2048)
+            except OSError:
+                continue
+            p = np.parse_punch(data)
+            if p and p[0] == np.PUNCH_PING:
+                _k, sess, seq, ts = p
+                peer.sendto(np.build_punch(np.PUNCH_PONG, sess, seq, ts), src)
+                peer.sendto(np.build_punch(np.PUNCH_PING, 0xABCD, seq, ts), src)
+
+    t = _th.Thread(target=peer_loop, daemon=True)
+    t.start()
+    try:
+        return np.run_punch(mine, peer.getsockname(), 0.8)
+    finally:
+        stop.set(); t.join(timeout=1); peer.close(); mine.close()
+
+_pr = _punch_roundtrip()
+cases.append(("run_punch: 양방향이면 success", _pr["result"] == "success", _pr["result"]))
+cases.append(("run_punch: 송신 분기 뒤에도 수신을 처리한다",
+              _pr["sent"] >= 3 and _pr["recv_pong"] >= 3, (_pr["sent"], _pr["recv_pong"])))
+cases.append(("run_punch: 상대 세션은 상대 PING 에서만 얻는다",
+              _pr["peer_session"] == 0xABCD, _pr["peer_session"]))
+cases.append(("run_punch: RTT 표본이 쌓인다",
+              (_pr["rtt_ms"] or {}).get("samples", 0) >= 3, _pr["rtt_ms"]))
+
+
 fail = 0
 for name, ok, detail in cases:
     print(("PASS  " if ok else "FAIL  ") + name)

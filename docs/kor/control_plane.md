@@ -3,6 +3,8 @@
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
 **요구사항:** [`spec.md`](spec.md) FR-4, FR-5, NFR-3, NFR-10, C-3 / **설계:** [`architecture.md`](architecture.md) 3.2, 3.3 / **프로토콜 계약:** [`protocol.md`](protocol.md) 14장 / **일정:** [`roadmap.md`](roadmap.md) Phase 3
 
+> English version: [`../eng/control_plane.md`](../eng/control_plane.md)
+
 ---
 
 ## 0. 이 문서의 위치

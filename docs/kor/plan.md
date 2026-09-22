@@ -31,7 +31,7 @@
 |----|------|------|
 | 구현 | [`roadmap.md`](roadmap.md) | Phase 1은 CMake 구성만. Winsock2 래퍼부터 미착수 |
 | 감사 후속 | 이 파일 "설계 감사 후속" 절 | 2차 감사 54건. **1차, 2차 모두 완료.** 남은 것은 Phase 착수 전 항목으로 `roadmap.md` 에 있다 |
-| 문서 부채 | 이 파일 마지막 절 | 5건 |
+| 문서 부채 | 이 파일 마지막 절 | 4건 |
 
 ## 다음에 할 일
 
@@ -55,7 +55,6 @@
 | `experiments.md` 없음 | Phase 9 산출물. 게이트가 예외로 두는 유일한 끊긴 링크다 |
 | `docgate.py` 개수 검사 미구현 | `CLAUDE.md` "리뷰를 돌릴 때" 가 **셀 수 있는 검사를 `docgate.py` 나 스크립트가 맡으라고** 정했다. 아직 규칙만 있고 검사가 없다. 대상은 문서가 적은 개수(계약 수, 항목 수, ADR 건수)와 실제 개수의 대조다 |
 | `31e4240` 기록 없음 | CMake 스모크 커밋. `commit_history/` 항목 미작성 |
-| 영어 미러 | 텔레메트리 분리·DynamoDB 변경과 이번 `control_plane.md` 신설(그리고 그에 따른 `architecture.md`, `protocol.md`, `spec.md`, `roadmap.md`, `windows-prereq.md` 변경)을 `docs/eng` 에 아직 반영하지 않았다. `control_plane.md` 는 미러가 생길 때 다른 문서처럼 `> English version:` 줄을 붙인다. 게이트가 `mirror` 와 `parity` 로 막히는 것이 정상이다 |
 | 케이스 표 이관 | `control_plane.md` 의 케이스 표 6벌은 Phase 3 착수 시 `control-server/tests/` 로 옮긴다. 그때까지는 문서가 유일한 사본이다 |
 
 ## 세션을 시작할 때

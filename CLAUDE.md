@@ -313,10 +313,9 @@ Winsock2 래퍼부터는 미착수다.
 있다. 정하기 전에는 M-6을 판정할 수 없다. 언제 정하는지는 `roadmap.md` Phase 4 의 착수 전
 항목에 있다. 코드에서 임의로 정하지 않는다.
 
-`docs/eng` 미러는 밀려 있다. `docgate.py` 는 `mirror` 와 `parity` 로 실패하며 **HEAD 도 그렇다.**
-막힌 것이 그 둘뿐이고 `link` 가 0 건이면 정상 상태로 본다. **작업할 때는 한국어를
+`docs/eng` 미러는 HEAD 기준으로 맞춰져 있고 `docgate.py` 가 `VERDICT: pass` 다. **작업할 때는 한국어를
 먼저 고치고 푸시 지시가 있을 때 미러를 만든다.** 그 사이에는 게이트가 `mirror` 와 `parity` 로
-막히는 것이 정상이다.
+막히는 것이 정상이고, 그때도 `link` 는 0 건이어야 한다.
 
 `decisions/` 에 ADR 4건이 있다. 도구는 셋이고 각각 README 가 있다.
 

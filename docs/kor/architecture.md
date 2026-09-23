@@ -681,12 +681,34 @@ REJOIN <peer_id>:<peer_token>
 
 **기동 입력이 아닌 것.** 로컬 기록 파일 경로는 9장의 계약이 정해지면 그때 같이 정한다. 텔레메트리 서비스 주소는 Phase 9 다. 둘 다 여기 표에 없다는 것이 현재 상태다.
 
-**인자 오류의 거동.** 알 수 없는 인자, 역할 누락, 형식 위반(`--room` 이 6자가 아님, `--rejoin`
-이 `<peer_id>:<peer_token>` 꼴이 아님, 포트가 1~65535 밖)은 전부 **`ERROR` 한 줄을 남기고 종료
-코드 2로 기동 실패**다. 추측해서 고쳐 받지 않는다.
+**인자 오류의 거동.** 알 수 없는 인자, 필수 인자 누락, 형식 위반은 전부 **`ERROR` 한 줄을
+남기고 종료 코드 2로 기동 실패**다. 추측해서 고쳐 받지 않는다.
 
-- `peer_id` 는 10진수로 적는다
 - 같은 인자를 두 번 주면 `--stun` 은 목록에 쌓이고 나머지는 마지막 값이 이긴다
+- **준 인자는 그 구간에서 쓰지 않아도 검사한다.** 위 표의 "보관만 한다" 는 값을 쓰지 않는다는
+  뜻이지 검사하지 않는다는 뜻이 아니다
+
+> **왜.** 검사를 미루면 Phase 1 에서 통과한 입력이 Phase 3 에서야 거부되고, 그 사이 시험이
+> 어느 형식으로 돌았는지 기록에서 읽을 수 없게 된다.
+
+**누락 판정은 위 표의 "필수" 열이 정한다.** 그 열이 요구하는 구간에서 없는 것이 누락이다.
+역할은 Phase 1~2 에 없어도 기동한다. 다만 값이 `host` 도 `player` 도 아니면 어느 구간에서나
+형식 위반이다.
+
+**형식의 출처는 값마다 다르다.** 규칙을 여기에 옮겨 적지 않는다.
+
+| 값 | 출처 |
+|----|------|
+| `--room` | `control_plane.md` 2.1 `room_id` 의 정규화와 검사 |
+| `--rejoin` 의 `peer_id` | `control_plane.md` 2.2 `peer_id`. 10진수로 적는다 |
+| `--rejoin` 의 `peer_token` | `control_plane.md` 2.3 `peer_token` |
+| `--server` 의 포트 | 생략하면 `control_plane.md` 2.6 상수의 `CONTROL_PORT` |
+| 모든 포트 | 1~65535 |
+| `--peer` 의 주소 | IPv4 리터럴만 받는다. 이름을 받지 않는다 |
+| `--stun` 의 주소 | 이름 또는 IPv4 리터럴. 포트는 생략할 수 없다 |
+
+**반례 목록은 시험이 갖는다.** IPv4 리터럴, 포트 범위, `--room`, `--rejoin` 의 케이스 표는
+`tests/` 에 있다. 문서에 두면 같은 표를 두 곳에서 맞춰야 하고, 반례는 구현이 자라면서 는다.
 
 ---
 
@@ -1097,7 +1119,8 @@ Sangtachi/
 |   +-- include/
 |   +-- src/
 |   |   +-- main.cpp
-|   |   +-- network/     udp_socket, endpoint, stun_client
+|   |   +-- args.cpp     기동 인자 파싱 (3.5)
+|   |   +-- network/     wsa, udp_socket, endpoint, stun_client
 |   |   +-- peer/        peer, hole_punch, session
 |   |   +-- tunnel/      packet, tunnel, router
 |   |   +-- adapter/     wintun_adapter

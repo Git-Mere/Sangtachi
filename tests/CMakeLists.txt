@@ -14,6 +14,8 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(hamychi_tests
+    args_test.cpp
+    network/endpoint_test.cpp
     network/wsa_test.cpp
 )
 

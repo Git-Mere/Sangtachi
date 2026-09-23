@@ -35,4 +35,11 @@ if ($Filter) {
 ctest @ctestArgs
 if ($LASTEXITCODE -ne 0) { throw "tests failed ($LASTEXITCODE)" }
 
+# 실행 파일의 기동 계약. 단위 시험이 볼 수 없는 종료 코드와 로그 줄을 본다.
+# -Filter 를 준 실행은 단위 시험만 좁혀 보는 것이므로 건너뛴다.
+if (-not $Filter) {
+    & (Join-Path $PSScriptRoot 'cli-check.ps1') -Config $Config -BuildDir $buildDir
+    if ($LASTEXITCODE -ne 0) { throw "cli check failed ($LASTEXITCODE)" }
+}
+
 Write-Host 'all tests passed'

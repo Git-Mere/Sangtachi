@@ -1,7 +1,6 @@
 # Architecture
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
-**참고 문서:** [`first_design.md`](first_design.md)
 **대상 플랫폼:** Windows 10 / 11 x64 (클라이언트), Linux/AWS EC2 (제어 서버)
 
 > English version: [`../eng/architecture.md`](../eng/architecture.md)
@@ -735,12 +734,11 @@ Sangtachi/
 |   |   +-- spec.md              요구사항과 성공 기준
 |   |   +-- roadmap.md           단계별 개발 계획
 |   |   +-- plan.md              다음 세션 인수인계
-|   |   +-- first_design.md      초기 기획서 (참고용)
 |   |   +-- protocol.md          터널 프로토콜 확정본
 |   |   +-- control_plane.md     제어 평면 확정본
 |   |   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)
 |   |   +-- audit-history/       전면 설계 점검 기록 보관소
-|   |   +-- decisions/           설계 결정 기록
+|   |   +-- decisions/           설계 결정 기록. ADR 과 first_design.md
 |   |   +-- commit_history/      작업 단위 변경 기록
 |   +-- eng/                 영어 문서, 동일 구조
 +-- README.md

@@ -1,10 +1,11 @@
 # CSP 400 Project Proposal
 
-> Korean version: [`../kor/first_design.md`](../kor/first_design.md)
+> Korean version: [`../../kor/decisions/first_design.md`](../../kor/decisions/first_design.md)
 >
 > This is the initial proposal, not a fixed specification. Where it conflicts with
-> [`spec.md`](spec.md), [`architecture.md`](architecture.md), or [`roadmap.md`](roadmap.md),
-> those documents take precedence.
+> [`spec.md`](../spec.md), [`architecture.md`](../architecture.md), or
+> [`roadmap.md`](../roadmap.md), those documents take precedence. **It is a record, so it is
+> not edited.** The proposal stays as it was written.
 
 ## Project Title
 **Direct-First P2P Virtual Network for Multiplayer Games**

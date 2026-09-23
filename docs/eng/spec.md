@@ -1,7 +1,6 @@
 # Spec
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
-**Reference document:** [`first_design.md`](first_design.md)
 **Design detail:** [`architecture.md`](architecture.md) / **Fixed protocol:** [`protocol.md`](protocol.md)
 **Development plan:** [`roadmap.md`](roadmap.md)
 

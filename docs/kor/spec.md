@@ -1,7 +1,6 @@
 # Spec
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
-**참고 문서:** [`first_design.md`](first_design.md)
 **설계 상세:** [`architecture.md`](architecture.md) / **프로토콜 확정본:** [`protocol.md`](protocol.md)
 **개발 계획:** [`roadmap.md`](roadmap.md)
 

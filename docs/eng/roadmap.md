@@ -2,7 +2,6 @@
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
 **Term:** CSP 400, Fall 2026
-**Reference document:** [`first_design.md`](first_design.md)
 **Requirements:** [`spec.md`](spec.md) / **Design:** [`architecture.md`](architecture.md) / **Protocol:** [`protocol.md`](protocol.md)
 
 > Korean version: [`../kor/roadmap.md`](../kor/roadmap.md)

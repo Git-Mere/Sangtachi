@@ -2,7 +2,6 @@
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
 **학기:** CSP 400, 2026년 가을
-**참고 문서:** [`first_design.md`](first_design.md)
 **요구사항:** [`spec.md`](spec.md) / **설계:** [`architecture.md`](architecture.md) / **프로토콜:** [`protocol.md`](protocol.md)
 
 > English version: [`../eng/roadmap.md`](../eng/roadmap.md)

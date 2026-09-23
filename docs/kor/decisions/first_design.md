@@ -1,9 +1,10 @@
 # CSP 400 프로젝트 기획서
 
-> English version: [`../eng/first_design.md`](../eng/first_design.md)
+> English version: [`../../eng/decisions/first_design.md`](../../eng/decisions/first_design.md)
 >
-> 이 문서는 초기 기획서이며 확정 사양이 아니다. [`spec.md`](spec.md),
-> [`architecture.md`](architecture.md), [`roadmap.md`](roadmap.md)와 충돌할 경우 그쪽이 우선한다.
+> 이 문서는 초기 기획서이며 확정 사양이 아니다. [`spec.md`](../spec.md),
+> [`architecture.md`](../architecture.md), [`roadmap.md`](../roadmap.md)와 충돌할 경우 그쪽이
+> 우선한다. **기록이므로 고치지 않는다.** 그때의 기획을 그대로 둔다.
 
 ## 프로젝트 제목
 **멀티플레이 게임을 위한 Direct-First P2P 가상 네트워크**

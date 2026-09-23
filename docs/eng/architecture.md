@@ -1,7 +1,6 @@
 # Architecture
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
-**Reference document:** [`first_design.md`](first_design.md)
 **Target platform:** Windows 10 / 11 x64 (client), Linux/AWS EC2 (control server)
 
 > Korean version: [`../kor/architecture.md`](../kor/architecture.md)
@@ -696,12 +695,11 @@ Sangtachi/
 |   |   +-- spec.md              requirements and success criteria
 |   |   +-- roadmap.md           phased development plan
 |   |   +-- plan.md              handover for the next session
-|   |   +-- first_design.md      initial proposal (reference)
 |   |   +-- protocol.md          confirmed tunnel protocol
 |   |   +-- control_plane.md     confirmed control plane
 |   |   +-- experiments.md       experiment design and measurement results (written in Phase 9)
 |   |   +-- audit-history/       archive of full design audit records
-|   |   +-- decisions/           design decision records
+|   |   +-- decisions/           design decision records. ADRs and first_design.md
 |   |   +-- commit_history/      per-commit change records
 |   +-- eng/                 English documents, same structure (this tree)
 +-- README.md

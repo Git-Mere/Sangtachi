@@ -1151,6 +1151,7 @@ Sangtachi/
 | 공개 STUN 서버 | Binding Response 응답. 서버는 구현하지 않고 이용만 한다 | 외부 공개 서비스 |
 | Python 표준 라이브러리 | `asyncio`, `json` | 표준 라이브러리 |
 | AWS SDK for Python (`boto3`) | 제어 서버와 텔레메트리 서비스의 DynamoDB 접근 | **승인됨** |
+| Catch2 v3 | 시험 케이스 등록, 실행, 실패 보고. 시험 실행 파일에만 링크한다 | **승인됨.** 승인 주체는 [`spec.md`](spec.md) NFR-5 |
 | Amazon DynamoDB | 방·피어 상태와 지표의 영속 저장 | 외부 관리형 서비스 |
 
 Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, NAT 통과, 홀펀칭, 터널 프로토콜, 라우팅 결정, 세션 관리, 모니터링, 진단은 모두 이 프로젝트가 직접 구현한다. Wintun은 커널 모드 가상 NIC 드라이버에 대한 접근 수단일 뿐이다.

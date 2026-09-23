@@ -24,10 +24,11 @@ coverage/
 .mypy_cache/
 .ruff_cache/
 
-# 에디터
+# 에디터와 에이전트 세션
 .vscode/
 .idea/
 *.swp
+.prime/
 
 # OS
 .DS_Store

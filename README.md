@@ -12,22 +12,31 @@ CSP400 Project
 
 ## 시작하기
 
-스택 미정. 확정 후 아래를 채웁니다.
-
 ### 요구사항
 
-(예: Python 3.12, Node 22)
+- Windows 10 / 11 x64
+- Visual Studio 2022 이상, **C++ 데스크톱 개발 워크로드**. CMake 와 Ninja 가 같이 설치됩니다
+- 첫 빌드에는 네트워크가 필요합니다. 시험 프레임워크를 내려받습니다
 
-### 설치
+### 빌드
 
-```bash
-# TBD
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+```
+
+산출물은 기본으로 `%LOCALAPPDATA%\Hamychi\build\Debug` 에 생깁니다. 레포 안에 두려면
+`-BuildDir` 로 경로를 줍니다. 이유는 `scripts/build.ps1` 첫머리에 있습니다.
+
+### 시험
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 ```
 
 ### 실행
 
-```bash
-# TBD
+```powershell
+%LOCALAPPDATA%\Hamychi\build\Debug\client\hamychi_client.exe
 ```
 
 ### 환경 변수
@@ -41,11 +50,15 @@ cp .env.example .env
 ## 레포 구조
 
 ```
-docs/kor/   스펙, 계획, 설계 결정, 커밋 기록 (한국어)
-docs/eng/   같은 문서의 영어판
-src/        소스 코드
-tests/      테스트
-scripts/    빌드 및 배포 스크립트
+client/          C++ 클라이언트. include/ 와 src/
+control-server/  제어 평면 (Python). 미착수
+telemetry-server/ 텔레메트리 서비스 (Python). 미착수
+cmake/           CMake 모듈
+tests/           클라이언트 시험
+scripts/         빌드와 시험 스크립트
+docs/kor/        스펙, 계획, 설계 결정, 커밋 기록 (한국어)
+docs/eng/        같은 문서의 영어판
+tools/           문서 게이트, 사전 조건 검사, NAT 실측
 ```
 
 ## 라이선스

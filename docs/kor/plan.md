@@ -9,7 +9,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1은 CMake 구성만. Winsock2 래퍼부터 미착수 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 1 진행 중. 빌드 뼈대와 Winsock2 래퍼까지 됐다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 4건 |
 
 **설계 감사 후속은 남아 있지 않다.** 3차 감사 62건이 묶음 여섯으로 전부 닫혔고 소유자 판단
@@ -19,8 +19,11 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 구현 Phase 1. Winsock2 래퍼 | 설계 쪽에서 Phase 1을 막는 것이 없다 |
-| 2 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
+| 1 | Phase 1 의 `endpoint` 타입과 기동 인자 파싱 ([`architecture.md`](architecture.md) 3.5) | Winsock 없이 시험할 수 있어 먼저 닫는다 |
+| 2 | Phase 1 의 로그와 카운터 (`architecture.md` 9장 고정 이벤트 키) | 뒤의 모든 검증이 이 줄을 읽는다 |
+| 3 | Phase 1 의 UDP 소켓 래퍼 ([`protocol.md`](protocol.md) 6장) | 1·2 를 쓴다 |
+| 4 | Phase 1 의 `[loop]` 이벤트 루프와 `[console]` (`architecture.md` 3.2) | 앞의 셋을 묶는다 |
+| 5 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
 
 ## 대기 중인 것
 
@@ -29,6 +32,7 @@
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | 어댑터가 아직 없다. 지금 상태는 문서화이고 실물 확인이 아니다 | Phase 3(EC2), 6(Wintun), 8(시연) |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
+| NFR-5 를 두 종류로 나눈 것의 교수 확인 | Catch2 는 [`spec.md`](spec.md) NFR-5 대로 승인됐다. 확인 대상은 그 승인이 아니라 요구를 제품 의존성과 시험 전용 의존성으로 나눈 것이다 | 제출 전 확인. 결과가 다르면 [ADR 0005](decisions/0005-시험-프레임워크-catch2.md)를 뒤집고 새 ADR 을 쓴다 |
 
 ## 문서 부채
 

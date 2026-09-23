@@ -107,7 +107,7 @@ python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료
 **의미 있는 커밋마다 `docs/{kor,eng}/commit_history/YYYY-MM-DD-주제.md`를 남긴다.**
 변경, 결정, 검증, 크로스 모델 리뷰 결과(지적별로 반영 또는 기각 사유)를 적는다.
 
-**설계 결정은 `docs/{kor,eng}/decisions/`에 ADR로 남긴다.** 현재 4건 있다.
+**설계 결정은 `docs/{kor,eng}/decisions/`에 ADR로 남긴다.** 현재 5건 있다.
 
 **이 파일에 규칙을 새로 넣을 때는 저장소 소유자에게 먼저 허락을 받는다.** 하위 에이전트의
 동의나 크로스 모델 리뷰의 `LGTM` 은 허락이 아니다. 세션에서 배운 것을 그 자리에서
@@ -339,8 +339,8 @@ diff 를 29% 만 받고도 토큰은 전체 호출의 79% 를 썼다. **고정�
 
 ## 현재 상태
 
-코드는 `CMakeLists.txt`와 hello 수준 `src/main.cpp`뿐이다. Phase 1은 CMake 구성만 되어 있고
-Winsock2 래퍼부터는 미착수다.
+Phase 1 을 진행 중이다. 빌드 뼈대(`client/`, `cmake/`, `tests/`, `scripts/`)와 Winsock2
+초기화 래핑까지 됐다. `endpoint`, 로그, UDP 소켓 래퍼, 이벤트 루프가 남았다. `plan.md` 참고.
 
 **설계 감사 후속 6건이 전부 끝났다.** 설계 문서 쪽에서 구현을 막는 것은 없다. `plan.md` 참고.
 
@@ -360,7 +360,7 @@ Winsock2 래퍼부터는 미착수다.
 먼저 고치고 푸시 지시가 있을 때 미러를 만든다.** 그 사이에는 게이트가 `mirror` 와 `parity` 로
 막히는 것이 정상이고, 그때도 `link` 는 0 건이어야 한다.
 
-`decisions/` 에 ADR 4건이 있다. 도구는 셋이고 각각 README 가 있다.
+`decisions/` 에 ADR 5건이 있다. 도구는 셋이고 각각 README 가 있다.
 
 | 도구 | 무엇 | 시험 |
 |------|------|------|

@@ -599,7 +599,7 @@ keepalive가 나가지 않아 NAT 매핑이 만료된다. 원격 서비스 장�
 |------|------|:---:|-----|
 | 역할 | 첫 위치 인자 `host` 또는 `player` | Phase 3 이후 예. Phase 1~2 는 받아서 보관만 하고 없어도 기동한다 | `host` 는 `create_room`, `player` 는 `join_room` 을 부른다 |
 | 제어 서버 주소 | `--server <이름 또는 IPv4>[:<포트>]` | Phase 3 이후 예. Phase 1~2 는 받아서 보관만 하고 없어도 기동한다 | DNS 이름 또는 IPv4 리터럴. 포트를 생략하면 [`control_plane.md`](control_plane.md) 2.6 상수의 `CONTROL_PORT`. 문서에 실제 주소를 박지 않는다 |
-| 방 코드 | `--room <6자>` | `player` 만. Phase 3 이후 | `control_plane.md` 2.1 `room_id` 의 형식. 소문자를 쳐도 된다. 서버가 대문자로 정규화한다 |
+| 방 코드 | `--room <6자>` | `player` 는 항상. `host` 는 `--rejoin` 을 같이 줄 때. Phase 3 이후 | `control_plane.md` 2.1 `room_id` 의 형식. 소문자를 쳐도 된다. 서버가 대문자로 정규화한다 |
 | 재참가 증명 | `--rejoin <peer_id>:<peer_token>` | 아니오 | 있으면 `join_room` 을 재참가 형식으로 부른다 (`control_plane.md` 4.3 `join_room`). `host` 역할에도 쓸 수 있다. 재시작한 호스트도 재참가다 |
 | STUN 서버 | `--stun <이름 또는 IPv4>:<포트>` 반복 | 아니오 | 주면 아래 기본 목록을 **통째로 대체**한다. 목록이 한 개일 때의 거동은 표 아래에 있다 |
 

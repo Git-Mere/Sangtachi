@@ -35,20 +35,21 @@ $cases = @(
     @{ args = @('--server', 'a.example');      expect = 0; contains = 'INFO wsa.init version=' }
     @{ args = @('--stun', 'a.example:3478');   expect = 0; contains = 'INFO wsa.init version=' }
 
-    @{ args = @('bogus');                      expect = 2; contains = 'ERROR args.invalid reason=bad_role arg="bogus"' }
+    @{ args = @('bogus');                      expect = 2; contains = 'ERROR args.invalid reason=bad_role arg=bogus' }
     @{ args = @('host', 'player');             expect = 2; contains = 'reason=extra_positional' }
-    @{ args = @('--nope');                     expect = 2; contains = 'reason=unknown_option arg="--nope"' }
-    @{ args = @('--peer');                     expect = 2; contains = 'reason=missing_value arg="--peer"' }
-    @{ args = @('--room', 'ABCDE0');           expect = 2; contains = 'reason=bad_room arg="ABCDE0"' }
+    @{ args = @('--nope');                     expect = 2; contains = 'reason=unknown_option arg=--nope' }
+    @{ args = @('--peer');                     expect = 2; contains = 'reason=missing_value arg=--peer' }
+    @{ args = @('--room', 'ABCDE0');           expect = 2; contains = 'reason=bad_room arg=ABCDE0' }
     @{ args = @('--peer', '192.0.2.5:0');      expect = 2; contains = 'reason=bad_port' }
     @{ args = @('--peer', 'a.example:3478');   expect = 2; contains = 'reason=bad_host' }
     @{ args = @('--stun', 'a.example');        expect = 2; contains = 'reason=missing_port' }
     @{ args = @('--server', '999.999.999.999'); expect = 2; contains = 'reason=bad_host' }
 
-    # 값에 공백이 들어도 한 줄이 k=v 로 읽혀야 한다. 값을 따옴표로 감싸는 이유다.
-    @{ args = @('a b');                        expect = 2; contains = 'arg="a b"' }
-    # 제어문자는 공백 하나로 바꿔 싣는다 (architecture.md 9장 로그 출력).
-    @{ args = @("a`tb");                       expect = 2; contains = 'arg="a b"' }
+    # 값에 공백과 제어문자를 싣지 않는다. 둘 다 밑줄로 바꾼다 (architecture.md 9장).
+    @{ args = @('a b');                        expect = 2; contains = 'arg=a_b' }
+    @{ args = @("a`tb");                       expect = 2; contains = 'arg=a_b' }
+    # 카운터 전량은 종료 절차에서 낸다. 값이 0 인 것도 함께 낸다.
+    @{ args = @();                             expect = 0; contains = 'INFO counter name=drop_magic value=0' }
 )
 
 $failed = 0

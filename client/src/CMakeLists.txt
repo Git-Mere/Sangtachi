@@ -4,6 +4,8 @@
 
 target_sources(hamychi_core PRIVATE
     args.cpp
+    counters.cpp
+    log.cpp
     network/endpoint.cpp
     network/wsa.cpp
 )

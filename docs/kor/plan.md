@@ -9,7 +9,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1 진행 중. 빌드 뼈대, Winsock2 래퍼, `endpoint`, 기동 인자까지 됐다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 1 진행 중. 빌드 뼈대, Winsock2 래퍼, `endpoint`, 기동 인자, 로그와 카운터까지 됐다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 4건 |
 
 **설계 감사 후속은 남아 있지 않다.** 3차 감사 62건이 묶음 여섯으로 전부 닫혔고 소유자 판단
@@ -19,9 +19,8 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 1 의 로그와 카운터 ([`architecture.md`](architecture.md) 9장 고정 이벤트 키) | 뒤의 모든 검증이 이 줄을 읽는다. `main.cpp` 의 임시 `sanitize` 를 그쪽으로 옮긴다 |
-| 2 | Phase 1 의 UDP 소켓 래퍼 ([`protocol.md`](protocol.md) 6장) | 1 을 쓴다 |
-| 3 | Phase 1 의 `[loop]` 이벤트 루프와 `[console]` (`architecture.md` 3.2) | 앞의 둘을 묶는다 |
+| 1 | Phase 1 의 UDP 소켓 래퍼 ([`protocol.md`](protocol.md) 6장) | 로그와 카운터가 이미 있다 |
+| 2 | Phase 1 의 `[loop]` 이벤트 루프와 `[console]` ([`architecture.md`](architecture.md) 3.2) | 앞의 것을 묶는다. Phase 1 의 마지막이다 |
 | 5 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
 
 ## 대기 중인 것
@@ -41,7 +40,7 @@
 | `docgate.py` 개수 검사 미구현 | `CLAUDE.md` "리뷰를 돌릴 때" 가 **셀 수 있는 검사를 `docgate.py` 나 스크립트가 맡으라고** 정했다. 아직 규칙만 있고 검사가 없다. 대상은 문서가 적은 개수(계약 수, 항목 수, ADR 건수)와 실제 개수의 대조다. 3차 감사에서 계산 오류 두 건(속도 제한 연수, 예산 발수)이 나왔으므로 문서 안의 산술도 대상이다 |
 | `31e4240` 기록 없음 | CMake 스모크 커밋. `commit_history/` 항목 미작성 |
 | 케이스 표 이관 | `control_plane.md` 의 케이스 표는 Phase 3 착수 시 `control-server/tests/` 로 옮긴다. 그때까지는 문서가 유일한 사본이다 |
-| 로그 값의 따옴표 규칙 | `architecture.md` 9장은 고정 필드 일곱의 값 형식만 정하고 나머지는 정하지 않는다. `main.cpp` 가 `arg` 를 따옴표로 감싸고 있는데 그 규칙이 문서에 없다. 로그 모듈을 넣을 때 9장에서 확정한다 |
+| 카운터 이름의 문서-코드 대조 | 이름 39개가 `protocol.md` 6·7·8장과 `architecture.md` 3.2.3·3.2.6·3.2.8 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. `docgate.py` 개수 검사와 같이 붙인다 |
 
 ## 세션을 시작할 때
 

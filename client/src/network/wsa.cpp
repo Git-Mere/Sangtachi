@@ -1,4 +1,4 @@
-#include "hamychi/network/wsa.hpp"
+#include "sangtachi/network/wsa.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -11,7 +11,7 @@
 
 #include <string>
 
-namespace hamychi::network {
+namespace sangtachi::network {
 
 static_assert(sizeof(VersionWord) == sizeof(WORD),
               "VersionWord must match the Win32 WORD width");
@@ -43,4 +43,4 @@ WsaContext::~WsaContext() {
     WSACleanup();
 }
 
-}  // namespace hamychi::network
+}  // namespace sangtachi::network

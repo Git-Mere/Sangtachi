@@ -1,4 +1,4 @@
-#include "hamychi/hash.hpp"
+#include "sangtachi/hash.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -10,9 +10,9 @@
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
-using hamychi::kShortHashChars;
-using hamychi::sha256_hex;
-using hamychi::sha256_short;
+using sangtachi::kShortHashChars;
+using sangtachi::sha256_hex;
+using sangtachi::sha256_short;
 
 namespace {
 

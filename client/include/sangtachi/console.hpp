@@ -19,7 +19,7 @@
 #include <optional>
 #include <string>
 
-namespace hamychi {
+namespace sangtachi {
 
 // architecture.md 3.2.6 이 정한 줄 수.
 inline constexpr std::size_t kConsoleQueueCapacity = 16;
@@ -88,4 +88,4 @@ private:
     void* event_ = nullptr;
 };
 
-}  // namespace hamychi
+}  // namespace sangtachi

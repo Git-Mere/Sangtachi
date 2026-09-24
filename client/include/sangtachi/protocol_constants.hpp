@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace hamychi::protocol {
+namespace sangtachi::protocol {
 
 inline constexpr std::uint32_t kTunnelMagic = 0x53414E47;  // "SANG"
 inline constexpr std::uint8_t kTunnelVersion = 0x01;
@@ -26,4 +26,4 @@ inline constexpr std::uint32_t kMinRenegIntervalMs = 1000;
 inline constexpr std::size_t kUnverifiedTxBucket = 10;
 inline constexpr std::size_t kUnverifiedTxRefill = 5;
 
-}  // namespace hamychi::protocol
+}  // namespace sangtachi::protocol

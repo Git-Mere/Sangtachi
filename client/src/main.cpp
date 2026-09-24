@@ -1,10 +1,10 @@
-#include "hamychi/args.hpp"
-#include "hamychi/console.hpp"
-#include "hamychi/counters.hpp"
-#include "hamychi/log.hpp"
-#include "hamychi/loop.hpp"
-#include "hamychi/network/udp_socket.hpp"
-#include "hamychi/network/wsa.hpp"
+#include "sangtachi/args.hpp"
+#include "sangtachi/console.hpp"
+#include "sangtachi/counters.hpp"
+#include "sangtachi/log.hpp"
+#include "sangtachi/loop.hpp"
+#include "sangtachi/network/udp_socket.hpp"
+#include "sangtachi/network/wsa.hpp"
 
 #include <cstdint>
 #include <span>
@@ -18,11 +18,11 @@ namespace {
 constexpr int kStartupFailure = 2;
 
 void emit_socket_error(std::string_view op, int code) {
-    const hamychi::LogField fields[] = {
-        hamychi::field("op", op),
-        hamychi::field("code", static_cast<std::uint64_t>(code)),
+    const sangtachi::LogField fields[] = {
+        sangtachi::field("op", op),
+        sangtachi::field("code", static_cast<std::uint64_t>(code)),
     };
-    hamychi::emit(hamychi::LogLevel::Error, "socket.error", fields);
+    sangtachi::emit(sangtachi::LogLevel::Error, "socket.error", fields);
 }
 
 }  // namespace
@@ -34,28 +34,28 @@ int main(int argc, char** argv) {
         raw.emplace_back(argv[i]);
     }
 
-    const auto parsed = hamychi::parse_args(std::span<const std::string_view>(raw));
+    const auto parsed = sangtachi::parse_args(std::span<const std::string_view>(raw));
     if (!parsed.ok()) {
-        const hamychi::LogField fields[] = {
-            hamychi::field("reason", hamychi::to_token(parsed.error)),
-            hamychi::field("arg", parsed.offending),
+        const sangtachi::LogField fields[] = {
+            sangtachi::field("reason", sangtachi::to_token(parsed.error)),
+            sangtachi::field("arg", parsed.offending),
         };
-        hamychi::emit(hamychi::LogLevel::Error, "args.invalid", fields);
+        sangtachi::emit(sangtachi::LogLevel::Error, "args.invalid", fields);
         return kStartupFailure;
     }
 
-    hamychi::Counters counters;
+    sangtachi::Counters counters;
 
     try {
-        const hamychi::network::WsaContext wsa;
+        const sangtachi::network::WsaContext wsa;
         {
-            const hamychi::LogField fields[] = {
-                hamychi::field("version", wsa.negotiated_version()),
+            const sangtachi::LogField fields[] = {
+                sangtachi::field("version", wsa.negotiated_version()),
             };
-            hamychi::emit(hamychi::LogLevel::Info, "wsa.init", fields);
+            sangtachi::emit(sangtachi::LogLevel::Info, "wsa.init", fields);
         }
 
-        auto opened = hamychi::network::open_udp_socket();
+        auto opened = sangtachi::network::open_udp_socket();
         if (!opened.ok()) {
             emit_socket_error(opened.failed_op, opened.error);
             return kStartupFailure;
@@ -63,35 +63,35 @@ int main(int argc, char** argv) {
 
         // architecture.md 9장의 socket.bind. spec.md M-1 기동 판정이 이 줄을 읽는다.
         {
-            const hamychi::LogField fields[] = {
-                hamychi::field("local", opened.socket->local().to_string()),
-                hamychi::field("rcvbuf_requested",
+            const sangtachi::LogField fields[] = {
+                sangtachi::field("local", opened.socket->local().to_string()),
+                sangtachi::field("rcvbuf_requested",
                                static_cast<std::uint64_t>(opened.socket->rcvbuf_requested())),
-                hamychi::field("rcvbuf_applied",
+                sangtachi::field("rcvbuf_applied",
                                static_cast<std::uint64_t>(opened.socket->rcvbuf_applied())),
             };
-            hamychi::emit(hamychi::LogLevel::Info, "socket.bind", fields);
+            sangtachi::emit(sangtachi::LogLevel::Info, "socket.bind", fields);
         }
 
-        hamychi::LoopOptions options;
+        sangtachi::LoopOptions options;
         options.peer = parsed.args->peer;
-#ifdef HAMYCHI_TEST_BUILD
+#ifdef SANGTACHI_TEST_BUILD
         options.probe_timer = true;
         {
-            const hamychi::LogField fields[] = {
-                hamychi::field("build", std::string_view("test")),
+            const sangtachi::LogField fields[] = {
+                sangtachi::field("build", std::string_view("test")),
             };
-            hamychi::emit(hamychi::LogLevel::Warn, "build.test", fields);
+            sangtachi::emit(sangtachi::LogLevel::Warn, "build.test", fields);
         }
 #endif
 
-        auto session = hamychi::ConsoleSession::create();
+        auto session = sangtachi::ConsoleSession::create();
         if (!session) {
             emit_socket_error("CreateEvent", 0);
             return kStartupFailure;
         }
 
-        hamychi::EventLoop loop(std::move(*opened.socket), counters, session->queue(),
+        sangtachi::EventLoop loop(std::move(*opened.socket), counters, session->queue(),
                                 session->event(), options);
         if (!loop.valid()) {
             emit_socket_error("CreateEvent", 0);
@@ -104,14 +104,14 @@ int main(int argc, char** argv) {
         //
         // 그래서 그 스레드가 건드리는 것을 스택에 두지 않는다. 세션을 값으로 넘겨 스레드가
         // 스스로 수명을 붙들게 한다. `main` 이 먼저 빠져나가도 해제된 것을 건드리지 않는다.
-        std::thread(hamychi::run_console_reader, session).detach();
+        std::thread(sangtachi::run_console_reader, session).detach();
 
         loop.run();
         session->request_stop();
 
         // 3.2.7 종료의 (4). 카운터 전량을 낸다.
-        hamychi::emit_all(counters);
-    } catch (const hamychi::network::WsaStartupError& e) {
+        sangtachi::emit_all(counters);
+    } catch (const sangtachi::network::WsaStartupError& e) {
         emit_socket_error("WSAStartup", e.code());
         return kStartupFailure;
     }

@@ -1,11 +1,11 @@
-#include "hamychi/loop.hpp"
+#include "sangtachi/loop.hpp"
 
-#include "hamychi/console.hpp"
-#include "hamychi/counters.hpp"
-#include "hamychi/network/endpoint.hpp"
-#include "hamychi/network/udp_socket.hpp"
-#include "hamychi/network/wsa.hpp"
-#include "hamychi/protocol_constants.hpp"
+#include "sangtachi/console.hpp"
+#include "sangtachi/counters.hpp"
+#include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/network/udp_socket.hpp"
+#include "sangtachi/network/wsa.hpp"
+#include "sangtachi/protocol_constants.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,19 +22,19 @@
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
-using hamychi::ConsoleQueue;
-using hamychi::Counter;
-using hamychi::Counters;
-using hamychi::EventLoop;
-using hamychi::kMaxDrain;
-using hamychi::LoopOptions;
-using hamychi::Millis;
-using hamychi::TimerTick;
-using hamychi::network::Endpoint;
-using hamychi::network::open_udp_socket;
-using hamychi::network::UdpSocket;
-using hamychi::network::WsaContext;
-using hamychi::protocol::kMaxDatagram;
+using sangtachi::ConsoleQueue;
+using sangtachi::Counter;
+using sangtachi::Counters;
+using sangtachi::EventLoop;
+using sangtachi::kMaxDrain;
+using sangtachi::LoopOptions;
+using sangtachi::Millis;
+using sangtachi::TimerTick;
+using sangtachi::network::Endpoint;
+using sangtachi::network::open_udp_socket;
+using sangtachi::network::UdpSocket;
+using sangtachi::network::WsaContext;
+using sangtachi::protocol::kMaxDatagram;
 
 namespace {
 
@@ -70,7 +70,7 @@ TEST_CASE("loop: shutdown makes one wheel return false", "[loop]") {
     REQUIRE(opened.ok());
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
@@ -96,7 +96,7 @@ TEST_CASE("loop: one wheel drains many datagrams", "[loop]") {
     }
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*receiver.socket), counters, console, session->event(), LoopOptions{});
@@ -122,7 +122,7 @@ TEST_CASE("loop: the drain budget stops one wheel at the documented count", "[lo
     }
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*receiver.socket), counters, console, session->event(), LoopOptions{});
@@ -155,7 +155,7 @@ TEST_CASE("loop: an oversize datagram does not break the batch", "[loop]") {
     REQUIRE(sender.socket->send_to(to, pattern(32)).ok);
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*receiver.socket), counters, console, session->event(), LoopOptions{});
@@ -173,7 +173,7 @@ TEST_CASE("loop: the quit command asks for shutdown", "[loop]") {
     REQUIRE(opened.ok());
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
@@ -195,7 +195,7 @@ TEST_CASE("loop: the raw command sends the documented pattern", "[loop]") {
     options.peer = Endpoint(kLoopback, receiver.socket->local().port());
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*sender.socket), counters, console, session->event(), options);
@@ -203,11 +203,11 @@ TEST_CASE("loop: the raw command sends the documented pattern", "[loop]") {
     ::SetEvent(loop.console_event());
     REQUIRE(loop.run_once());
 
-    std::array<std::byte, hamychi::network::kRecvBufferSize> buffer{};
+    std::array<std::byte, sangtachi::network::kRecvBufferSize> buffer{};
     REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 2000) == WAIT_OBJECT_0);
     REQUIRE(receiver.socket->enumerate_events());
     const auto got = receiver.socket->recv_from(buffer);
-    REQUIRE(got.status == hamychi::network::RecvStatus::Received);
+    REQUIRE(got.status == sangtachi::network::RecvStatus::Received);
     REQUIRE(got.length == 100);
     for (std::size_t i = 0; i < 100; ++i) {
         INFO("byte " << i);
@@ -226,7 +226,7 @@ TEST_CASE("loop: a raw length outside the range sends nothing", "[loop]") {
     options.peer = Endpoint(kLoopback, receiver.socket->local().port());
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*sender.socket), counters, console, session->event(), options);
@@ -246,10 +246,10 @@ TEST_CASE("loop: the console drop counter reaches the table", "[loop]") {
     REQUIRE(opened.ok());
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
-    for (std::size_t i = 0; i < hamychi::kConsoleQueueCapacity; ++i) {
+    for (std::size_t i = 0; i < sangtachi::kConsoleQueueCapacity; ++i) {
         REQUIRE(console.try_push("x"));
     }
     REQUIRE_FALSE(console.try_push("dropped"));
@@ -289,7 +289,7 @@ TEST_CASE("loop: timers keep firing under sustained receive load", "[loop][slow]
     options.probe_timer = true;
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*receiver.socket), counters, console, session->event(), options);
@@ -334,7 +334,7 @@ TEST_CASE("loop: an idle wheel waits instead of spinning", "[loop]") {
     REQUIRE(sender.socket->send_to(to, pattern(32)).ok);
 
     Counters counters;
-    auto session = hamychi::ConsoleSession::create();
+    auto session = sangtachi::ConsoleSession::create();
     REQUIRE(session != nullptr);
     ConsoleQueue& console = session->queue();
     // 타이머를 두지 않는다. 그래야 대기 타임아웃이 INFINITE 가 되어 "기다린다" 와

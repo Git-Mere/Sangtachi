@@ -1,7 +1,7 @@
 # 시험 실행 파일.
 #
 # Catch2 v3 는 시험 전용 서드파티 의존성이다. 승인 범위는 decisions/0005 가 갖는다.
-# 제품 코드(hamychi_core, hamychi_client)는 이것을 링크하지 않는다.
+# 제품 코드(sangtachi_core, sangtachi_client)는 이것을 링크하지 않는다.
 
 include(FetchContent)
 
@@ -13,7 +13,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-add_executable(hamychi_tests
+add_executable(sangtachi_tests
     args_test.cpp
     console_test.cpp
     counters_test.cpp
@@ -26,9 +26,9 @@ add_executable(hamychi_tests
     network/wsa_test.cpp
 )
 
-target_link_libraries(hamychi_tests
-    PRIVATE hamychi_core
-    PRIVATE hamychi_warnings
+target_link_libraries(sangtachi_tests
+    PRIVATE sangtachi_core
+    PRIVATE sangtachi_warnings
     PRIVATE Catch2::Catch2WithMain
 )
 
@@ -41,4 +41,4 @@ include(Catch)
 # 그 변이는 `FAIL` 이 아니라 무한 대기로 나타났다.
 #
 # 30초는 가장 느린 케이스(루프백 왕복과 100ms 잠)의 백 배가 넘는다.
-catch_discover_tests(hamychi_tests PROPERTIES TIMEOUT 30)
+catch_discover_tests(sangtachi_tests PROPERTIES TIMEOUT 30)

@@ -27,7 +27,7 @@ code, the document was cleaned up first.
 | `network::Endpoint` | IPv4 address and port. Parse, compare (`==`, `<=>`), print as `IPv4:port` |
 | `parse_ipv4` | Dotted decimal with 4 octets only. What it accepts is fixed as a list |
 | `parse_port` | ASCII decimal. 0~65535 |
-| `hamychi::parse_args` | The six inputs of 3.5. Errors come back as fixed tokens |
+| `sangtachi::parse_args` | The six inputs of 3.5. Errors come back as fixed tokens |
 | `main.cpp` | On an argument error, one line of `ERROR args.invalid reason=<token> arg=<raw>` and exit code 2 |
 
 **The address conversion of the standard library is not used.** `inet_addr` accepts 3-octet forms

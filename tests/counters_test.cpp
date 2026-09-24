@@ -1,6 +1,6 @@
-#include "hamychi/counters.hpp"
+#include "sangtachi/counters.hpp"
 
-#include "hamychi/log.hpp"
+#include "sangtachi/log.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -12,11 +12,11 @@
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
-using hamychi::Counter;
-using hamychi::Counters;
-using hamychi::format_all;
-using hamychi::kCounterCount;
-using hamychi::to_token;
+using sangtachi::Counter;
+using sangtachi::Counters;
+using sangtachi::format_all;
+using sangtachi::kCounterCount;
+using sangtachi::to_token;
 
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
     // 이름은 protocol.md 6/7/8 장과 architecture.md 3.2.3 / 3.2.6 / 3.2.8 이 갖는다.

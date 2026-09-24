@@ -1,8 +1,8 @@
-#include "hamychi/loop.hpp"
+#include "sangtachi/loop.hpp"
 
-#include "hamychi/hash.hpp"
-#include "hamychi/log.hpp"
-#include "hamychi/protocol_constants.hpp"
+#include "sangtachi/hash.hpp"
+#include "sangtachi/log.hpp"
+#include "sangtachi/protocol_constants.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace hamychi {
+namespace sangtachi {
 namespace {
 
 Millis now_ms() noexcept {
@@ -272,4 +272,4 @@ void run_console_reader(std::shared_ptr<ConsoleSession> session) {
     }
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

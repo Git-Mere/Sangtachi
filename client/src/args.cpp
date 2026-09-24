@@ -1,6 +1,6 @@
-#include "hamychi/args.hpp"
+#include "sangtachi/args.hpp"
 
-#include "hamychi/network/endpoint.hpp"
+#include "sangtachi/network/endpoint.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-namespace hamychi {
+namespace sangtachi {
 namespace {
 
 using network::Endpoint;
@@ -291,4 +291,4 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
     return result;
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

@@ -1,4 +1,4 @@
-#include "hamychi/network/endpoint.hpp"
+#include "sangtachi/network/endpoint.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace hamychi::network {
+namespace sangtachi::network {
 namespace {
 
 constexpr bool is_ascii_digit(char c) noexcept {
@@ -116,4 +116,4 @@ std::string Endpoint::to_string() const {
     return format_ipv4(address_) + ":" + std::to_string(port_);
 }
 
-}  // namespace hamychi::network
+}  // namespace sangtachi::network

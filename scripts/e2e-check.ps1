@@ -21,14 +21,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $BuildDir) {
-    $BuildDir = Join-Path $env:LOCALAPPDATA "Hamychi\build\$Config"
+    $BuildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
 }
-$exe = Join-Path $BuildDir 'client\hamychi_client.exe'
+$exe = Join-Path $BuildDir 'client\sangtachi_client.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "client executable not found: $exe. Run scripts/build.ps1 first."
 }
 
-$work = Join-Path ([System.IO.Path]::GetTempPath()) ("hamychi_e2e_" + [guid]::NewGuid().ToString('N'))
+$work = Join-Path ([System.IO.Path]::GetTempPath()) ("sangtachi_e2e_" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 $procs = @{}

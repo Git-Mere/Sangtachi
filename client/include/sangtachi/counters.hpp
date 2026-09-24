@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace hamychi {
+namespace sangtachi {
 
 enum class Counter : std::size_t {
     AdapterRx,
@@ -92,4 +92,4 @@ private:
 // 콘솔 명령 (architecture.md 9장). 증가할 때마다 내지 않는다.
 void emit_all(const Counters& counters);
 
-}  // namespace hamychi
+}  // namespace sangtachi

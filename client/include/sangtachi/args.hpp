@@ -12,7 +12,7 @@
 // 옵션은 `--이름 값` 꼴만 받는다. `--이름=값` 은 알 수 없는 인자다. 한 가지 꼴만 받으면
 // 시험이 볼 경우의 수가 반으로 준다.
 
-#include "hamychi/network/endpoint.hpp"
+#include "sangtachi/network/endpoint.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -21,7 +21,7 @@
 #include <string_view>
 #include <vector>
 
-namespace hamychi {
+namespace sangtachi {
 
 // 제어 평면 기본 포트. control_plane.md 2.6 상수의 CONTROL_PORT 다.
 inline constexpr std::uint16_t kControlPort = 8000;
@@ -91,4 +91,4 @@ struct ParseResult {
 // 같은 인자를 두 번 주면 --stun 은 목록에 쌓이고 나머지는 마지막 값이 이긴다.
 [[nodiscard]] ParseResult parse_args(std::span<const std::string_view> argv);
 
-}  // namespace hamychi
+}  // namespace sangtachi

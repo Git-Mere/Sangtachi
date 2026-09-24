@@ -1,6 +1,6 @@
-#include "hamychi/counters.hpp"
+#include "sangtachi/counters.hpp"
 
-#include "hamychi/log.hpp"
+#include "sangtachi/log.hpp"
 
 #include <array>
 #include <cstddef>
@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace hamychi {
+namespace sangtachi {
 namespace {
 
 constexpr std::size_t index_of(Counter counter) noexcept {
@@ -113,4 +113,4 @@ void emit_all(const Counters& counters) {
     }
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

@@ -15,8 +15,8 @@
 // WSAEventSelect 로 FD_READ 를 이벤트에 묶는다 (architecture.md 3.2.2 대기). 그 호출이
 // 소켓을 논블로킹으로 바꾸므로 ioctlsocket(FIONBIO) 을 따로 부르지 않는다.
 
-#include "hamychi/network/endpoint.hpp"
-#include "hamychi/protocol_constants.hpp"
+#include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/protocol_constants.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +24,7 @@
 #include <span>
 #include <string_view>
 
-namespace hamychi::network {
+namespace sangtachi::network {
 
 // protocol.md 6장의 SO_RCVBUF 요청값. 10진 바이트 수로 적는다.
 inline constexpr int kRecvBufferRequest = 262144;
@@ -111,4 +111,4 @@ struct OpenResult {
 // 6장 계약대로 소켓 하나를 연다. Winsock 이 초기화된 뒤에 부른다.
 [[nodiscard]] OpenResult open_udp_socket();
 
-}  // namespace hamychi::network
+}  // namespace sangtachi::network

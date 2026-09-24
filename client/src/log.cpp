@@ -1,4 +1,4 @@
-#include "hamychi/log.hpp"
+#include "sangtachi/log.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace hamychi {
+namespace sangtachi {
 
 std::string_view to_token(LogLevel level) noexcept {
     switch (level) {
@@ -65,4 +65,4 @@ void emit(LogLevel level, std::string_view event, std::span<const LogField> fiel
     std::fwrite(line.data(), 1, line.size(), stderr);
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

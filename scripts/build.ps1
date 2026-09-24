@@ -1,6 +1,6 @@
 ﻿# 클라이언트와 시험 실행 파일을 빌드한다.
 #
-# 빌드 산출물은 기본으로 레포 밖(%LOCALAPPDATA%\Hamychi\build)에 둔다.
+# 빌드 산출물은 기본으로 레포 밖(%LOCALAPPDATA%\Sangtachi\build)에 둔다.
 # 레포가 파일 동기화 폴더 안에 있으면 갓 만든 .exe 와 .pdb 가 잠겨 링크가 실패한다
 # (LNK1168, LNK1201, C1041). 같은 빌드를 두 위치에서 18회씩 돌려 레포 안 4건 실패,
 # 레포 밖 0건을 봤다. 잠그는 프로세스가 무엇인지는 확인하지 않았다.
@@ -41,7 +41,7 @@ function Test-IsCmakeBuildDir {
 
 if ($SelfTest) {
     # 케이스 표. 판정 함수 하나를 돈다.
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("hamychi_selftest_" + [guid]::NewGuid().ToString('N'))
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sangtachi_selftest_" + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $tmp | Out-Null
     try {
         $emptyDir = Join-Path $tmp 'no_cache';       New-Item -ItemType Directory -Force -Path $emptyDir | Out-Null
@@ -83,7 +83,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 if ($BuildDir) {
     $buildDir = $BuildDir
 } else {
-    $buildDir = Join-Path $env:LOCALAPPDATA "Hamychi\build\$Config"
+    $buildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
 }
 
 . (Join-Path $PSScriptRoot 'vsdevshell.ps1')

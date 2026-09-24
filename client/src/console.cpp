@@ -1,4 +1,4 @@
-#include "hamychi/console.hpp"
+#include "sangtachi/console.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-namespace hamychi {
+namespace sangtachi {
 
 bool ConsoleQueue::try_push(std::string line) {
     const std::size_t tail = tail_.load(std::memory_order_relaxed);
@@ -61,4 +61,4 @@ ConsoleSession::~ConsoleSession() {
     }
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

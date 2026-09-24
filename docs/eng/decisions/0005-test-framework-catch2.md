@@ -29,11 +29,11 @@ with a library turns the deliverable of this project into a shell around someone
 Pointing at a branch breaks our build for no reason when upstream changes, and the test results of
 that moment cannot be reproduced later.
 
-**2. Product targets do not link Catch2.** The link lists of `hamychi_core` and `hamychi_client`
-have no Catch2. Only the test executable `hamychi_tests` links it. That is the mechanical
+**2. Product targets do not link Catch2.** The link lists of `sangtachi_core` and `sangtachi_client`
+have no Catch2. Only the test executable `sangtachi_tests` links it. That is the mechanical
 definition of "test only", and the link list shows it.
 
-**3. Our warning policy is not applied to Catch2.** `/W4 /WX` lives on the `hamychi_warnings`
+**3. Our warning policy is not applied to Catch2.** `/W4 /WX` lives on the `sangtachi_warnings`
 interface target, and only targets in this repository link to it. Breaking someone else's code with
 our warning policy ties the build to that library version.
 

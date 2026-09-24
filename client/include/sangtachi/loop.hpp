@@ -5,11 +5,11 @@
 // `[loop]` 는 프로세스 주 스레드다. UDP 수신, 콘솔 명령, 타이머, 모든 송신을 혼자 한다.
 // 터널 상태를 건드리는 코드가 한 스레드에서만 도는 것이 이 설계의 전부다 (3.2).
 
-#include "hamychi/console.hpp"
-#include "hamychi/counters.hpp"
-#include "hamychi/network/endpoint.hpp"
-#include "hamychi/network/udp_socket.hpp"
-#include "hamychi/timer.hpp"
+#include "sangtachi/console.hpp"
+#include "sangtachi/counters.hpp"
+#include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/network/udp_socket.hpp"
+#include "sangtachi/timer.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +20,7 @@
 #include <string>
 #include <string_view>
 
-namespace hamychi {
+namespace sangtachi {
 
 // 한 바퀴당 소스별 비우기 상한 (architecture.md 3.2.3 루프 한 바퀴).
 //
@@ -123,4 +123,4 @@ private:
 // `main` 이 빠져나간 뒤에도 깨어날 수 있고, 그때 건드릴 것을 스스로 붙들고 있어야 한다.
 void run_console_reader(std::shared_ptr<ConsoleSession> session);
 
-}  // namespace hamychi
+}  // namespace sangtachi

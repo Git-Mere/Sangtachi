@@ -12,7 +12,7 @@
 #include <string>
 #include <string_view>
 
-namespace hamychi::network {
+namespace sangtachi::network {
 
 // 점 십진 IPv4 리터럴을 호스트 바이트 순서 32비트로 바꾼다.
 //
@@ -62,4 +62,4 @@ private:
     std::uint16_t port_ = 0;
 };
 
-}  // namespace hamychi::network
+}  // namespace sangtachi::network

@@ -1,4 +1,4 @@
-#include "hamychi/timer.hpp"
+#include "sangtachi/timer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -9,11 +9,11 @@
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
-using hamychi::kInfiniteTimeout;
-using hamychi::Millis;
-using hamychi::next_timeout_ms;
-using hamychi::TimerSet;
-using hamychi::TimerTick;
+using sangtachi::kInfiniteTimeout;
+using sangtachi::Millis;
+using sangtachi::next_timeout_ms;
+using sangtachi::TimerSet;
+using sangtachi::TimerTick;
 
 TEST_CASE("timer: no deadline waits forever", "[timer]") {
     REQUIRE(next_timeout_ms(1000, std::nullopt) == kInfiniteTimeout);

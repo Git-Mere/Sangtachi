@@ -1,4 +1,4 @@
-#include "hamychi/hash.hpp"
+#include "sangtachi/hash.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -12,7 +12,7 @@
 #include <span>
 #include <string>
 
-namespace hamychi {
+namespace sangtachi {
 namespace {
 
 constexpr std::size_t kDigestBytes = 32;
@@ -59,4 +59,4 @@ std::optional<std::string> sha256_short(std::span<const std::byte> data) {
     return full;
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

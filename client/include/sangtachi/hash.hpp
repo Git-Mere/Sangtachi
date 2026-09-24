@@ -11,7 +11,7 @@
 #include <span>
 #include <string>
 
-namespace hamychi {
+namespace sangtachi {
 
 // architecture.md 3.5 가 정한 `rx.raw` 의 `sha256`. 16진 해시의 앞 16자다.
 inline constexpr std::size_t kShortHashChars = 16;
@@ -22,4 +22,4 @@ inline constexpr std::size_t kShortHashChars = 16;
 // 위의 앞 kShortHashChars 자. 실패하면 값이 없다.
 [[nodiscard]] std::optional<std::string> sha256_short(std::span<const std::byte> data);
 
-}  // namespace hamychi
+}  // namespace sangtachi

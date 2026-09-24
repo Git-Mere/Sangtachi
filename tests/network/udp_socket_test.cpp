@@ -1,8 +1,8 @@
-#include "hamychi/network/udp_socket.hpp"
+#include "sangtachi/network/udp_socket.hpp"
 
-#include "hamychi/network/endpoint.hpp"
-#include "hamychi/network/wsa.hpp"
-#include "hamychi/protocol_constants.hpp"
+#include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/network/wsa.hpp"
+#include "sangtachi/protocol_constants.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -23,13 +23,13 @@
 // 이 파일은 실제 소켓을 연다. 루프백으로만 보내고 외부로 나가지 않는다. 케이스마다
 // 프로세스가 분리되므로 (catch_discover_tests) 소켓이 서로를 오염시키지 않는다.
 
-using hamychi::network::Endpoint;
-using hamychi::network::kRecvBufferSize;
-using hamychi::network::open_udp_socket;
-using hamychi::network::RecvStatus;
-using hamychi::network::UdpSocket;
-using hamychi::network::WsaContext;
-using hamychi::protocol::kMaxDatagram;
+using sangtachi::network::Endpoint;
+using sangtachi::network::kRecvBufferSize;
+using sangtachi::network::open_udp_socket;
+using sangtachi::network::RecvStatus;
+using sangtachi::network::UdpSocket;
+using sangtachi::network::WsaContext;
+using sangtachi::protocol::kMaxDatagram;
 
 namespace {
 
@@ -54,9 +54,9 @@ std::vector<std::byte> pattern(std::size_t size) {
 
 TEST_CASE("protocol: the datagram limit is the header plus the inner limit", "[protocol]") {
     // protocol.md 3장이 MAX_DATAGRAM 을 합으로 정의한다. 옮겨 적다 틀리면 여기서 걸린다.
-    REQUIRE(hamychi::protocol::kMaxDatagram ==
-            hamychi::protocol::kHeaderSize + hamychi::protocol::kMaxInner);
-    REQUIRE(hamychi::protocol::kMaxDatagram == 1472);
+    REQUIRE(sangtachi::protocol::kMaxDatagram ==
+            sangtachi::protocol::kHeaderSize + sangtachi::protocol::kMaxInner);
+    REQUIRE(sangtachi::protocol::kMaxDatagram == 1472);
     REQUIRE(kRecvBufferSize == 1473);
 }
 

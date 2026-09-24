@@ -26,7 +26,7 @@
 | `network::Endpoint` | IPv4 주소와 포트. 파싱, 비교(`==`, `<=>`), `IPv4:port` 출력 |
 | `parse_ipv4` | 점 십진 4옥텟만. 받는 것을 목록으로 정했다 |
 | `parse_port` | ASCII 10진수. 0~65535 |
-| `hamychi::parse_args` | 3.5 의 여섯 입력. 오류를 고정 토큰으로 돌려준다 |
+| `sangtachi::parse_args` | 3.5 의 여섯 입력. 오류를 고정 토큰으로 돌려준다 |
 | `main.cpp` | 인자 오류면 `ERROR args.invalid reason=<토큰> arg=<원문>` 한 줄과 종료 코드 2 |
 
 **표준 라이브러리의 주소 변환을 쓰지 않는다.** `inet_addr` 은 `1.2.3` 같은 3옥텟 표기와

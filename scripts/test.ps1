@@ -21,7 +21,7 @@ if ($BuildDir) {
     $buildDir = $BuildDir
 } else {
     # 기본 위치의 근거는 build.ps1 머리에 있다.
-    $buildDir = Join-Path $env:LOCALAPPDATA "Hamychi\build\$Config"
+    $buildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
 }
 
 & (Join-Path $PSScriptRoot 'build.ps1') -Config $Config -BuildDir $buildDir

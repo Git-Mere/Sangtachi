@@ -1,4 +1,4 @@
-#include "hamychi/args.hpp"
+#include "sangtachi/args.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -11,10 +11,10 @@
 //
 // architecture.md 3.5 가 "반례 목록은 시험이 갖는다" 로 넘긴 표다.
 
-using hamychi::ArgError;
-using hamychi::parse_args;
-using hamychi::ParseResult;
-using hamychi::Role;
+using sangtachi::ArgError;
+using sangtachi::parse_args;
+using sangtachi::ParseResult;
+using sangtachi::Role;
 
 namespace {
 
@@ -176,15 +176,15 @@ TEST_CASE("args: reject case table", "[args]") {
 
 TEST_CASE("args: error tokens are stable", "[args]") {
     // 로그가 이 문자열을 싣는다. 바꾸면 검증 항목이 같이 낡는다.
-    REQUIRE(hamychi::to_token(ArgError::UnknownOption) == "unknown_option");
-    REQUIRE(hamychi::to_token(ArgError::MissingValue) == "missing_value");
-    REQUIRE(hamychi::to_token(ArgError::BadRole) == "bad_role");
-    REQUIRE(hamychi::to_token(ArgError::ExtraPositional) == "extra_positional");
-    REQUIRE(hamychi::to_token(ArgError::BadRoom) == "bad_room");
-    REQUIRE(hamychi::to_token(ArgError::BadRejoin) == "bad_rejoin");
-    REQUIRE(hamychi::to_token(ArgError::BadHost) == "bad_host");
-    REQUIRE(hamychi::to_token(ArgError::BadPort) == "bad_port");
-    REQUIRE(hamychi::to_token(ArgError::MissingPort) == "missing_port");
+    REQUIRE(sangtachi::to_token(ArgError::UnknownOption) == "unknown_option");
+    REQUIRE(sangtachi::to_token(ArgError::MissingValue) == "missing_value");
+    REQUIRE(sangtachi::to_token(ArgError::BadRole) == "bad_role");
+    REQUIRE(sangtachi::to_token(ArgError::ExtraPositional) == "extra_positional");
+    REQUIRE(sangtachi::to_token(ArgError::BadRoom) == "bad_room");
+    REQUIRE(sangtachi::to_token(ArgError::BadRejoin) == "bad_rejoin");
+    REQUIRE(sangtachi::to_token(ArgError::BadHost) == "bad_host");
+    REQUIRE(sangtachi::to_token(ArgError::BadPort) == "bad_port");
+    REQUIRE(sangtachi::to_token(ArgError::MissingPort) == "missing_port");
 }
 
 TEST_CASE("args: the offending argument is reported", "[args]") {

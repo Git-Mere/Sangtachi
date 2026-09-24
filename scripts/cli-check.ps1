@@ -18,9 +18,9 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDir) {
     # 기본 위치의 근거는 build.ps1 머리에 있다.
-    $BuildDir = Join-Path $env:LOCALAPPDATA "Hamychi\build\$Config"
+    $BuildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
 }
-$exe = Join-Path $BuildDir 'client\hamychi_client.exe'
+$exe = Join-Path $BuildDir 'client\sangtachi_client.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "client executable not found: $exe. Run scripts/build.ps1 first."
 }

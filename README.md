@@ -1,4 +1,4 @@
-# Hamychi
+# Sangtachi
 
 CSP400 Project
 
@@ -24,7 +24,7 @@ CSP400 Project
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-산출물은 기본으로 `%LOCALAPPDATA%\Hamychi\build\Debug` 에 생깁니다. 레포 안에 두려면
+산출물은 기본으로 `%LOCALAPPDATA%\Sangtachi\build\Debug` 에 생깁니다. 레포 안에 두려면
 `-BuildDir` 로 경로를 줍니다. 이유는 `scripts/build.ps1` 첫머리에 있습니다.
 
 ### 시험
@@ -36,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 ### 실행
 
 ```powershell
-%LOCALAPPDATA%\Hamychi\build\Debug\client\hamychi_client.exe
+%LOCALAPPDATA%\Sangtachi\build\Debug\client\sangtachi_client.exe
 ```
 
 ### 환경 변수

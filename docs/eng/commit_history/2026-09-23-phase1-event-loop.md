@@ -54,7 +54,7 @@ Each item in the `roadmap.md` Phase 1 verification list is matched to its eviden
 | drain pattern | `tests/loop_test.cpp`. One turn handles several items |
 | An oversized datagram does not break batching | The same file. 1473 (length compare) and 1474 (`WSAEMSGSIZE`) are placed between normal datagrams |
 | Timer expiry under load | The same file. Under 10 seconds of load, `elapsed_ms` stays at 400 or less. Each datagram burns 200 microseconds |
-| Zero `/W4` warnings | `cmake/HamychiWarnings.cmake` pins `/W4 /WX` |
+| Zero `/W4` warnings | `cmake/SangtachiWarnings.cmake` pins `/W4 /WX` |
 
 **The two-machine measurement is not done.** The first row above was run with several processes on
 one machine. The procedure where each side on two machines sends first is waiting for a second

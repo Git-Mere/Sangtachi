@@ -16,7 +16,7 @@
 #include <string_view>
 #include <vector>
 
-namespace hamychi {
+namespace sangtachi {
 
 using Millis = std::uint64_t;
 
@@ -68,4 +68,4 @@ private:
     std::vector<Timer> timers_;
 };
 
-}  // namespace hamychi
+}  // namespace sangtachi

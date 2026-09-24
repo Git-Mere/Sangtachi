@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace hamychi::network {
+namespace sangtachi::network {
 
 // Win32 WORD 와 같은 폭. <winsock2.h> 를 헤더에 들이지 않으려고 따로 둔다.
 // 원본에서 static_assert 로 폭을 대조한다.
@@ -58,4 +58,4 @@ private:
     VersionWord version_;
 };
 
-}  // namespace hamychi::network
+}  // namespace sangtachi::network

@@ -1,4 +1,4 @@
-#include "hamychi/log.hpp"
+#include "sangtachi/log.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -9,12 +9,12 @@
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
-using hamychi::field;
-using hamychi::format_line;
-using hamychi::LogField;
-using hamychi::LogLevel;
-using hamychi::sanitize_value;
-using hamychi::to_token;
+using sangtachi::field;
+using sangtachi::format_line;
+using sangtachi::LogField;
+using sangtachi::LogLevel;
+using sangtachi::sanitize_value;
+using sangtachi::to_token;
 
 TEST_CASE("log: level tokens are the three the document fixes", "[log]") {
     REQUIRE(to_token(LogLevel::Info) == "INFO");

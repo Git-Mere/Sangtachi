@@ -1,4 +1,4 @@
-#include "hamychi/network/wsa.hpp"
+#include "sangtachi/network/wsa.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -16,7 +16,7 @@
 // 거치며 깨져서 어느 케이스와도 일치하지 않고, "No tests ran" 인 채로 CTest 가
 // 실패를 보고한다. 실측으로 확인했다. 설명은 아래 주석과 태그에 적는다.
 
-using hamychi::network::WsaContext;
+using sangtachi::network::WsaContext;
 
 // WsaContext 가 협상된 버전을 보고한다.
 TEST_CASE("wsa: context reports negotiated version", "[wsa]") {

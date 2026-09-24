@@ -15,7 +15,7 @@
 #include <string>
 #include <string_view>
 
-namespace hamychi {
+namespace sangtachi {
 
 enum class LogLevel {
     Info,
@@ -53,4 +53,4 @@ struct LogField {
 // 줄 하나를 표준 오류에 쓴다. 줄바꿈까지 한 번의 쓰기로 낸다.
 void emit(LogLevel level, std::string_view event, std::span<const LogField> fields);
 
-}  // namespace hamychi
+}  // namespace sangtachi

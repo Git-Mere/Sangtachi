@@ -1,4 +1,4 @@
-#include "hamychi/network/udp_socket.hpp"
+#include "sangtachi/network/udp_socket.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -18,7 +18,7 @@
 #include <span>
 #include <utility>
 
-namespace hamychi::network {
+namespace sangtachi::network {
 namespace {
 
 constexpr std::uintptr_t kInvalidHandle = static_cast<std::uintptr_t>(INVALID_SOCKET);
@@ -220,4 +220,4 @@ OpenResult open_udp_socket() {
     return result;
 }
 
-}  // namespace hamychi::network
+}  // namespace sangtachi::network

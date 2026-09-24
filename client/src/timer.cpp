@@ -1,11 +1,11 @@
-#include "hamychi/timer.hpp"
+#include "sangtachi/timer.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <utility>
 
-namespace hamychi {
+namespace sangtachi {
 
 std::uint32_t next_timeout_ms(Millis now, std::optional<Millis> deadline) noexcept {
     if (!deadline) {
@@ -53,4 +53,4 @@ void TimerSet::run_expired(Millis now, const std::function<void(const TimerTick&
     }
 }
 
-}  // namespace hamychi
+}  // namespace sangtachi

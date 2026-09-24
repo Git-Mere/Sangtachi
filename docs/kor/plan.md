@@ -9,7 +9,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1 진행 중. 빌드 뼈대, Winsock2 래퍼, `endpoint`, 기동 인자, 로그와 카운터까지 됐다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 1 진행 중. 빌드 뼈대, Winsock2 래퍼, `endpoint`, 기동 인자, 로그와 카운터, UDP 소켓 래퍼까지 됐다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 4건 |
 
 **설계 감사 후속은 남아 있지 않다.** 3차 감사 62건이 묶음 여섯으로 전부 닫혔고 소유자 판단
@@ -19,8 +19,7 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 1 의 UDP 소켓 래퍼 ([`protocol.md`](protocol.md) 6장) | 로그와 카운터가 이미 있다 |
-| 2 | Phase 1 의 `[loop]` 이벤트 루프와 `[console]` ([`architecture.md`](architecture.md) 3.2) | 앞의 것을 묶는다. Phase 1 의 마지막이다 |
+| 1 | Phase 1 의 `[loop]` 이벤트 루프와 `[console]` ([`architecture.md`](architecture.md) 3.2) | 앞의 것을 묶는다. Phase 1 의 마지막이다 |
 | 5 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
 
 ## 대기 중인 것

@@ -7,5 +7,6 @@ target_sources(hamychi_core PRIVATE
     counters.cpp
     log.cpp
     network/endpoint.cpp
+    network/udp_socket.cpp
     network/wsa.cpp
 )

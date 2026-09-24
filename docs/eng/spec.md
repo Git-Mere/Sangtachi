@@ -100,12 +100,31 @@ decision formula is set by `protocol.md` 9.2 `CONNECTED` Condition.
 | NFR-2 | The tunnel layer contains no Minecraft-specific logic. Replacing Minecraft with another IP-based application does not change the tunnel code. |
 | NFR-3 | A control plane failure does not tear down an already established P2P tunnel. Telemetry transmission failures are ignored. **Failed records are not resent.** The next period sends that period's new metrics. The basis for verdicts is the local record file, not the upload ([`architecture.md`](architecture.md) chapter 9). |
 | NFR-4 | STUN, NAT traversal, hole punching, the tunnel protocol, routing, and session management are implemented directly. Wintun provides virtual interface access only. |
-| NFR-5 | Non-basic third-party dependencies receive instructor approval **before** integration, and the scope each library provides is documented. Wintun and `boto3` are approved. |
+| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Three are approved: Wintun, `boto3`, and Catch2. |
 | NFR-6 | The virtual adapter MTU is set with the tunnel header overhead in mind, and no IP fragmentation occurs for normal game traffic. |
 | NFR-7 | Failures are not hidden. NAT environments that cannot be traversed are explicitly marked as out of support scope and recorded. |
 | NFR-8 | Source control and weekly development records are maintained. Where AI tools contributed to code or documents, the contribution is verified and attributed according to course policy. |
 | NFR-9 | STUN, hole punching, and tunnel traffic all use the same local UDP socket. A different socket gets a different NAT mapping, which invalidates the discovered endpoint. |
 | NFR-10 | The telemetry service is a separate deployment unit from the control plane, and there is **no call dependency** between the two services. If the telemetry service process stops, the control plane's operations and the data plane are not blocked by it. The limits of this scope are below. |
+
+**The two kinds under NFR-5.** They differ in who approves.
+
+| Kind | What it is | Who approves | Today |
+|------|------------|--------------|-------|
+| Product dependency | The product needs it to run, client or server | The instructor | Wintun and `boto3` are approved |
+| Test-only dependency | Only running the tests needs it | The repository owner | Catch2 is approved |
+
+The reason for the split is what this requirement blocks: replacing the list NFR-4 requires us to
+implement ourselves with an outside library. A test runner is not on that list.
+
+**The judgement is whether the shipped artifact runs without it.** On the C++ side the library
+must be absent from the link list of the product targets. On the Python side the deployed process
+must not import it.
+
+**Whether this split itself is acceptable to the course has not been confirmed.** What needs
+confirming is not whether Catch2 is approved but the act of splitting this requirement in two.
+`plan.md` owns when that is confirmed, and [ADR 0005](decisions/0005-test-framework-catch2.md)
+owns the reasoning and its cost.
 
 **What NFR-10 does not cover.** Resource isolation is not part of this requirement. While the
 two services share one instance, shared resource exhaustion **remains a risk.** It does until an

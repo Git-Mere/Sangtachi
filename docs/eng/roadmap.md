@@ -60,7 +60,8 @@ P4: Encryption + relay + GUI + extra platforms                                  
 ### Tasks
 
 - Relocate the repository to the target layout (`src/` -> `client/src/`, create `control-server/`)
-- Set up the C++20 project with CMake
+- Set up the C++20 project with CMake. The warning level and the test executable are fixed here
+- Add the test executable and register it with CTest ([ADR 0005](decisions/0005-test-framework-catch2.md))
 - Wrap Winsock2 initialization and teardown (`WSAStartup` / `WSACleanup`)
 - Implement a UDP socket wrapper (`socket`, `bind`, `sendto`, `recvfrom`, `WSAEventSelect` event handle)
 - Implement the event loop skeleton. `WaitForMultipleObjects`, timer deadline computation, drain pattern ([`architecture.md`](architecture.md) 3.2)
@@ -133,9 +134,13 @@ Client A <------ UDP ------> Client B
   > so an implementation without a budget is not filtered. If the loopback generator cannot outrun
   > processing, the queue is empty every round and an implementation without a budget also passes.
   > If the mutant passes, this case does not yet protect anything.
-- `cmake --build` succeeds with **zero warnings at MSVC `/W4`**. Fix the warning level in the CMake
-  configuration. Without the level written down, the same sentence passes at the default warning
-  level and "no warnings" means something different per compiler setting
+- `cmake --build` succeeds with **zero warnings at MSVC `/W4`**. Without the level written down,
+  the same sentence passes at the default warning level and "no warnings" means something
+  different per compiler setting
+  - Fix the level and `/WX` (warnings as errors) in the CMake configuration. That is what keeps a
+    person from counting this item by eye
+  - Apply it only to the targets of this repository. Applying it to an outside library ties the
+    build to that version of the library
 
 ---
 

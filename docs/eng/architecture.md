@@ -113,15 +113,23 @@ There are two reasons.
 | Thread | Responsibility | Shared state |
 |--------|------|-----------|
 | `[loop]` | UDP receive, Wintun receive, console commands, timers, session state, routing, all sending | **No tunnel state.** Shares only one end of four queues (telemetry, console, control request, control response) and the shutdown/cleanup events |
-| `[telemetry]` | Consume the metric queue, upload to the telemetry service | One queue |
+| `[telemetry]` | Consume the metric queue, upload to the telemetry service. Phase 9 onward | One queue |
 | `[console]` | Read standard input. Scaffolding for Phase 1~5 | One command queue |
 | `[control]` | Control plane TCP calls, DNS resolution. Phase 3 onward | One request queue and one response queue (3.2.8 The `[control]` Thread) |
 
-Phase 1~2 has three threads, Phase 3~5 has four, and Phase 6 onward has three. `[loop]` is
-the process main thread.
+**`[loop]` is the process main thread.** The rest exist only when that phase has their work.
+
+| Span | Threads |
+|------|---------|
+| Phase 1~2 | `[loop]`, `[console]` |
+| Phase 3~5 | `[loop]`, `[console]`, `[control]` |
+| Phase 6~8 | `[loop]`, `[control]` |
+| Phase 9 onward | `[loop]`, `[control]`, `[telemetry]` |
 
 - `[console]` exists only in Phase 1~5. `[loop]` cannot block on standard input, so a
   separate thread reads it and pushes to a queue
+- `[telemetry]` comes late because the place to upload to appears then. The telemetry service
+  and the upload thread are deliverables of the same phase ([`roadmap.md`](roadmap.md))
 - When the adapter arrives in Phase 6, the Wintun read event joins the `[loop]` wait set
   directly, so the thread count does not grow
 
@@ -732,11 +740,17 @@ STUN (`roadmap.md` Phase 1), so it needs a place to take the remote address.
 |------|------|-----|
 | Remote endpoint | `--peer <IPv4>:<port>` | Phase 1~2 test only. Without it the client only receives and does not send. What this argument sends is a test byte string with no tunnel header, different from `DATA` in Phase 4 onward |
 | Raw send | Console command `raw <byte count>` | Sends 1 datagram of that length to the address given by `--peer`. The content is a byte string increasing by 1 from `0x00`, so the receiver can check it by computation. The length is 1 or more and `MAX_DATAGRAM` (1472) or less. Out of range, nothing is sent and a `WARN` is left |
+| Counter dump | Console command `counters` | Emits every counter at once. Chapter 9 fixes three points at which counters are emitted, and this is one of them |
+| Shutdown | Console command `quit` | Signals the shutdown event. 3.2.3 One Turn of the Loop owns that path |
 
 **The receiving side emits one `rx.raw` log line.** The fields are `from` (source
 `IPv4:port`), `len`, and `sha256` (the first 16 hex characters of the received byte string's
 hash). The byte string itself is not put in the log. **The sending side emits the same line.**
 If `len` and `sha256` match on both lines, the Phase 1 "matches byte for byte" holds.
+
+**On the sending side `from` is its own local endpoint.** The source of that datagram is
+itself. Since the bind is `INADDR_ANY`, the address part is `0.0.0.0` (`protocol.md` chapter 6).
+The decision reads `len` and `sha256`; `from` is what lets a person tell the two lines apart.
 
 > **Why.** A procedure that compares bytes by eye is not used, because it becomes a decision
 > that differs per person.
@@ -748,14 +762,38 @@ If `len` and `sha256` match on both lines, the Phase 1 "matches byte for byte" h
 chapter 9 contract when that is settled. The telemetry service address is Phase 9. That both
 are absent from the table above is the current state.
 
-**Behavior on argument errors.** An unknown argument, a missing role, or a format violation
-(`--room` not 6 characters, `--rejoin` not in `<peer_id>:<peer_token>` form, a port outside
-1~65535) all leave **one `ERROR` line and fail startup with exit code 2**. Nothing is guessed
+**Behavior on argument errors.** An unknown argument, a missing required argument, or a format
+violation all leave **one `ERROR` line and fail startup with exit code 2**. Nothing is guessed
 and corrected.
 
-- `peer_id` is written in decimal
 - If the same argument is given twice, `--stun` accumulates into the list and the rest take the
   last value
+- **An argument that is given is checked even when that span does not use it.** "Only stored" in
+  the table above means the value is not used, not that it is not checked
+
+> **Why.** Deferring the check means an input that passed in Phase 1 is refused only in Phase 3,
+> and in between the record cannot tell which format the tests ran with.
+
+**The "required" column of the table above decides what counts as missing.** Missing is the
+absence of a value in a span that column requires. The role may be absent in Phase 1~2 and the
+process still starts. But a value that is neither `host` nor `player` is a format violation in
+every span.
+
+**The source of each format differs per value.** The rules are not copied here.
+
+| Value | Source |
+|-------|--------|
+| `--room` | `control_plane.md` 2.1 `room_id`, its normalization and checks |
+| `peer_id` in `--rejoin` | `control_plane.md` 2.2 `peer_id`. Written in decimal |
+| `peer_token` in `--rejoin` | `control_plane.md` 2.3 `peer_token` |
+| The port in `--server` | If omitted, `CONTROL_PORT` in `control_plane.md` 2.6 Constants |
+| Every port | 1~65535 |
+| The address in `--peer` | An IPv4 literal only. A name is not accepted |
+| The address in `--stun` | A name or an IPv4 literal. The port cannot be omitted |
+
+**The tests own the counterexample list.** The case tables for IPv4 literals, the port range,
+`--room`, and `--rejoin` live in `tests/`. Keeping them in the document means matching the same
+table in two places, and counterexamples grow as the implementation grows.
 
 ---
 
@@ -1137,12 +1175,27 @@ to is this log.** The local record file is a Phase 4 deliverable and does not ex
 |------|------|
 | Destination | Standard error (stderr). It is not trapped in buffering, so the line just before a crash survives, and it can be redirected separately from standard output |
 | Levels | Three: `INFO`, `WARN`, `ERROR`. No finer split |
-| Unit | One event per line. **Newlines and control characters are replaced with a single space.** No escape notation. Only the one-line-one-event property needs to hold, and more notation means the reader has to interpret it |
+| Unit | One event per line. **A value carries no space and no control character.** Both become a single underscore. No escape notation and no quoting |
 | Failure notation | The chapter 8 failure code strings **as is**. Not translated or reworded |
 
 The reason for three levels is that the only axes used for decisions are "normal progress /
 abnormal but can continue / that attempt failed". A finer split makes the boundaries differ per
 implementation, while the verification items still look for a single string.
+
+> **Why an underscore.** Replacing with a space removes the `name=value` boundary. A field
+> carries a user-supplied string as is, so that actually happens. Quoting restores the boundary
+> but then a value containing a quote needs escaping, and the reader has to interpret it.
+
+**The replacement applies to values only and cannot be undone.** A decision that needs the
+original text is not made from the log. The log is a diagnostic for people to read, and the
+input to a decision is the local record file.
+
+**The guarantee is at byte level.** What changes is the ASCII space (`0x20`) and the control
+bytes (`0x00`~`0x1F`, `0x7F`) only. `0x80` and above go in as they are. Those bytes do not break
+the line and do not blur the `name=value` boundary.
+
+> **Limit.** A Unicode line separator (such as U+2028) is not changed. A tool that splits the log
+> on Unicode line breaks is not used for decisions. Decisions split on `0x0A`.
 
 **Events that verification looks for get fixed keys.** The contract above alone does not settle
 what a "confirm in the log" verification item should look for. A line has the shape
@@ -1220,7 +1273,8 @@ Sangtachi/
 |   +-- include/
 |   +-- src/
 |   |   +-- main.cpp
-|   |   +-- network/     udp_socket, endpoint, stun_client
+|   |   +-- args.cpp     startup argument parsing (3.5)
+|   |   +-- network/     wsa, udp_socket, endpoint, stun_client
 |   |   +-- peer/        peer, hole_punch, session
 |   |   +-- tunnel/      packet, tunnel, router
 |   |   +-- adapter/     wintun_adapter
@@ -1276,6 +1330,7 @@ already populated). The relocation under `client/` and the creation of `control-
 | Public STUN servers | Binding Response. The server is not implemented, only used | External public service |
 | Python standard library | `asyncio`, `json` | Standard library |
 | AWS SDK for Python (`boto3`) | DynamoDB access for the control server and the telemetry service | **Approved** |
+| Catch2 v3 | Test case registration, execution, failure reporting. Linked only into the test executable | **Approved.** [`spec.md`](spec.md) NFR-5 owns who approves |
 | Amazon DynamoDB | Persistent storage of room/peer state and metrics | External managed service |
 
 Be clear about what Wintun does **not** provide. Peer discovery, STUN, NAT traversal, hole

@@ -52,28 +52,51 @@ $cases = @(
     @{ args = @();                             expect = 0; contains = 'INFO counter name=drop_magic value=0' }
 )
 
+# 인자 하나를 Windows 명령줄 규칙대로 감싼다.
+#
+# ProcessStartInfo.Arguments 는 문자열 하나다. 그냥 공백으로 이어 붙이면 공백이 든 인자가
+# 둘로 쪼개져, 공백을 시험하려던 케이스가 그 공백을 프로그램에 전달하지 못한다. 실측으로
+# 겪었다. Windows PowerShell 5.1 에는 ArgumentList 컬렉션이 없다.
+function Format-Argument([string]$value) {
+    if ($value -eq '') { return '""' }
+    if ($value -notmatch '[\s"]') { return $value }
+    # 따옴표 앞의 역슬래시를 두 배로 하고 따옴표를 이스케이프한다.
+    $escaped = [regex]::Replace($value, '(\\*)"', '$1$1\"')
+    # 끝의 역슬래시도 두 배로 한다. 닫는 따옴표를 먹지 않게 한다.
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
 $failed = 0
 foreach ($c in $cases) {
-    $stderrFile = [System.IO.Path]::GetTempFileName()
-    try {
-        # Start-Process 를 쓰지 않는다. 빈 -ArgumentList 를 거부한다.
-        # 표준 오류를 파일로 보낸다. 파이프라인에 섞으면 PowerShell 이 그것을
-        # ErrorRecord 로 감싸 원래 줄을 그대로 볼 수 없다.
-        $previous = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        if ($c.args.Count -eq 0) {
-            & $exe 2>$stderrFile | Out-Null
-        } else {
-            & $exe @($c.args) 2>$stderrFile | Out-Null
-        }
-        $code = $LASTEXITCODE
-        $ErrorActionPreference = $previous
+    # 인자가 맞으면 이 프로그램은 이벤트 루프로 들어가 quit 을 받을 때까지 끝나지 않는다
+    # (architecture.md 3.2.7 종료). 그래서 표준 입력으로 quit 을 넣고 닫는다.
+    #
+    # 표준 오류는 직접 읽는다. 파이프라인에 섞으면 PowerShell 이 ErrorRecord 로 감싸
+    # 원래 줄을 그대로 볼 수 없다.
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $exe
+    $info.Arguments = (($c.args | ForEach-Object { Format-Argument $_ }) -join ' ')
+    $info.UseShellExecute = $false
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardError = $true
+    $info.RedirectStandardOutput = $true
+    $info.CreateNoWindow = $true
 
-        $err = Get-Content -LiteralPath $stderrFile -Raw -ErrorAction SilentlyContinue
-        if ($null -eq $err) { $err = '' }
-    } finally {
-        Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
+    $p = [System.Diagnostics.Process]::Start($info)
+    $p.StandardInput.WriteLine('quit')
+    $p.StandardInput.Close()
+    $err = $p.StandardError.ReadToEnd()
+    $p.StandardOutput.ReadToEnd() | Out-Null
+
+    # 상한을 둔다. 매달리면 실패로 보고해야지 검사를 붙들면 안 된다.
+    if (-not $p.WaitForExit(10000)) {
+        $p.Kill()
+        Write-Host ("FAIL  [{0}] did not exit within 10 seconds" -f ($c.args -join ' '))
+        $failed++
+        continue
     }
+    $code = $p.ExitCode
 
     $label = if ($c.args.Count -eq 0) { '(no arguments)' } else { ($c.args -join ' ') }
     $codeOk = ($code -eq $c.expect)

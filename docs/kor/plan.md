@@ -9,7 +9,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1 진행 중. 빌드 뼈대, Winsock2 래퍼, `endpoint`, 기동 인자, 로그와 카운터, UDP 소켓 래퍼까지 됐다 |
+| 구현 | [`roadmap.md`](roadmap.md) | **Phase 1 구현 완료.** 검증 항목 대조는 커밋 기록에 있다. 두 머신 실측만 대기다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 4건 |
 
 **설계 감사 후속은 남아 있지 않다.** 3차 감사 62건이 묶음 여섯으로 전부 닫혔고 소유자 판단
@@ -19,14 +19,16 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 1 의 `[loop]` 이벤트 루프와 `[console]` ([`architecture.md`](architecture.md) 3.2) | 앞의 것을 묶는다. Phase 1 의 마지막이다 |
-| 5 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
+| 1 | Phase 2. STUN 클라이언트 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위, [`architecture.md`](architecture.md) 3.5 기동 입력의 서버 선택) | Phase 1 이 닫혔다. 같은 소켓을 쓰므로 래퍼가 이미 있다 |
+| 2 | Phase 2 를 끝낼 때 전문 대상 감사 | `CLAUDE.md` 가 Phase 를 끝낼 때마다 요구한다. Phase 1 은 이 커밋들의 리뷰로 갈음했다 |
+| 3 | Phase 3 착수 전 항목 (`roadmap.md`). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
 
 ## 대기 중인 것
 
 | 무엇 | 막힌 이유 | 풀리는 조건 |
 |------|-----------|-------------|
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
+| Phase 1 의 두 머신 실측 | 한 기기의 여러 프로세스로는 돌렸다. 두 머신에서 양쪽이 먼저 한 번씩 보내는 절차는 상대 기기가 필요하다 | 두 번째 기기. 절차는 `scripts/e2e-check.ps1` 과 같고 `--peer` 만 상대 주소로 바꾼다 |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | 어댑터가 아직 없다. 지금 상태는 문서화이고 실물 확인이 아니다 | Phase 3(EC2), 6(Wintun), 8(시연) |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
 | NFR-5 를 두 종류로 나눈 것의 교수 확인 | Catch2 는 [`spec.md`](spec.md) NFR-5 대로 승인됐다. 확인 대상은 그 승인이 아니라 요구를 제품 의존성과 시험 전용 의존성으로 나눈 것이다 | 제출 전 확인. 결과가 다르면 [ADR 0005](decisions/0005-시험-프레임워크-catch2.md)를 뒤집고 새 ADR 을 쓴다 |

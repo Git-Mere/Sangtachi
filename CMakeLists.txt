@@ -11,6 +11,10 @@ include(HamychiWarnings)
 
 option(HAMYCHI_BUILD_TESTS "Build the Catch2 test suite" ON)
 
+# 시험 빌드. probe200 타이머 같은 검증 전용 장치를 켠다 (architecture.md 9장).
+# 켜진 빌드는 기동 시 WARN 한 줄을 남긴다.
+option(HAMYCHI_TEST_BUILD "Enable verification-only instrumentation" OFF)
+
 add_subdirectory(client)
 
 if(HAMYCHI_BUILD_TESTS)

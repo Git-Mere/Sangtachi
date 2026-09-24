@@ -15,8 +15,12 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(hamychi_tests
     args_test.cpp
+    console_test.cpp
     counters_test.cpp
+    hash_test.cpp
     log_test.cpp
+    loop_test.cpp
+    timer_test.cpp
     network/endpoint_test.cpp
     network/udp_socket_test.cpp
     network/wsa_test.cpp

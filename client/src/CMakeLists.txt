@@ -4,8 +4,12 @@
 
 target_sources(hamychi_core PRIVATE
     args.cpp
+    console.cpp
     counters.cpp
+    hash.cpp
     log.cpp
+    loop.cpp
+    timer.cpp
     network/endpoint.cpp
     network/udp_socket.cpp
     network/wsa.cpp

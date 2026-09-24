@@ -40,6 +40,10 @@ if ($LASTEXITCODE -ne 0) { throw "tests failed ($LASTEXITCODE)" }
 if (-not $Filter) {
     & (Join-Path $PSScriptRoot 'cli-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "cli check failed ($LASTEXITCODE)" }
+
+    # 프로세스 여럿이 실제로 데이터그램을 주고받는지 본다.
+    & (Join-Path $PSScriptRoot 'e2e-check.ps1') -Config $Config -BuildDir $buildDir
+    if ($LASTEXITCODE -ne 0) { throw "end-to-end check failed ($LASTEXITCODE)" }
 }
 
 Write-Host 'all tests passed'

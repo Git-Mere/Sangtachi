@@ -15,6 +15,7 @@ target_include_directories(hamychi_core PUBLIC
 target_link_libraries(hamychi_core
     PRIVATE hamychi_warnings
     PUBLIC  ws2_32
+    PUBLIC  bcrypt
 )
 
 add_subdirectory(src)
@@ -22,6 +23,10 @@ add_subdirectory(src)
 add_executable(hamychi_client
     src/main.cpp
 )
+
+if(HAMYCHI_TEST_BUILD)
+    target_compile_definitions(hamychi_client PRIVATE HAMYCHI_TEST_BUILD)
+endif()
 
 target_link_libraries(hamychi_client
     PRIVATE hamychi_core

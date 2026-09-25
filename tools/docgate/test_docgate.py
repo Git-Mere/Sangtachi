@@ -241,6 +241,25 @@ class TestPairing(GateCase):
         self.assertTrue(report.ok, report.text())
         self.assertEqual(report.pairs, 5)
 
+    def test_dated_history_folder_pairs_one_to_one(self) -> None:
+        # 기록은 날짜 폴더 아래 `NN-주제.md` 로 둔다. 폴더가 열쇠에 들어가야 짝이 1:1 이다.
+        self.build()
+        for day, name in (("2026-09-21", "01-a"), ("2026-09-21", "02-b"), ("2026-09-22", "01-c")):
+            write(self.root, f"docs/kor/commit_history/{day}/{name}.md", "# 기록\n")
+            write(self.root, f"docs/eng/commit_history/{day}/{name}.md", "# Record\n")
+        report = self.run_gate()
+        self.assertTrue(report.ok, report.text())
+        self.assertEqual(report.pairs, 5)
+
+    def test_same_name_in_different_day_folders_is_not_paired(self) -> None:
+        # 이름만 보고 붙이면 날짜가 어긋난 기록 두 건이 짝 하나로 보인다.
+        self.build()
+        write(self.root, "docs/kor/commit_history/2026-09-21/01-a.md", "# 기록\n")
+        write(self.root, "docs/eng/commit_history/2026-09-22/01-a.md", "# Record\n")
+        report = self.run_gate()
+        self.assertFalse(report.ok)
+        self.assertEqual(sum(1 for f in report.findings if f.check == "mirror"), 2)
+
     def test_history_file_missing_on_one_side_is_caught(self) -> None:
         self.build()
         write(self.root, "docs/kor/commit_history/2026-09-10-a.md", "# 기록\n")

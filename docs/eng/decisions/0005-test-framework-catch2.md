@@ -51,7 +51,7 @@ NFR-5.
 ### Approval Scope
 
 **The repository owner approved it.** The instruction and its reasoning are in
-[`../commit_history/2026-09-23-phase1-빌드-뼈대.md`](../commit_history/2026-09-23-phase1-빌드-뼈대.md).
+[`../commit_history/2026-09-23/03-phase1-빌드-뼈대.md`](../commit_history/2026-09-23/03-phase1-빌드-뼈대.md).
 The judgment is that what NFR-5 blocks is replacing the product deliverable with an external
 library, and a test runner does not go into the product executable, so it is not in that category.
 The NFR-4 list of things we must implement ourselves has no test runner either.

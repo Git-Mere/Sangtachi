@@ -1,0 +1,148 @@
+# 2026-09-21 Documentation gate (docgate)
+
+## Changes
+
+- `tools/docgate/docgate.py` **new.** Judges mirror pairing, heading structure, table/code-block/link counts, and relative links
+- `tools/docgate/test_docgate.py` **new.** 105 cases
+- `CLAUDE.md` mirror check replaced: the single `grep -c '^#'` line becomes the gate command
+- `CLAUDE.md` the `windows-prereq.md` role line corrected to match that document's chapter 0 wording. One paragraph added on how far rule 7 reaches
+
+## Why it was built
+
+The user asked: "why does the work never finish in one pass, and instead repeat work -> review -> blocker -> fix -> review?"
+The answer came from counting the commit records.
+
+`2026-09-21/02-windows-prereq` took **31 rounds and 73 findings**. Grouped by subject:
+
+| Subject | Findings | Rounds it appeared in |
+|------|:----:|:----:|
+| One subnet/address predicate | 24 | 20 |
+| Claim strength and missing evidence | 16 | 9 |
+| One firewall policy predicate | 8 | 7 |
+| Propagation misses across documents | 6 | 6 |
+| Other | 19 | 13 |
+
+**Two predicates produced 32 of the 73 findings.** There were not 32 defects. There was no input
+case table, so the reviewer supplied counterexamples one per round. Then the round count follows
+the number of counterexamples, not the number of defects. "The machine-verification claim in
+`CLAUDE.md` has no evidence" appeared three times, in rounds 4, 6, and 30.
+
+There are four causes.
+
+1. Verdict logic had no case table, so review was used as a test case generator (rule 7)
+2. No acceptance criteria before starting, so the reviewer held the definition of "done"
+3. The same claim was copied to eight places: four documents times kor/eng (rule 5)
+4. Fixes went to the next round without a self-check, so the reviewer did the regression testing
+
+This commit makes a machine catch causes 1 and 3 first.
+
+## What the gate judges
+
+| Check | Verdict | Content |
+|------|------|------|
+| `mirror` | blocking | Document pairing between `docs/kor` and `docs/eng` |
+| `parity` | blocking | Heading level sequence, table row count, code block count, link count |
+| `link` | blocking | Whether a relative link resolves. The exception is the two `experiments.md` paths |
+| `claim` | report | Where strong claim wording sits. It does not block |
+
+`claim` is not a verdict. One phrase is not a defect by itself, and making it a verdict would fail
+normal documents (rule 3). Its purpose is to remove the manual sweep when a claim is weakened.
+
+The last line is always `VERDICT: pass` or `VERDICT: fail`, and the exit code follows it. When the
+root is wrong and nothing can be judged, it does not print a pass: it exits with code 2. The
+`windows-prereq` round 5 finding ("the command prints a list instead of a verdict") is addressed
+from the start here.
+
+**What is deliberately out of scope** is written at the head of the script and pinned by a test of
+the same name: Setext headings, reference-style link usages, tables without a leading pipe, and
+unclosed fences. This separates a decision from an oversight.
+
+## The checks were written first
+
+Per rule 7, `test_docgate.py` was written before the implementation. It has 105 cases and runs both
+directions: that a normal document passes (rule 3), and that a defect is caught.
+
+```bash
+cd tools/docgate && python -m unittest test_docgate   # Ran 105 tests ... OK
+```
+
+The case table caught a real defect. **The first version checked only 13 document pairs and
+passed.** There were 25 at that moment. Using the leading number of a file name as the pairing key
+collapsed the 13 `commit_history/2026-...` records into the single key `2026`, and 12 of them
+disappeared silently. The fix pairs by name first and uses the number key only inside `decisions/`.
+A case asserting "every file is either paired or reported" closes that hole.
+
+**The second one ran the other way.** When this commit record quoted link syntax as an example,
+the gate read the example as a real link and **failed a correct document.** That is the place
+rule 3 names. Inline code spans are now excluded from link checking, pinned by 5 cases. Without
+running the gate on its own record, a reviewer would have reported this.
+
+## Measurements
+
+Run against the whole repository.
+
+| Item | Result |
+|------|------|
+| Document pairs | 26, all pass |
+| Relative links | 220, all resolve |
+| Claim wording | 803 hits. Not a verdict. The value moves whenever a document changes |
+| Exit code | 0 (`VERDICT: pass`) |
+
+A passing run was checked for being a false pass. Three defects were planted in a copy.
+
+| Planted defect | Gate result |
+|------|------|
+| One `##` changed to `###` in `eng/protocol.md` | Caught as `parity`. **Heading counts stay equal at 43:43** |
+| One `eng/commit_history` file deleted | Caught as `mirror` |
+| A link to a missing document added to `kor/spec.md` | Caught as `link` |
+
+The first row matters. The `grep -c '^#'` that `CLAUDE.md` used passes that defect, because the
+count is equal and only the structure differs.
+
+## Cross-model review
+
+**Three reviews were taken in one round.** This is the first use of prescription 4. The prompt said
+explicitly: list every counterexample at once.
+
+| Reviewer | Lens | Result |
+|------|------|------|
+| Codex (GPT) round 1 | Correctness, security, robustness | 1 blocker |
+| Codex (GPT) round 2 | Same | 3 blockers |
+| Codex (GPT) round 3 | Same | 2 blockers |
+| Codex (GPT) round 4 | Same | 1 blocker |
+| Codex (GPT) round 5 | Same | 1 blocker |
+| Codex (GPT) round 6 | Same | 1 blocker |
+| Codex (GPT) round 7 | Same | 1 blocker |
+| Codex (GPT) round 8 | Same | **`LGTM - no blockers`** |
+| claude-opus-4-7 | Correctness and robustness | 4 blockers, 15 warns, 4 nits |
+| claude-opus-4-7 | Claim verification | 1 blocker, 1 nit |
+
+All 6 blockers were of one kind: **a verdict function passing silently.**
+
+| Round | Finding | Action |
+|:--:|------|------|
+| 1 | The leading-number fallback pairs `2026-09-10` with `2026-09-14`, so two records present on one side only look like one pair | Applied. Dates excluded and number pairing limited to `decisions/` |
+| 1 | With `docs/kor` or `docs/eng` missing, the run ends in **`VERDICT: pass`** | Applied. An input error exits with code 2 instead of a verdict |
+| 1 | Link checking relied on OS path resolution, so **Windows passes a case mismatch**. It breaks on Linux | Applied. Compare against directory entry names directly |
+| 1 | The `experiments.md` exception matched by file name, so a broken link at any depth passed | Applied. Limited to the two full paths |
+| 1 | Four-space indented code blocks counted as body, skewing table, link, and heading counts | Applied. HTML comments and YAML front matter are skipped too |
+| 1 | `CLAUDE.md` calls `windows-prereq.md` "a command per section", but section 11 has none. Wording fixed in round 29 came back (rule 5 recurrence) | Applied. Matched to chapter 0 of that document |
+| 1 | Absolute paths, backslashes, drive letters, and empty links slipped through the check | Applied. All four are rejected and pinned by cases |
+| 1 | Claim false positives: `install` matched `all`, `미완료` matched `완료`, `unresolved` matched `resolved` | Applied. Word boundaries now. On the same document set 896 hits become 803 |
+| 1 | A typo in `--root` looks like a pass | Applied. Exit code 2 with an `INPUT ERROR:` prefix |
+| 1 | The case table never exercised `main()`, exit codes, or `--claims` formatting | Applied. 30 cases became 65 |
+| 1 | Rule 7 was widened to "make it a script", which is stronger than the original | Applied. Stated as an extension of rule 7, with the original location |
+| 1 | The measurement table carried stale pair counts | Applied. Re-run: 26 pairs and 803 hits |
+| 2 | An angle-bracket destination with a space, `[x](<a file.md>)`, **is skipped by the check entirely** | Applied. The regex was replaced by a hand-written scanner |
+| 2 | Nested brackets in link text, `[see [draft]](path)`, are skipped for the same reason | Applied. The same scanner counts bracket depth |
+| 2 | A query string, `guide.md?plain=1`, was read as a file name and **failed a correct link** | Applied. Fragment and query are both stripped, pinned by a case |
+| 3 | Single-line HTML comments were not skipped, so a link inside one **failed a correct document**, against what the header says | Applied. Single-line comments are stripped too |
+| 3 | A reference definition `[ref]: <a file.md>` did not match, so a broken link passed | Applied. The destination is read the same way as for inline links |
+| 4 | Code blocks were counted separately, so **a commented-out fence on one side failed a correct document** | Applied. Every counter now uses one scan |
+| 5 | A literal `<!--` inside a code span opened comment mode and **buried the rest of the document**, so a broken link passed | Applied. Comment scanning is code-span aware |
+| 6 | Counting images `![x](path)` as links is not documented | **Partly applied.** Images stay in, documented at the head of the script and pinned by 3 cases. A broken image is a broken document |
+| 7 | Indented code right after a heading or a fence counted as body and **failed a correct document** | Applied. The start condition moved from "previous line blank" to "previous line is not a paragraph" |
+
+The remaining warns and nits (dead code, sorted findings, the `SUMMARY:` prefix, a comment giving
+the reason for the exception, the `--claims` exit-code sentence) were all applied. **Nothing was
+rejected.**

@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-20
-- Related: [`../audit-history/design-audit.md`](../audit-history/design-audit.md) blocker 20 and follow-up 5, [`../commit_history/2026-09-20-blocker20-resolution.md`](../commit_history/2026-09-20-blocker20-resolution.md)
+- Related: [`../audit-history/design-audit.md`](../audit-history/design-audit.md) blocker 20 and follow-up 5, [`../commit_history/2026-09-20/03-blocker20-resolution.md`](../commit_history/2026-09-20/03-blocker20-resolution.md)
 
 ## Context
 

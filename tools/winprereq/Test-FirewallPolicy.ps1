@@ -30,7 +30,7 @@
         powershell -ExecutionPolicy Bypass -File tools\winprereq\Test-FirewallPolicy.ps1 -InterfaceAlias 'sangtachi0'
 
 .NOTES
-    케이스 표는 `docs/kor/commit_history/2026-09-21-windows-prereq.md` 의 라운드 표에서
+    케이스 표는 `docs/kor/commit_history/2026-09-21/02-windows-prereq.md` 의 라운드 표에서
     옮긴 반례가 뼈대다. 새로 상상한 것이 아니라 이미 확보된 반례다.
 
     | 라운드 | 반례 | 케이스 |

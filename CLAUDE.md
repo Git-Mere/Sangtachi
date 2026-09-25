@@ -104,7 +104,8 @@ python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료
 출처이지 일정표가 아니다. **"Phase 1~5 에는 어댑터가 없다" 같은 범위 서술은 타이밍이
 아니므로** 남긴다. 그 단계에서 설계가 어떤 모습인지를 말하는 것이다.
 
-**의미 있는 커밋마다 `docs/{kor,eng}/commit_history/YYYY-MM-DD-주제.md`를 남긴다.**
+**의미 있는 커밋마다 `docs/{kor,eng}/commit_history/YYYY-MM-DD/NN-주제.md`를 남긴다.**
+`NN` 은 그 날 폴더 안의 커밋 시각 순서다.
 변경, 결정, 검증, 크로스 모델 리뷰 결과(지적별로 반영 또는 기각 사유)를 적는다.
 
 **설계 결정은 `docs/{kor,eng}/decisions/`에 ADR로 남긴다.** 현재 5건 있다.

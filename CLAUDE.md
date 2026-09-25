@@ -23,7 +23,8 @@ docs/eng/    영어. 미러
 3. `docs/kor/decisions/`
 4. `docs/kor/plan.md`
 5. `docs/kor/roadmap.md` 중 착수할 Phase
-6. 제어 평면을 건드리는 작업이면 `docs/kor/control_plane.md`
+6. `docs/kor/concurrency.md`
+7. 제어 평면을 건드리는 작업이면 `docs/kor/control_plane.md`
 
 **살아 있는 상태는 `plan.md`에서 읽는다.** 감사 기록은 그 시점의 스냅숏이라 현재 상태의
 출처가 아니다.

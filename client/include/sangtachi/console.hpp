@@ -1,13 +1,13 @@
 #pragma once
 
-// 콘솔 명령 큐와 읽기 스레드 (architecture.md 3.2.6 텔레메트리 격리, 3.2.1 스레드).
+// 콘솔 명령 큐와 읽기 스레드 (concurrency.md 6장 텔레메트리 격리, 1장 스레드).
 //
 // `[loop]` 가 표준 입력에서 블록할 수 없으므로 별도 스레드가 읽어 큐에 넣는다. 큐는
 // 16 줄이고 가득 차면 **새 줄을 버린다.** 가장 오래된 것을 밀어내지 않는다. 그러려면
 // 생산자가 소비자의 tail 을 움직여야 해서 락이 필요하고, 지표 하나 더 살리자고 `[loop]`
 // 에 락을 들이지 않는다.
 //
-// 버린 수를 세는 `console_queue_dropped` 는 3.2.5 단독 소유 규칙의 **유일한 예외**다.
+// 버린 수를 세는 `console_queue_dropped` 는 concurrency.md 5장 단독 소유 규칙의 **유일한 예외**다.
 // 버리는 쪽이 생산자인 `[console]` 이라 그 스레드가 올린다. 원자 변수 하나이고 `[loop]`
 // 는 읽기만 한다.
 
@@ -21,7 +21,7 @@
 
 namespace sangtachi {
 
-// architecture.md 3.2.6 이 정한 줄 수.
+// concurrency.md 6장 이 정한 줄 수.
 inline constexpr std::size_t kConsoleQueueCapacity = 16;
 
 // 생산자 하나, 소비자 하나. 원자 head/tail 만으로 락 없이 돈다.
@@ -51,7 +51,7 @@ private:
 
 // `[console]` 이 쓰는 상태를 한 덩어리로 묶는다.
 //
-// **이 객체는 `[loop]` 보다 오래 산다.** 3.2.7 종료가 정한 대로 `[console]` 은 join 하지
+// **이 객체는 `[loop]` 보다 오래 산다.** concurrency.md 7장 종료가 정한 대로 `[console]` 은 join 하지
 // 않는다. 표준 입력 읽기를 밖에서 취소하는 수단을 쓰지 않으므로 join 하면 사용자가 한 줄을
 // 더 칠 때까지 종료가 멈춘다.
 //

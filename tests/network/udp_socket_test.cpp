@@ -171,7 +171,7 @@ TEST_CASE("udp: a datagram of exactly MAX_DATAGRAM still fits", "[udp]") {
 }
 
 TEST_CASE("udp: one byte over the limit is caught by the length compare", "[udp]") {
-    // architecture.md 3.2.3 (a): 정확히 1473바이트는 길이 비교로 걸린다.
+    // concurrency.md 3장 (a): 정확히 1473바이트는 길이 비교로 걸린다.
     // 버퍼를 1 크게 잡았기 때문에 오류 코드가 아니라 길이로 판정된다.
     const WsaContext wsa;
     auto sender = open_udp_socket();
@@ -192,7 +192,7 @@ TEST_CASE("udp: one byte over the limit is caught by the length compare", "[udp]
 }
 
 TEST_CASE("udp: two bytes over the limit is caught by WSAEMSGSIZE", "[udp]") {
-    // architecture.md 3.2.3 (b): 1474바이트 이상은 WSAEMSGSIZE 로 걸린다.
+    // concurrency.md 3장 (b): 1474바이트 이상은 WSAEMSGSIZE 로 걸린다.
     // (a) 만 시험하면 이 경로에서 바퀴를 끝내는 구현이 통과한다.
     const WsaContext wsa;
     auto sender = open_udp_socket();
@@ -250,7 +250,7 @@ TEST_CASE("udp: an unreachable port does not break the receive loop", "[udp]") {
 }
 
 TEST_CASE("udp: the read event is reset by enumerating events", "[udp]") {
-    // architecture.md 3.2.3: 이 호출을 빠뜨리면 이벤트가 신호 상태로 남아 루프가 스핀한다.
+    // concurrency.md 3장: 이 호출을 빠뜨리면 이벤트가 신호 상태로 남아 루프가 스핀한다.
     const WsaContext wsa;
     auto sender = open_udp_socket();
     auto receiver = open_udp_socket();
@@ -307,7 +307,7 @@ TEST_CASE("udp: a payload that cannot fit the length argument is rejected", "[ud
 
 TEST_CASE("udp: a larger caller buffer does not defeat the oversize paths", "[udp]") {
     // 읽는 길이를 kRecvBufferSize 로 자르지 않으면, 큰 버퍼를 준 호출자에게는 1474바이트
-    // 이상도 그냥 담겨 WSAEMSGSIZE 분기가 영영 돌지 않는다 (architecture.md 3.2.3).
+    // 이상도 그냥 담겨 WSAEMSGSIZE 분기가 영영 돌지 않는다 (concurrency.md 3장).
     const WsaContext wsa;
     auto sender = open_udp_socket();
     auto receiver = open_udp_socket();

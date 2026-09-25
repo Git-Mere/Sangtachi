@@ -19,7 +19,7 @@ using sangtachi::kCounterCount;
 using sangtachi::to_token;
 
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
-    // 이름은 protocol.md 6/7/8 장과 architecture.md 3.2.3 / 3.2.6 / 3.2.8 이 갖는다.
+    // 이름은 protocol.md 6/7/8 장과 concurrency.md 3장 / 6장 / 8장 이 갖는다.
     // 개수가 바뀌면 이 줄을 먼저 보게 된다.
     REQUIRE(kCounterCount == 39);
 }
@@ -66,7 +66,7 @@ TEST_CASE("counters: start at zero and count up", "[counters]") {
 }
 
 TEST_CASE("counters: set replaces the value", "[counters]") {
-    // [loop] 가 [console] 의 원자 변수를 읽어 넣는 자리다 (architecture.md 3.2.6).
+    // [loop] 가 [console] 의 원자 변수를 읽어 넣는 자리다 (concurrency.md 6장).
     Counters c;
     c.increment(Counter::ConsoleQueueDropped);
     c.set(Counter::ConsoleQueueDropped, 17);

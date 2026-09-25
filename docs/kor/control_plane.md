@@ -2,7 +2,7 @@
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
 **요구사항:** [`spec.md`](spec.md) FR-4, FR-5, NFR-3, NFR-10, C-3
-**설계:** [`architecture.md`](architecture.md) 3.2, 3.3 / **프로토콜 계약:** [`protocol.md`](protocol.md) 14장
+**설계:** [`architecture.md`](architecture.md) 3.3 / [`concurrency.md`](concurrency.md) / **프로토콜 계약:** [`protocol.md`](protocol.md) 14장
 **일정:** [`roadmap.md`](roadmap.md) Phase 3
 
 > English version: [`../eng/control_plane.md`](../eng/control_plane.md)
@@ -26,7 +26,7 @@
 |-------------|------|
 | 제어 평면의 와이어 인코딩, 오류 코드, 상태 전이, 테이블 설계 | 이 문서 |
 | 터널 와이어 포맷, 세션 상태, 프로토콜 타이머(`get_peers` 폴링 간격과 마감 포함) | `protocol.md` |
-| 클라이언트 스레드와 루프 구조 | `architecture.md` 3.2 동시성 모델 |
+| 클라이언트 스레드와 루프 구조 | [`concurrency.md`](concurrency.md) |
 | 요구사항과 성공 기준 | [`spec.md`](spec.md) |
 
 구현 중 이 문서에 없는 값을 만나면 코드에서 정하지 않고 이 문서를 먼저 고친다.
@@ -242,7 +242,7 @@ MAX_INFLIGHT              = 32          # 동시 처리 요청 상한 (7.2)
 | 클라이언트가 받는 주소 | **DNS 이름 또는 IPv4 리터럴.** 기동 입력([`architecture.md`](architecture.md) 3.5 기동 입력)으로 받는다. DNS 이름은 Elastic IP 를 가리키는 A 레코드다. Elastic IP 가 필요한 이유는 `windows-prereq.md` 10절 |
 | 경로 접두사 | `/v1/`. 인코딩이 호환되지 않게 바뀌면 `/v2/` 를 연다. 같은 서버가 두 접두사를 동시에 낼 수 있다 |
 
-DNS 해석은 클라이언트의 `[control]` 스레드가 한다(`architecture.md` 3.2.8 `[control]`
+DNS 해석은 클라이언트의 `[control]` 스레드가 한다([`concurrency.md`](concurrency.md) 8장 `[control]`
 스레드). 해석 결과가 여럿이면 첫 IPv4 주소를 쓰고 나머지는 쓰지 않는다. `AAAA` 는 쓰지
 않는다. 터널이 IPv4 전용인 것([`protocol.md`](protocol.md) 1장 범위와 전제)과 같은 범위다.
 
@@ -1194,7 +1194,7 @@ local 이라 자격 증명이 필요 없다.
 ### 8.1 소유 스레드
 
 제어 평면 TCP 호출과 DNS 해석은 **`[control]` 스레드**가 한다. 스레드 구성, `[loop]` 와의
-큐, 종료 순서는 [`architecture.md`](architecture.md) 3.2.8 `[control]` 스레드가 소유한다.
+큐, 종료 순서는 [`concurrency.md`](concurrency.md) 8장 `[control]` 스레드가 소유한다.
 여기서는 그 스레드가 이 문서의 어느 규칙을 지키는지만 적는다.
 
 > **왜.** `[loop]` 에 넣지 않는 이유는 한 줄이다. 제어 서버가 응답하지 않으면 연결 시간
@@ -1207,7 +1207,7 @@ local 이라 자격 증명이 필요 없다.
 |------|-----|--------|
 | DNS 해석 (`getaddrinfo`) | OS 기본. **별도 제한을 걸지 않는다.** 동기 호출에 시간 제한을 거는 수단을 이 설계는 쓰지 않는다 | `[control]` 이 그만큼 블록된다. `[loop]` 는 영향 없다 |
 | `connect` | `CLIENT_CONNECT_TIMEOUT_S`(3). 논블로킹 `connect` + `select` | 전송 오류 |
-| 송신, 수신 각각 | `CLIENT_IO_TIMEOUT_S`(3). `SO_SNDTIMEO` / `SO_RCVTIMEO`. [`architecture.md`](architecture.md) 3.2.7 종료의 텔레메트리 소켓과 같은 옵션이고 같은 한계(연산별이라 합이 더 길 수 있다)가 있다 | 전송 오류 |
+| 송신, 수신 각각 | `CLIENT_IO_TIMEOUT_S`(3). `SO_SNDTIMEO` / `SO_RCVTIMEO`. [`concurrency.md`](concurrency.md) 7장 종료의 텔레메트리 소켓과 같은 옵션이고 같은 한계(연산별이라 합이 더 길 수 있다)가 있다 | 전송 오류 |
 | 요청 한 건 상한 | 위 셋의 합. **DNS 를 빼고 최대 9초** | - |
 
 **DNS 해석은 기동 시 한 번만 한다.** 결과 IPv4 주소를 `[control]` 이 들고 그 뒤의 모든 요청에 쓴다. 폴링마다 해석하면 DNS 장애가 폴링을 멈춘다. 주소가 기동 중에 바뀌지 않는다는 전제는 Elastic IP 에서 오고, 그 근거와 대가는 [`windows-prereq.md`](windows-prereq.md) 10절이 갖는다.
@@ -1232,7 +1232,7 @@ local 이라 자격 증명이 필요 없다.
 | 일시 오류 | 전송 오류(3.5), `internal`, `unavailable` | connect 타임아웃, 500, 503 |
 
 **재시도를 판단하는 것은 `[loop]` 다.** `[control]` 은 한 번의 요청을 보내고 결과를 응답 큐에
-넣을 뿐이다([`architecture.md`](architecture.md) 3.2.8 `[control]` 스레드). 재시도 횟수와 1초 간격 타이머는
+넣을 뿐이다([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드). 재시도 횟수와 1초 간격 타이머는
 `[loop]` 가 세션 상태 옆에 들고, 재시도할 때 요청 큐에 같은 요청을 다시 넣는다. 그래야
 `[control]` 이 "유일한 상태는 해석된 서버 주소" 라는 그 절의 규칙을 지킨다.
 

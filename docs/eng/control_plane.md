@@ -2,7 +2,7 @@
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
 **Requirements:** [`spec.md`](spec.md) FR-4, FR-5, NFR-3, NFR-10, C-3
-**Design:** [`architecture.md`](architecture.md) 3.2, 3.3 / **Protocol contract:** [`protocol.md`](protocol.md) section 14
+**Design:** [`architecture.md`](architecture.md) 3.3 / [`concurrency.md`](concurrency.md) / **Protocol contract:** [`protocol.md`](protocol.md) section 14
 **Schedule:** [`roadmap.md`](roadmap.md) Phase 3
 
 > Korean version: [`../kor/control_plane.md`](../kor/control_plane.md)
@@ -27,7 +27,7 @@ owns the requirements; this document owns how they are met.
 |-------------|------|
 | Control plane wire encoding, error codes, state transitions, table design | This document |
 | Tunnel wire format, session state, protocol timers (including the `get_peers` polling interval and deadline) | `protocol.md` |
-| Client threads and loop structure | `architecture.md` 3.2 Concurrency Model |
+| Client threads and loop structure | [`concurrency.md`](concurrency.md) |
 | Requirements and success criteria | [`spec.md`](spec.md) |
 
 If the implementation meets a value that is not in this document, do not decide it in code. Fix
@@ -268,10 +268,10 @@ and are rejected when received.**
 | Address the client receives | **A DNS name or an IPv4 literal.** Received as a launch input ([`architecture.md`](architecture.md) 3.5 Startup Inputs). The DNS name is an A record pointing at an Elastic IP. Why an Elastic IP is needed is in `windows-prereq.md` section 10 |
 | Path prefix | `/v1/`. If the encoding changes incompatibly, open `/v2/`. The same server can serve both prefixes at once |
 
-DNS resolution is done by the client's `[control]` thread (`architecture.md` 3.2.8 The
-`[control]` Thread). If resolution returns several results, use the first IPv4 address and ignore
-the rest. `AAAA` is not used. This is the same scope as the tunnel being IPv4 only
-([`protocol.md`](protocol.md) section 1 Scope and Assumptions).
+DNS resolution is done by the client's `[control]` thread ([`concurrency.md`](concurrency.md)
+chapter 8 The `[control]` Thread). If resolution returns several results, use the first IPv4
+address and ignore the rest. `AAAA` is not used. This is the same scope as the tunnel being
+IPv4 only ([`protocol.md`](protocol.md) section 1 Scope and Assumptions).
 
 ### 3.3 HTTP Subset
 
@@ -1296,7 +1296,7 @@ missing `ConsistentRead` does not show, and `TransactionConflictException` does 
 
 Control plane TCP calls and DNS resolution are done by the **`[control]` thread.** Thread
 composition, the queue with `[loop]`, and shutdown order are owned by
-[`architecture.md`](architecture.md) 3.2.8 The `[control]` Thread. Here only which rules of this
+[`concurrency.md`](concurrency.md) chapter 8 The `[control]` Thread. Here only which rules of this
 document that thread keeps is stated.
 
 > **Why.** The reason it is not put in `[loop]` is one line. If the control server does not
@@ -1310,7 +1310,7 @@ document that thread keeps is stated.
 |------|-----|--------|
 | DNS resolution (`getaddrinfo`) | OS default. **No separate limit is set.** This design does not use a means of putting a time limit on a synchronous call | `[control]` blocks for that long. `[loop]` is unaffected |
 | `connect` | `CLIENT_CONNECT_TIMEOUT_S` (3). Non-blocking `connect` + `select` | Transport error |
-| Send, receive, each | `CLIENT_IO_TIMEOUT_S` (3). `SO_SNDTIMEO` / `SO_RCVTIMEO`. The same options as the telemetry socket in [`architecture.md`](architecture.md) 3.2.7 Shutdown and the same limit (they are per call, so the sum can be longer) | Transport error |
+| Send, receive, each | `CLIENT_IO_TIMEOUT_S` (3). `SO_SNDTIMEO` / `SO_RCVTIMEO`. The same options as the telemetry socket in [`concurrency.md`](concurrency.md) chapter 7 Shutdown and the same limit (they are per call, so the sum can be longer) | Transport error |
 | Cap on one request | The sum of the three above. **At most 9 seconds, excluding DNS** | - |
 
 **DNS resolution is done once at launch.** `[control]` keeps the resulting IPv4 address and uses
@@ -1340,7 +1340,7 @@ The result `[control]` returns to `[loop]` is one of three.
 | Transient error | Transport error (3.5), `internal`, `unavailable` | connect timeout, 500, 503 |
 
 **The one that decides on a retry is `[loop]`.** `[control]` only sends one request and puts the
-result in the response queue ([`architecture.md`](architecture.md) 3.2.8 The `[control]` Thread).
+result in the response queue ([`concurrency.md`](concurrency.md) chapter 8 The `[control]` Thread).
 The retry count and the 1-second interval timer are held by `[loop]` next to the session state,
 and on a retry it puts the same request back into the request queue. That is how `[control]` keeps
 that section's rule of "the only state is the resolved server address".

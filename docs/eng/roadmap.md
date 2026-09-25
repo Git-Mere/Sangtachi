@@ -64,7 +64,7 @@ P4: Encryption + relay + GUI + extra platforms                                  
 - Add the test executable and register it with CTest ([ADR 0005](decisions/0005-test-framework-catch2.md))
 - Wrap Winsock2 initialization and teardown (`WSAStartup` / `WSACleanup`)
 - Implement a UDP socket wrapper (`socket`, `bind`, `sendto`, `recvfrom`, `WSAEventSelect` event handle)
-- Implement the event loop skeleton. `WaitForMultipleObjects`, timer deadline computation, drain pattern ([`architecture.md`](architecture.md) 3.2)
+- Implement the event loop skeleton. `WaitForMultipleObjects`, timer deadline computation, drain pattern ([`concurrency.md`](concurrency.md))
 - Implement the endpoint representation type (parsing, comparison, printing)
 - Send and receive UDP packets between two known endpoints
 - Add basic logging
@@ -89,8 +89,8 @@ Client A <------ UDP ------> Client B
     (`architecture.md` 9)
   - Do not compare bytes by eye
 - On a socket error the process does not die and the error code is logged
-- Console command queue cap (`architecture.md` 3.2.6 Telemetry Isolation). **Observe with the
-  consumer stopped**
+- Console command queue cap ([`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation).
+  **Observe with the consumer stopped**
   - If `[loop]` drains the queue, pushing 17 lines never overflows. Use either a queue-unit test with
     consumption blocked or a test that deliberately holds `[loop]` and injects 17 lines
   - Under that condition the first 16 lines remain in order and the 17th is dropped and
@@ -111,7 +111,7 @@ Client A <------ UDP ------> Client B
   > violating chapter 6.
 - Multiple datagrams that arrived on a single signal are processed in the same round (drain pattern works)
 - An oversized datagram does not break batching. **Run the two paths separately**
-  (`architecture.md` 3.2.3 One Loop Iteration)
+  (`concurrency.md` chapter 3 One Loop Iteration)
   - (a) Exactly 1473 bytes is caught by the length comparison (`n > MAX_DATAGRAM`)
   - (b) 1474 bytes or more is caught by `WSAEMSGSIZE`
   - Insert each between several normal datagrams. Check that the oversized one increments
@@ -244,7 +244,7 @@ is Phase 4.
 - Per-source rate limiting and `MAX_INFLIGHT`
 - Store room/peer state in DynamoDB
 - Implement the C++ control plane client. The `[control]` thread and two queues
-  ([`architecture.md`](architecture.md) 3.2.8 The `[control]` Thread), a minimal HTTP/1.1 client,
+  ([`concurrency.md`](concurrency.md) chapter 8 The `[control]` Thread), a minimal HTTP/1.1 client,
   error classification and retry (`control_plane.md` 8)
 - Complete startup input handling. `--server`, `--room`, and `--rejoin` are actually used
   (`architecture.md` 3.5)
@@ -346,7 +346,8 @@ what gets run.
     control request is outstanding
   - Watch console command responses too, but do not judge on them alone. At human typing speed even a
     stall of tens of seconds looks like "it responded"
-  - An implementation with `connect` on `[loop]` is caught here (`architecture.md` 3.2.8)
+  - An implementation with `connect` on `[loop]` is caught here
+    ([`concurrency.md`](concurrency.md) chapter 8)
 - Control plane retry on the client (`control_plane.md` 8.3 Error Classification and Retry)
   - On `rate_limited`, `room_full`, or `unauthorized` the client reports
     `CONTROL_PLANE_EXCHANGE_FAILED` immediately without retry
@@ -469,10 +470,9 @@ Established without router port forwarding in supported environments. The packet
 Contracts of the tools the verification procedures use. These are equipment, not pass criteria.
 
 - **Pin the console commands used by the verification procedures.** The minimum vocabulary accepted by
-  the `[console]` scaffolding of Phases 1-5 ([`architecture.md`](architecture.md) 3.2 Concurrency
-  Model) is four commands
-  - `quit` signals the shutdown event and starts the normal shutdown procedure (`architecture.md`
-    3.2.3 One Loop Iteration)
+  the `[console]` scaffolding of Phases 1-5 ([`concurrency.md`](concurrency.md)) is four commands
+  - `quit` signals the shutdown event and starts the normal shutdown procedure (`concurrency.md`
+    chapter 3 One Loop Iteration)
   - `counters` dumps all counters to the log immediately (`architecture.md` 9). Verification items
     that read counters take their snapshot with this command
   - `raw <byte count>` is the raw send of Phases 1-2, and its contract is in `architecture.md` 3.5
@@ -691,8 +691,9 @@ The round-trip test and the failure-code test below are started and ended with t
   **Pin the comparison point**
   - Compare, byte for byte including length, the payload byte string the sender held just before
     encapsulation with the payload byte string the payload hook received after passing 8.4 validation
-  - That hook is where a `DATA` that passed 8.4 goes in a build without an adapter, and its contract is
-    in `architecture.md` 3.2.3 One Loop Iteration. The echo responder attaches at the same place
+  - That hook is where a `DATA` that passed 8.4 goes in a build without an adapter, and its
+    contract is in [`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration. The echo
+    responder attaches at the same place
   - Do not compare log strings or a reconstructed header
   - In the product build, also confirm that such a `DATA` is dropped as `drop_no_sink`. The hook must
     not remain in the product build
@@ -711,7 +712,7 @@ The round-trip test and the failure-code test below are started and ended with t
     `PING` has not run yet, and the termination line carries the last sample. An empty value is not
     judged as failure
 - On hole punching failure, `HOLE_PUNCH_TIMEOUT` is recorded and the process exits normally.
-  **Reaching `FAILED` is itself the shutdown trigger** (`architecture.md` 3.2.7 Shutdown)
+  **Reaching `FAILED` is itself the shutdown trigger** (`concurrency.md` chapter 7 Shutdown)
   - Also confirm by capture that `HELLO` retransmission stops at that transition. In an implementation
     that does not stop, a finished session keeps firing at every candidate (`protocol.md` 9.6)
 - The RTT baseline comparison uses **a round trip on the same socket and the same endpoint pair,** not
@@ -796,7 +797,7 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
 | 20 | **One-way arrival and comparison.** Not a round trip. See the note below |
 | 576 | Round trip succeeds. Midpoint |
 | 1452 | Round trip succeeds. `MAX_INNER` boundary |
-| 1453 | `tx_drop_oversize` on send. **The receive side is not tested with this table.** The datagram is 20+1453 = 1473 bytes, so the `n > MAX_DATAGRAM` length comparison discards it as `drop_oversize_datagram` and it never reaches the validation pipeline (`architecture.md` 3.2.3. The `WSAEMSGSIZE` path starts at 1474 bytes) |
+| 1453 | `tx_drop_oversize` on send. **The receive side is not tested with this table.** The datagram is 20+1453 = 1473 bytes, so the `n > MAX_DATAGRAM` length comparison discards it as `drop_oversize_datagram` and it never reaches the validation pipeline ([`concurrency.md`](concurrency.md) chapter 3. The `WSAEMSGSIZE` path starts at 1474 bytes) |
 
   The match verdict for round-trip success cases uses the same comparison point as Phase 4 (the
   payload hook).
@@ -868,7 +869,7 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
   - If it is not added, aborting is the final v1 behavior and that limit stays in section 7
 - **Before starting, confirm how Wintun injection failure is reported.** Check in the header used and
   its documentation which call fails and in what form, and record in
-  [`architecture.md`](architecture.md) 3.2.3 One Loop Iteration whether "ring full" gets its own
+  [`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration whether "ring full" gets its own
   counter
   - The behavioral contract (discard, `drop_inject_error`, no retry, non-blocking loop) is already
     fixed, so the only thing this item blocks is counter granularity
@@ -945,9 +946,9 @@ Two Windows machines communicate using virtual IPs only.
     tunnel build. If the tunnel code had to be changed to switch applications, NFR-2 does not hold
 - Maximum-size packets are delivered without fragmentation (MTU value fixed by measurement)
 - Packets sent to a virtual IP with no routing target are discarded and the counter increments
-- Injection failure handling ([`architecture.md`](architecture.md) 3.2.3 One Loop Iteration). When the
-  send ring is made full, that packet is discarded as `drop_inject_error` and **the loop does not wait
-  there**
+- Injection failure handling ([`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration).
+  When the send ring is made full, that packet is discarded as `drop_inject_error` and **the
+  loop does not wait there**
   - The verdict does not look at the counter alone. Also check that the keepalive send interval is
     maintained during the interval where injection fails
   - An implementation that retries until space frees up is caught because that interval collapses
@@ -1043,7 +1044,8 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - Estimate jitter
 - Record tunnel throughput
 - Record session duration
-- Move telemetry upload to a dedicated thread and a lossy queue (`architecture.md` 3.2.6 Telemetry Isolation)
+- Move telemetry upload to a dedicated thread and a lossy queue
+  ([`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation)
 - Test across multiple network environments
 - Compare successful and failed NAT traversal cases (by observed mapping behavior, not NAT type)
 - Visualize experimental results
@@ -1101,8 +1103,8 @@ A repeatable experiment set and data for the final report and presentation.
   validate identifiers fails here
 - With the queue full, metric recording on `[loop]` does not block and `telemetry_queue_dropped`
   increments. **Also check the size and the drop direction**
-  - The ring size is owned by `architecture.md` 3.2.6 Telemetry Isolation. The value at this point is
-    256 entries
+  - The ring size is owned by [`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation.
+    The value at this point is 256 entries
   - When full it drops the new record. An implementation that drops the oldest must be filtered here
 
   > **Why.** Dropping the oldest makes the metrics look better, but the producer is moving the

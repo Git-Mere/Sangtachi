@@ -47,7 +47,7 @@ std::size_t ConsoleQueue::size() const noexcept {
 std::shared_ptr<ConsoleSession> ConsoleSession::create() {
     // make_shared 를 쓰지 않는다. 생성자가 비공개다.
     std::shared_ptr<ConsoleSession> session(new ConsoleSession());
-    // 자동 리셋이라 `[loop]` 가 별도 리셋 호출을 하지 않는다 (architecture.md 3.2.3).
+    // 자동 리셋이라 `[loop]` 가 별도 리셋 호출을 하지 않는다 (concurrency.md 3장).
     session->event_ = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (session->event_ == nullptr) {
         return nullptr;

@@ -99,7 +99,7 @@ DrainOutcome EventLoop::drain_udp() {
             case network::RecvStatus::WouldBlock:
                 return DrainOutcome::Empty;
             case network::RecvStatus::Oversize:
-                // 과대 데이터그램에서 비우기를 멈추지 않는다 (architecture.md 3.2.3).
+                // 과대 데이터그램에서 비우기를 멈추지 않는다 (concurrency.md 3장).
                 // 멈추면 과대분을 섞어 보내는 것만으로 배칭이 무력화된다.
                 counters_.increment(Counter::DropOversizeDatagram);
                 continue;
@@ -160,8 +160,8 @@ void EventLoop::handle_command(std::string_view line) {
         return;
     }
     if (command == "quit") {
-        // shutdown() 을 직접 부르지 않는다. 종료 이벤트를 신호해 다음 바퀴가 3.2.7 의
-        // 순서를 그대로 타게 한다 (architecture.md 3.2.3).
+        // shutdown() 을 직접 부르지 않는다. 종료 이벤트를 신호해 다음 바퀴가 concurrency.md 7장 의
+        // 순서를 그대로 타게 한다 (concurrency.md 3장).
         request_shutdown();
         return;
     }
@@ -194,7 +194,7 @@ void EventLoop::handle_command(std::string_view line) {
 
 void EventLoop::drain_console() {
     // 콘솔이 버린 수를 여기서 표에 반영한다. 그 카운터만 생산자가 올린다
-    // (architecture.md 3.2.6).
+    // (concurrency.md 6장).
     counters_.set(Counter::ConsoleQueueDropped, console_.dropped());
 
     while (auto line = console_.try_pop()) {
@@ -204,7 +204,7 @@ void EventLoop::drain_console() {
 
 bool EventLoop::run_once() {
     // 살아 있는 핸들만 모아 조밀한 배열을 만든다. 빈자리에 NULL 을 넣으면 WAIT_FAILED 가
-    // 난다 (architecture.md 3.2.2). 논리적 순위와 배열 인덱스는 다르다.
+    // 난다 (concurrency.md 2장). 논리적 순위와 배열 인덱스는 다르다.
     HANDLE handles[3];
     DWORD count = 0;
     const DWORD shutdown_index = count;
@@ -235,7 +235,7 @@ bool EventLoop::run_once() {
     (void)udp_index;
     (void)console_index;
 
-    // 반환값으로 분기하지 않는다. 매 바퀴 양쪽을 모두 비운다 (architecture.md 3.2.3).
+    // 반환값으로 분기하지 않는다. 매 바퀴 양쪽을 모두 비운다 (concurrency.md 3장).
     // 이 호출이 이벤트 리셋과 네트워크 이벤트 조회를 한 번에 처리한다. 빠뜨리면 이벤트가
     // 신호 상태로 남아 루프가 스핀한다.
     socket_.enumerate_events();

@@ -43,8 +43,9 @@ docs/eng/    영어. 미러
 |------|------|
 | `spec.md` | 요구사항 FR/NFR/C, 성공 기준 M/T/A |
 | `roadmap.md` | Phase 1~9. 목표, 작업, 산출물, 검증 |
-| `architecture.md` | 시스템 구성, 모듈 분해, 동시성 모델(3.2), 데이터 평면 경로 |
+| `architecture.md` | 시스템 구성, 모듈 분해, 데이터 평면 경로. 3.2 동시성 모델은 `concurrency.md` 를 가리키는 요약이다 |
 | `protocol.md` | **터널/STUN 와이어 프로토콜의 단일 출처.** 상수, 오프셋, 타이머 값, 전이표, 검증 파이프라인. 14장은 제어 평면이 지켜야 할 계약만 적고 HTTP/JSON 인코딩은 정하지 않는다 |
+| `concurrency.md` | **클라이언트 스레드와 루프 구조의 단일 출처.** 스레드 구성, 대기 집합, 루프 한 바퀴, 타이머, 상태 소유, 텔레메트리 격리, 종료, `[control]` 스레드. `architecture.md` 3.2 는 이 문서를 가리키는 요약이다 |
 | `control_plane.md` | **제어 평면의 단일 출처.** 연산, HTTP/JSON 인코딩, 오류, 식별자, 방·피어 상태 전이, DynamoDB 테이블 설계, 서버 모듈, 클라이언트 호출 계약. `architecture.md` 3.3·6장과 `protocol.md` 14장은 이 문서를 가리키는 요약이다 |
 | `windows-prereq.md` | **실행 전제의 단일 출처.** 관리자 권한, 방화벽, 어댑터 정리, 서브넷 충돌, Wintun 패키징, EC2. 절마다 확인 방법과 통과 조건을 적는다. 명령이 없는 절도 있다 |
 | `plan.md` | **다음 세션 인수인계.** 남은 일, 대기 중인 것, 문서 부채. 끝난 일의 경과는 담지 않는다. **한국어만 둔다** |
@@ -62,7 +63,7 @@ docs/eng/    영어. 미러
 때문이다.
 
 **막는 것은 둘이다.** (1) 살아 있는 문서(`spec.md`, `roadmap.md`, `architecture.md`,
-`protocol.md`, `control_plane.md`, `plan.md`, `windows-prereq.md`)가 `audit-history/` 나
+`protocol.md`, `concurrency.md`, `control_plane.md`, `plan.md`, `windows-prereq.md`)가 `audit-history/` 나
 `commit_history/` 를 근거로 링크하는 것. 그러면 확정 문서가 아닌 것이 출처가 된다.
 (2) 이 파일이 `audit-history/`를 가리키는 것. 규칙의 원문이 여기로 왔으므로 가리킬 이유가 없다.
 
@@ -73,7 +74,7 @@ ADR 은 그 시점의 사실을 적는 기록이면서 **버린 대안과 그 �
 ADR 과 살아 있는 문서가 어긋나면 살아 있는 문서가 맞다.
 
 **와이어 포맷, 상태 전이, 프로토콜 타이머 값**이 충돌하면 `protocol.md`가 맞다. 요구사항은
-`spec.md`, 스레드와 루프 구조는 `architecture.md` 3.2가 각각 출처이며 `protocol.md`가 그것을
+`spec.md`, 스레드와 루프 구조는 `concurrency.md`가 각각 출처이며 `protocol.md`가 그것을
 덮지 않는다. 구현 중 문서에 없는 값을 만나면 코드에서 임의로 정하지 말고 해당 문서를 먼저 고친다.
 
 ## 규칙
@@ -90,7 +91,8 @@ python tools/docgate/docgate.py --claims   # 강한 주장 문구 목록. 종료
 `experiments.md` 하나뿐이다 (Phase 9 산출물). 미러 짝이 없어도 되는 문서는 `plan.md` 하나뿐이다.
 
 **살아 있는 문서에는 날짜와 감사 식별자를 적지 않는다.** `spec.md`, `roadmap.md`,
-`architecture.md`, `protocol.md`, `control_plane.md`, `windows-prereq.md` 는 **현재 사양**만 담는다. 언제 무엇이
+`architecture.md`, `protocol.md`, `concurrency.md`, `control_plane.md`, `windows-prereq.md` 는
+**현재 사양**만 담는다. 언제 무엇이
 해소됐는지는 `commit_history/` 와 `audit-history/` 가 갖는다. 근거가 필요하면 날짜로
 대신하지 말고 **무엇을 어떻게 측정했는지를 그 자리에 적는다.** 날짜는 근거가 아니다.
 `plan.md` 는 예외다. 작업 추적이 그 문서의 일이다.
@@ -187,27 +189,27 @@ ADR 0002 의 미실행 PowerShell 절차 25건(규칙 6)이다.
 
 **문서를 줄일 때는 남길 목록을 먼저 만든다.** 분량을 목표로 삼으면 먼저 지우고 리뷰가
 되살리게 되어 라운드가 몇 배로 는다. 남길 기준은 **"이걸 모르면 틀린 결과를 맞다고 믿게 되는
-문장"** 이다. 근거는 `docs/kor/commit_history/2026-09-21-tool-readmes.md` 다. nat-probe
+문장"** 이다. 근거는 `docs/kor/commit_history/2026-09-21/11-tool-readmes.md` 다. nat-probe
 README 를 515에서 90줄로 자르면서 안전 경고 일곱 종류가 빠졌고 여섯 라운드가 들었다.
 
 **판정을 내는 절차는 케이스 표를 먼저 쓰고, 그 표를 돌릴 수 있는 자리에 둔다.** 위 규칙 7을
 문서 안 절차에까지 넓힌 것이다. 케이스 표가 없으면 리뷰어가 반례를 한 라운드에 하나씩 던지게
 되고, 라운드 수가 결함 수가 아니라 반례 수를 따라간다. 근거는
-`docs/kor/commit_history/2026-09-21-docgate.md` 다.
+`docs/kor/commit_history/2026-09-21/01-docgate.md` 다.
 
 **리뷰 지적을 기각하면 그 결정을 두 곳에 적는다. 문서 안과 다음 라운드 프롬프트다.** 커밋
 기록에만 적으면 다음 리뷰어는 그것을 보지 않으므로 같은 지적이 라운드마다 다시 올라온다.
 문서에 적으면 레포를 읽는 리뷰어가 알고, 프롬프트에 적으면 그 라운드가 그 자리를 건너뛴다.
-근거는 `docs/kor/commit_history/2026-09-21-followup4-spec-logic.md` 의 2라운드다.
+근거는 `docs/kor/commit_history/2026-09-21/04-followup4-spec-logic.md` 의 2라운드다.
 
 ### 가독성 규칙 6개
 
 **살아 있는 문서는 사람도 읽는다.** 리뷰 라운드를 거칠수록 규칙과 근거가 섞이고, 볼드가
 늘고, 링크가 문장을 끊는다. 살아 있는 문서를 고칠 때 아래 여섯을 지킨다.
 
-적용 대상은 위 "문서 역할" 표의 일곱 문서다. 영어 미러에는 `plan.md` 이 없으므로 여섯이다.
+적용 대상은 위 "문서 역할" 표의 여덟 문서다. 영어 미러에는 `plan.md` 이 없으므로 일곱이다.
 기록 폴더(`audit-history/`, `commit_history/`, `decisions/`)는 대상이 아니다. 근거는
-`docs/kor/commit_history/2026-09-22-문서-가독성-정리.md` 다.
+`docs/kor/commit_history/2026-09-22/04-문서-가독성-정리.md` 다.
 
 1. **규칙과 근거를 층위로 나눈다.** 근거가 한두 문장이면 그 자리에 `> **왜.** ...` 인용
    블록으로 둔다. 문단 단위면 그 장 끝의 `### 왜 이렇게 정했나` 절로 옮긴다. 근거를 지우는
@@ -349,7 +351,7 @@ Phase 1 을 진행 중이다. 빌드 뼈대(`client/`, `cmake/`, `tests/`, `scri
 **제어 평면 상태 저장소는 SQLite 가 아니라 Amazon DynamoDB 다** ([ADR 0004](docs/kor/decisions/0004-상태-저장소-dynamodb.md)).
 `boto3` 는 NFR-5 승인을 받았다. 둘 다 제어 평면 스키마 문서를 쓰기 전에 정한 것이다.
 **제어 평면 스키마는 `docs/kor/control_plane.md` 가 확정했다.** 설계 감사 2차 후속(제어 평면 묶음)도 그 문서로 끝났다.
-클라이언트에 `[control]` 스레드가 하나 늘었고(`architecture.md` 3.2.8) 기동 입력은 `architecture.md` 3.5 다.
+클라이언트에 `[control]` 스레드가 하나 늘었고(`concurrency.md` 8장) 기동 입력은 `architecture.md` 3.5 다.
 4번에서 `DATA` 최소 왕복과 로컬 기록을 Phase 4로 당겨 **최소 성공 M-1 ~ M-6이 P0만으로
 성립**하게 했고, **마일스톤 구분을 없앴다.** Phase를 주차에 못박지 않는다.
 
@@ -370,6 +372,6 @@ Phase 1 을 진행 중이다. 빌드 뼈대(`client/`, `cmake/`, `tests/`, `scri
 | `tools/nat-probe/` | NAT 매핑과 홀펀칭 실측. 실측 22건을 마쳤다 | 163건 |
 
 방화벽 시험 스크립트는 기계 검증까지 끝났다. 근거는 커밋 `c48d9dd` 와 그 기록
-`docs/{kor,eng}/commit_history/2026-09-20-firewall-script-first-run.md` 다. **실측은 상대가
+`docs/{kor,eng}/commit_history/2026-09-20/05-firewall-script-first-run.md` 다. **실측은 상대가
 필요해 대기다.**
 실측 원본과 기록은 공인 IP 때문에 `.gitignore` 로 로컬 보관한다.

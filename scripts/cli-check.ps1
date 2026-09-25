@@ -70,7 +70,7 @@ function Format-Argument([string]$value) {
 $failed = 0
 foreach ($c in $cases) {
     # 인자가 맞으면 이 프로그램은 이벤트 루프로 들어가 quit 을 받을 때까지 끝나지 않는다
-    # (architecture.md 3.2.7 종료). 그래서 표준 입력으로 quit 을 넣고 닫는다.
+    # (concurrency.md 7장 종료). 그래서 표준 입력으로 quit 을 넣고 닫는다.
     #
     # 표준 오류는 직접 읽는다. 파이프라인에 섞으면 PowerShell 이 ErrorRecord 로 감싸
     # 원래 줄을 그대로 볼 수 없다.

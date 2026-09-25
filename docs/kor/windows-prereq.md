@@ -678,7 +678,7 @@ Set-NetIPInterface -InterfaceAlias '<어댑터 이름>' -AddressFamily IPv4 -Dad
 **분류: 사람.** Elastic IP 를 붙이고 DNS 이름이 그것을 가리키게 한다. 클라이언트는 DNS
 이름을 받는다([`control_plane.md`](control_plane.md) 3.2 주소). 둘 중 하나가 아니라 둘 다다.
 DNS 만 쓰고 뒤의 주소가 바뀌면 클라이언트가 기동 시 한 번만 해석하므로
-([`architecture.md`](architecture.md) 3.2.8 `[control]` 스레드) 켜 둔 클라이언트는 옛
+([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드) 켜 둔 클라이언트는 옛
 주소로 간다.
 
 ```bash

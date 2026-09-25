@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
             return kStartupFailure;
         }
 
-        // `[console]` 은 join 하지 않는다 (architecture.md 3.2.7 종료). 표준 입력 읽기를
+        // `[console]` 은 join 하지 않는다 (concurrency.md 7장 종료). 표준 입력 읽기를
         // 밖에서 취소하는 수단을 쓰지 않으므로 join 하면 사용자가 한 줄을 더 칠 때까지
         // 종료가 멈춘다.
         //
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
         loop.run();
         session->request_stop();
 
-        // 3.2.7 종료의 (4). 카운터 전량을 낸다.
+        // concurrency.md 7장 종료의 (4). 카운터 전량을 낸다.
         sangtachi::emit_all(counters);
     } catch (const sangtachi::network::WsaStartupError& e) {
         emit_socket_error("WSAStartup", e.code());

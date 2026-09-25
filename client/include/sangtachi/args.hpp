@@ -34,8 +34,8 @@ enum class Role {
 
 // 이름 또는 IPv4 리터럴과 포트. 해석하지 않은 값이다.
 //
-// 이름 해석은 [control] 스레드와 기동 시 STUN 해석이 맡는다 (architecture.md 3.2.8,
-// 3.5). 여기서는 적은 그대로 들고 있는다.
+// 이름 해석은 [control] 스레드와 기동 시 STUN 해석이 맡는다 (concurrency.md 8장,
+// architecture.md 3.5). 여기서는 적은 그대로 들고 있는다.
 struct HostPort {
     std::string host;
     std::uint16_t port = 0;

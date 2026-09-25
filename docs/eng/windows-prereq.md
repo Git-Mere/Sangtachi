@@ -717,8 +717,8 @@ is the measure below.
 **Owner: person.** Attach an Elastic IP and point a DNS name at it. The client receives the DNS
 name ([`control_plane.md`](control_plane.md) 3.2 Address). Not one of the two, but both. If only
 DNS is used and the address behind it changes, a client that is already running keeps going to the
-old address, because the client resolves once at startup ([`architecture.md`](architecture.md)
-3.2.8 The `[control]` Thread).
+old address, because the client resolves once at startup ([`concurrency.md`](concurrency.md)
+chapter 8 The `[control]` Thread).
 
 ```bash
 aws ec2 describe-addresses \

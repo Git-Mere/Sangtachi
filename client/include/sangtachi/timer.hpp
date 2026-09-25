@@ -1,12 +1,12 @@
 #pragma once
 
-// 타이머 (architecture.md 3.2.4 타이머, 3.2.2 대기).
+// 타이머 (concurrency.md 4장 타이머, 2장 대기).
 //
 // 단조 시계는 GetTickCount64 다. 밀리초 단위 64비트라 실질적으로 랩어라운드가 없다.
 // RTT 측정만 QueryPerformanceCounter 를 쓰고 두 시계의 값을 서로 비교하지 않는다.
 //
 // 타이머 집합이 작으므로 매 바퀴 선형 주사로 가장 이른 마감을 구한다. 타이머 휠은 쓰지
-// 않는다 (3.2.4).
+// 않는다 (concurrency.md 4장).
 
 #include <cstddef>
 #include <cstdint>

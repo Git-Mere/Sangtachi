@@ -4,15 +4,15 @@
 //
 // 이름의 출처는 세 문서다. 여기서 새로 짓지 않는다.
 //   protocol.md 6장·7장·8장   tx_err_*, drop_* 의 대부분
-//   architecture.md 3.2.3     drop_oversize_datagram, drop_inject_error, drop_no_sink, adapter_rx
-//   architecture.md 3.2.6·3.2.8  telemetry_queue_dropped, console_queue_dropped, control_queue_dropped
+//   concurrency.md 3장     drop_oversize_datagram, drop_inject_error, drop_no_sink, adapter_rx
+//   concurrency.md 6장·8장  telemetry_queue_dropped, console_queue_dropped, control_queue_dropped
 //
 // 아직 아무도 올리지 않는 이름도 들고 있다. 9장이 "값이 0인 카운터도 함께 낸다" 로 정했고,
 // 그래야 검증이 "오르지 않았다" 를 판정할 수 있다. 없는 것과 0 인 것은 다르다.
 //
-// **이 표는 `[loop]` 가 단독 소유한다** (architecture.md 3.2.5 상태 소유). 예외는
+// **이 표는 `[loop]` 가 단독 소유한다** (concurrency.md 5장 상태 소유). 예외는
 // `console_queue_dropped` 하나이고, 그것은 `[console]` 이 올리는 원자 변수라 큐 쪽이
-// 들고 있다. `[loop]` 가 낼 때 그 값을 읽어 `set` 으로 이 표에 반영한다 (3.2.6).
+// 들고 있다. `[loop]` 가 낼 때 그 값을 읽어 `set` 으로 이 표에 반영한다 (concurrency.md 6장).
 
 #include <array>
 #include <cstddef>
@@ -76,7 +76,7 @@ public:
     void increment(Counter counter) noexcept { add(counter, 1); }
     void add(Counter counter, std::uint64_t amount) noexcept;
 
-    // `[console]` 이 올린 원자 변수를 `[loop]` 가 읽어 넣는 자리다 (3.2.6).
+    // `[console]` 이 올린 원자 변수를 `[loop]` 가 읽어 넣는 자리다 (concurrency.md 6장).
     void set(Counter counter, std::uint64_t value) noexcept;
 
     [[nodiscard]] std::uint64_t value(Counter counter) const noexcept;

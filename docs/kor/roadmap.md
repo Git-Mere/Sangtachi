@@ -61,7 +61,7 @@ P4: 암호화 + 릴레이 + GUI + 추가 플랫폼                              
 - 시험 실행 파일과 CTest 등록 ([ADR 0005](decisions/0005-시험-프레임워크-catch2.md))
 - Winsock2 초기화 및 해제 (`WSAStartup` / `WSACleanup`) 래핑
 - UDP 소켓 래퍼 구현 (`socket`, `bind`, `sendto`, `recvfrom`, `WSAEventSelect` 이벤트 핸들)
-- 이벤트 루프 골격 구현. `WaitForMultipleObjects`, 타이머 마감 계산, drain 패턴 ([`architecture.md`](architecture.md) 3.2)
+- 이벤트 루프 골격 구현. `WaitForMultipleObjects`, 타이머 마감 계산, drain 패턴 ([`concurrency.md`](concurrency.md))
 - 엔드포인트 표현 타입 구현 (파싱, 비교, 출력)
 - 알려진 두 엔드포인트 간 UDP 패킷 송수신
 - 기본 로깅 추가
@@ -85,7 +85,8 @@ Client A <------ UDP ------> Client B
   - **판정은 `rx.raw` 로그 두 줄의 `len` 과 `sha256` 대조다** (`architecture.md` 9장)
   - 눈으로 바이트를 비교하지 않는다
 - 소켓 오류 시 프로세스가 죽지 않고 오류 코드를 로그에 남김
-- 콘솔 명령 큐 상한(`architecture.md` 3.2.6 텔레메트리 격리). **소비자를 멈춘 상태에서 본다**
+- 콘솔 명령 큐 상한([`concurrency.md`](concurrency.md) 6장 텔레메트리 격리). **소비자를 멈춘
+  상태에서 본다**
   - `[loop]`가 큐를 비우면 17줄을 넣어도 넘치지 않는다. 소비를 막은 큐 단위 시험이거나
     `[loop]`를 의도적으로 붙잡은 상태에서 17줄을 주입한다
   - 그 조건에서 앞의 16줄이 순서대로 남고 17번째가 버려지며 `console_queue_dropped` 가 오른다
@@ -101,7 +102,7 @@ Client A <------ UDP ------> Client B
 
   > **왜.** 적용값만 보면 128KB를 요청한 구현도 통과해 6장을 어긴 채 넘어간다.
 - 한 번의 신호로 도착한 데이터그램 여러 개가 같은 바퀴에 처리됨 (drain 패턴 동작)
-- 과대 데이터그램이 배칭을 끊지 않음. **두 경로를 따로 돌린다** (`architecture.md` 3.2.3 루프 한 바퀴)
+- 과대 데이터그램이 배칭을 끊지 않음. **두 경로를 따로 돌린다** (`concurrency.md` 3장 루프 한 바퀴)
   - (a) 정확히 1473바이트는 길이 비교(`n > MAX_DATAGRAM`)로 걸린다
   - (b) 1474바이트 이상은 `WSAEMSGSIZE`로 걸린다
   - 각각을 정상 데이터그램 여러 개 사이에 끼워 보낸다. 과대분이 `drop_oversize_datagram`으로
@@ -214,7 +215,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 출발지별 속도 제한과 `MAX_INFLIGHT`
 - DynamoDB에 방/피어 상태 저장
 - C++ 측 제어 평면 클라이언트 구현. `[control]` 스레드와 두 큐
-  ([`architecture.md`](architecture.md) 3.2.8 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
+  ([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
   오류 분류와 재시도 (`control_plane.md` 8장)
 - 기동 입력 처리 완성. `--server`, `--room`, `--rejoin` 이 실제로 쓰인다 (`architecture.md` 3.5)
 
@@ -301,7 +302,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
     넘지 않는다
   - 콘솔 명령 응답도 함께 보되 그것만으로 판정하지 않는다. 사람이 치는 속도로는 수십 초 멈춘
     것도 "응답했다" 로 보인다
-  - `connect` 가 `[loop]` 에 있는 구현은 여기서 걸린다 (`architecture.md` 3.2.8)
+  - `connect` 가 `[loop]` 에 있는 구현은 여기서 걸린다 ([`concurrency.md`](concurrency.md) 8장)
 - 클라이언트의 제어 평면 재시도 (`control_plane.md` 8.3 오류 분류와 재시도)
   - `rate_limited`, `room_full`, `unauthorized` 를 받으면 재시도 없이 즉시
     `CONTROL_PLANE_EXCHANGE_FAILED` 다
@@ -409,8 +410,8 @@ PC A <========== Direct UDP ==========> PC B
 검증 절차가 쓰는 도구의 계약이다. 검증 기준이 아니라 준비물이다.
 
 - **검증 절차가 쓰는 콘솔 명령을 못박는다.** Phase 1~5 의 `[console]` 스캐폴딩
-  ([`architecture.md`](architecture.md) 3.2 동시성 모델)이 받는 최소 어휘는 넷이다
-  - `quit` 는 종료 이벤트를 신호해 정상 종료 절차를 시작한다 (`architecture.md` 3.2.3 루프 한
+  ([`concurrency.md`](concurrency.md))이 받는 최소 어휘는 넷이다
+  - `quit` 는 종료 이벤트를 신호해 정상 종료 절차를 시작한다 (`concurrency.md` 3장 루프 한
     바퀴)
   - `counters` 는 카운터 전량을 즉시 로그로 낸다 (`architecture.md` 9장). 카운터를 보는 검증
     항목이 이 명령으로 시점을 잡는다
@@ -605,8 +606,9 @@ PC A <========== Direct UDP ==========> PC B
   못박는다**
   - 송신 측이 캡슐화 직전에 가진 페이로드 바이트열과, 수신 측이 8.4 검증을 통과한 뒤 페이로드
     훅이 받은 바이트열을 길이를 포함해 byte-for-byte 비교한다
-  - 그 훅이 어댑터 없는 빌드에서 8.4 통과 `DATA` 가 가는 자리이고 계약은 `architecture.md`
-    3.2.3 루프 한 바퀴에 있다. 에코 응답기도 같은 자리에 붙는다
+  - 그 훅이 어댑터 없는 빌드에서 8.4 통과 `DATA` 가 가는 자리이고 계약은
+    [`concurrency.md`](concurrency.md) 3장 루프 한 바퀴에 있다. 에코 응답기도 같은 자리에
+    붙는다
   - 로그 문자열이나 재구성한 헤더를 비교하지 않는다
   - 제품 빌드에서는 그 `DATA` 가 `drop_no_sink` 로 버려지는 것도 함께 확인한다. 훅이 제품
     빌드에 남아 있으면 안 된다
@@ -622,7 +624,7 @@ PC A <========== Direct UDP ==========> PC B
   - RTT 는 표본이 없으면 비어 있는 것이 정상이다. 수립 줄은 `PING` 이 아직 돌기 전이라 대개
     비어 있고, 종료 줄에 마지막 표본이 들어간다. 빈 값을 실패로 판정하지 않는다
 - 홀펀칭 실패 시 `HOLE_PUNCH_TIMEOUT`이 기록되고 프로세스는 정상 종료.
-  **`FAILED` 도달이 곧 종료 계기다** (`architecture.md` 3.2.7 종료)
+  **`FAILED` 도달이 곧 종료 계기다** (`concurrency.md` 7장 종료)
   - 그 전이에서 `HELLO` 재전송이 멈추는 것도 캡처로 함께 본다. 멈추지 않는 구현은 끝난 세션이
     후보 전체로 계속 쏜다 (`protocol.md` 9.6)
 - RTT 기준선 비교는 ICMP가 아니라 **같은 소켓, 같은 엔드포인트 쌍에서의 왕복**으로 한다
@@ -694,7 +696,7 @@ PC A <========== Direct UDP ==========> PC B
 | 20 | **편도 도달과 비교.** 왕복이 아니다. 아래 단서 |
 | 576 | 왕복 성공. 중간값 |
 | 1452 | 왕복 성공. `MAX_INNER` 경계 |
-| 1453 | 송신 시 `tx_drop_oversize`. **수신 쪽은 이 표로 시험하지 않는다.** 데이터그램이 20+1453 = 1473바이트라 `n > MAX_DATAGRAM` 길이 비교에서 `drop_oversize_datagram` 으로 버려져 검증 파이프라인에 닿지 않는다 (`architecture.md` 3.2.3. `WSAEMSGSIZE` 경로는 1474바이트부터다) |
+| 1453 | 송신 시 `tx_drop_oversize`. **수신 쪽은 이 표로 시험하지 않는다.** 데이터그램이 20+1453 = 1473바이트라 `n > MAX_DATAGRAM` 길이 비교에서 `drop_oversize_datagram` 으로 버려져 검증 파이프라인에 닿지 않는다 ([`concurrency.md`](concurrency.md) 3장. `WSAEMSGSIZE` 경로는 1474바이트부터다) |
 
   왕복 성공 케이스의 일치 판정은 Phase 4와 같은 비교 지점(페이로드 훅)을 쓴다.
 
@@ -760,7 +762,7 @@ PC A <========== Direct UDP ==========> PC B
   - 넣지 않기로 하면 중단이 v1 의 최종 동작이고 그 한계를 7절에 그대로 둔다
 - **착수 전 Wintun 주입 실패의 표현 확인.** 쓰는 헤더와 그 문서에서 실패가 어느 호출에서 어떤
   형태로 나오는지 확인하고, "링이 찬 것"을 별도 카운터로 나눌지를
-  [`architecture.md`](architecture.md) 3.2.3 루프 한 바퀴에 적는다
+  [`concurrency.md`](concurrency.md) 3장 루프 한 바퀴에 적는다
   - 동작 계약(폐기, `drop_inject_error`, 재시도 금지, 루프 비차단)은 이미 정해져 있으므로 이
     항목이 막는 것은 카운터 세분뿐이다
 - Wintun 의존성 **승인됨**. 제공 범위 문서화는 그대로 유지한다
@@ -833,7 +835,7 @@ Windows 가상 네트워킹은 예상보다 복잡할 수 있다. 이 작업은 
     돌린다. 애플리케이션을 바꾸느라 터널 코드를 고쳐야 했다면 NFR-2 가 성립하지 않는다
 - 최대 크기 패킷 전송 시 조각화 없이 전달 (실측으로 MTU 값 확정)
 - 라우팅 대상이 없는 가상 IP로 보낸 패킷은 폐기되고 카운터 증가
-- 주입 실패 처리([`architecture.md`](architecture.md) 3.2.3 루프 한 바퀴). 송신 링을 채운
+- 주입 실패 처리([`concurrency.md`](concurrency.md) 3장 루프 한 바퀴). 송신 링을 채운
   상태를 만들면 그 패킷이 `drop_inject_error`로 폐기되고 **루프가 그 자리에서 기다리지 않는다**
   - 판정은 카운터만 보지 않는다. 주입이 실패하는 구간에도 keepalive 송신 간격이 유지되는지
     같이 본다
@@ -919,7 +921,8 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 지터 추정
 - 터널 전송량 기록
 - 세션 지속 시간 기록
-- 텔레메트리 업로드를 전용 스레드와 유실 허용 큐로 분리 (`architecture.md` 3.2.6 텔레메트리 격리)
+- 텔레메트리 업로드를 전용 스레드와 유실 허용 큐로 분리 ([`concurrency.md`](concurrency.md) 6장
+  텔레메트리 격리)
 - 복수 네트워크 환경 테스트
 - 성공한 NAT 통과 사례와 실패 사례 비교 (NAT 유형이 아니라 관측된 매핑 거동 기준)
 - 실험 결과 시각화
@@ -968,7 +971,8 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - **제어 서버 프로세스만** 중지한 상태에서 지표 업로드가 정상 수신됨 (NFR-10). 분리 2의 판정이다. 텔레메트리가 식별자 유효성을 제어 평면에 묻는 구현이면 여기서 실패한다
 - 큐가 가득 찬 상태에서 `[loop]`의 지표 기록이 블록되지 않고 `telemetry_queue_dropped` 가
   증가함. **크기와 버리는 방향도 같이 본다**
-  - 링 크기는 `architecture.md` 3.2.6 텔레메트리 격리가 소유한다. 이 시점의 값은 256항목이다
+  - 링 크기는 [`concurrency.md`](concurrency.md) 6장 텔레메트리 격리가 소유한다. 이 시점의 값은
+    256항목이다
   - 가득 차면 새 레코드를 버린다. 가장 오래된 것을 버리는 구현은 여기서 걸러야 한다
 
   > **왜.** 가장 오래된 것을 버리면 지표는 더 좋아 보이지만, 생산자가 소비자의 tail 을

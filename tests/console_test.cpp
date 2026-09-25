@@ -10,7 +10,7 @@ using sangtachi::ConsoleQueue;
 using sangtachi::kConsoleQueueCapacity;
 
 TEST_CASE("console: the queue holds exactly the documented number of lines", "[console]") {
-    // architecture.md 3.2.6 이 16 줄로 정했다.
+    // concurrency.md 6장 이 16 줄로 정했다.
     REQUIRE(kConsoleQueueCapacity == 16);
 }
 

@@ -82,7 +82,7 @@ TEST_CASE("loop: shutdown makes one wheel return false", "[loop]") {
 }
 
 TEST_CASE("loop: one wheel drains many datagrams", "[loop]") {
-    // architecture.md 3.2.3: 한 번의 신호로 도착한 데이터그램 여러 개가 같은 바퀴에
+    // concurrency.md 3장: 한 번의 신호로 도착한 데이터그램 여러 개가 같은 바퀴에
     // 처리된다. 한 바퀴에 하나만 읽는 구현은 여기서 걸린다.
     const WsaContext wsa;
     auto sender = open_udp_socket();
@@ -108,7 +108,7 @@ TEST_CASE("loop: one wheel drains many datagrams", "[loop]") {
 }
 
 TEST_CASE("loop: the drain budget stops one wheel at the documented count", "[loop]") {
-    // 예산이 없으면 한 바퀴가 전부를 삼킨다. 예산은 64 다 (architecture.md 3.2.3).
+    // 예산이 없으면 한 바퀴가 전부를 삼킨다. 예산은 64 다 (concurrency.md 3장).
     const WsaContext wsa;
     auto sender = open_udp_socket();
     auto receiver = open_udp_socket();
@@ -138,7 +138,7 @@ TEST_CASE("loop: the drain budget stops one wheel at the documented count", "[lo
 }
 
 TEST_CASE("loop: an oversize datagram does not break the batch", "[loop]") {
-    // architecture.md 3.2.3: 과대 데이터그램을 정상 데이터그램 사이에 끼워 보내고,
+    // concurrency.md 3장: 과대 데이터그램을 정상 데이터그램 사이에 끼워 보내고,
     // 카운터가 오르면서 뒤따르는 정상 데이터그램이 계속 처리되는지 본다.
     // (a) 1473바이트는 길이 비교로, (b) 1474바이트는 WSAEMSGSIZE 로 걸린다.
     const WsaContext wsa;
@@ -319,7 +319,7 @@ TEST_CASE("loop: timers keep firing under sustained receive load", "[loop][slow]
 }
 
 TEST_CASE("loop: an idle wheel waits instead of spinning", "[loop]") {
-    // architecture.md 3.2.3: WSAEnumNetworkEvents 를 빠뜨리면 첫 데이터그램 이후 이벤트가
+    // concurrency.md 3장: WSAEnumNetworkEvents 를 빠뜨리면 첫 데이터그램 이후 이벤트가
     // 계속 신호 상태로 남아 대기가 매번 즉시 반환하고 루프가 CPU 를 태우며 스핀한다.
     //
     // 변이 시험이 그 호출을 지워도 걸리지 않아 넣은 케이스다. 바퀴를 정해진 횟수만 도는

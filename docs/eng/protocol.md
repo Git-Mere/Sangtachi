@@ -453,8 +453,7 @@ Without `CLOSE`, graceful shutdown and a crash cannot be distinguished, and the 
 ## 6. Socket Ownership
 
 **One local UDP socket is owned exclusively by one receive loop.** The thread layout, wait
-mechanism, and state ownership of that loop are in [`architecture.md`](architecture.md) 3.2
-Concurrency Model.
+mechanism, and state ownership of that loop are in [`concurrency.md`](concurrency.md).
 
 - The STUN client does not call `recvfrom` directly. It registers a request and receives the response from the receive loop. Reading in two places consumes each other's packets.
 - The socket is bound once at process start and kept until exit. Rebinding changes the NAT mapping.
@@ -472,8 +471,8 @@ Concurrency Model.
 - **`SO_RCVBUF` is set explicitly.** The requested value is `262144` (256KiB). Written as a byte count,
   not with a unit suffix
   - The criterion is larger than `MAX_DRAIN` × `MAX_DATAGRAM`. `MAX_DRAIN` is owned by
-    `architecture.md` 3.2.3 One Loop Iteration, and computed with that document's current value it is
-    94208 bytes. If the budget changes, revisit this value
+    `concurrency.md` chapter 3 One Loop Iteration, and computed with that document's current
+    value it is 94208 bytes. If the budget changes, revisit this value
   - After setting, read the actually applied value with `getsockopt` and record it
   - The default is not used because it varies by OS and version and may be smaller than one receive loop
     iteration budget. If it cannot hold one iteration's worth, the budget design loses its meaning
@@ -556,7 +555,7 @@ That is not counted as a defense. It is someone else's configuration that we can
 `buf[a..b)` is a half-open interval. `buf[4..8)` is the 4 bytes at offsets 4,5,6,7.
 
 Datagrams exceeding `MAX_DATAGRAM` (1472) do not reach this step. The receive loop drops them first
-([`architecture.md`](architecture.md) 3.2.3).
+([`concurrency.md`](concurrency.md) chapter 3).
 
 ---
 
@@ -937,8 +936,9 @@ deadline and **a session under establishment is recorded as a disconnect.**
    is `FAILED`, not `CLOSED`
 3. Write the record (`architecture.md` chapter 9)
 
-`FAILED` is a terminal state. A retry starts as a new attempt from `IDLE` and draws a new epoch and a new nonce.
-**What the process does after that is decided by `architecture.md` 3.2.7 Shutdown.**
+`FAILED` is a terminal state. A retry starts as a new attempt from `IDLE` and draws a new epoch
+and a new nonce. **What the process does after that is decided by
+[`concurrency.md`](concurrency.md) chapter 7 Shutdown.**
 
 The basis for the three rules above follows.
 
@@ -1288,9 +1288,9 @@ in the "Where" column.**
 Deadline comparisons use **strict inequality**. Priority is based on the time dequeued. A receive event
 dequeued in the same iteration is processed before that iteration's timer expiries.
 
-The reason it is the dequeue time and not the arrival time is that the receive loop caps the number of
-datagrams processed per iteration (`architecture.md` 3.2.3 One Loop Iteration). Draining without a cap
-would starve the timers entirely.
+The reason it is the dequeue time and not the arrival time is that the receive loop caps the
+number of datagrams processed per iteration ([`concurrency.md`](concurrency.md) chapter 3 One
+Loop Iteration). Draining without a cap would starve the timers entirely.
 
 In exchange, a datagram that arrived just before a deadline can be pushed to the next iteration and lose
 to the timer. While the loop keeps up with the load this delay is under 1ms, two orders of magnitude

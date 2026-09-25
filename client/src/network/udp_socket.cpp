@@ -118,7 +118,7 @@ RecvResult UdpSocket::recv_from(std::span<std::byte> buffer) noexcept {
     // 읽는 길이를 kRecvBufferSize 로 자른다. 이유가 둘이다.
     //
     // 하나, recvfrom 의 길이 인자가 int 라 size_t 를 그대로 좁히면 감싸 돌 수 있다.
-    // 둘, 호출자가 더 큰 버퍼를 주면 architecture.md 3.2.3 이 설계한 두 경로가 무너진다.
+    // 둘, 호출자가 더 큰 버퍼를 주면 concurrency.md 3장 이 설계한 두 경로가 무너진다.
     // 버퍼가 1473 일 때만 1474바이트 이상이 WSAEMSGSIZE 로 올라온다. 더 큰 버퍼에서는
     // 그 데이터그램이 그냥 담겨 길이 비교 경로로만 걸리고, 그러면 그 분기를 도는 시험이
     // 아무것도 확인하지 못한다.
@@ -138,7 +138,7 @@ RecvResult UdpSocket::recv_from(std::span<std::byte> buffer) noexcept {
         }
         if (error == WSAEMSGSIZE) {
             // 1473바이트 버퍼로도 모자랐다. 데이터그램은 이미 소비됐다
-            // (architecture.md 3.2.3). 버리고 계속 비운다.
+            // (concurrency.md 3장). 버리고 계속 비운다.
             return RecvResult{RecvStatus::Oversize, 0, Endpoint(), error};
         }
         return RecvResult{RecvStatus::Error, 0, Endpoint(), error};

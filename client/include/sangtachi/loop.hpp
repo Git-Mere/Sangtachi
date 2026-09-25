@@ -1,9 +1,9 @@
 #pragma once
 
-// 이벤트 루프 (architecture.md 3.2.2 대기, 3.2.3 루프 한 바퀴, 3.2.4 타이머).
+// 이벤트 루프 (concurrency.md 2장 대기, 3장 루프 한 바퀴, 4장 타이머).
 //
 // `[loop]` 는 프로세스 주 스레드다. UDP 수신, 콘솔 명령, 타이머, 모든 송신을 혼자 한다.
-// 터널 상태를 건드리는 코드가 한 스레드에서만 도는 것이 이 설계의 전부다 (3.2).
+// 터널 상태를 건드리는 코드가 한 스레드에서만 도는 것이 이 설계의 전부다 (concurrency.md).
 
 #include "sangtachi/console.hpp"
 #include "sangtachi/counters.hpp"
@@ -22,7 +22,7 @@
 
 namespace sangtachi {
 
-// 한 바퀴당 소스별 비우기 상한 (architecture.md 3.2.3 루프 한 바퀴).
+// 한 바퀴당 소스별 비우기 상한 (concurrency.md 3장 루프 한 바퀴).
 //
 // 1472바이트 기준 94KB 다. 예산에 걸려 멈추면 busy 가 참이 되어 다음 대기가 타임아웃 0
 // 으로 즉시 반환하고, 남은 것은 다음 바퀴에 처리된다. **그 사이에 타이머가 한 번 돈다.**
@@ -62,7 +62,7 @@ public:
     // 만든 뒤 한 번 확인한다.
     //
     // 대기 배열에 들어가는 핸들이 모두 살아 있어야 한다. 빈자리에 널을 넣으면
-    // WaitForMultipleObjects 가 WAIT_FAILED 를 낸다 (architecture.md 3.2.2 대기).
+    // WaitForMultipleObjects 가 WAIT_FAILED 를 낸다 (concurrency.md 2장 대기).
     // Phase 1~2 의 세 핸들은 전부 항상 있으므로, 여기서 한 번 확인하면 배열은 구성상
     // 조밀하다.
     [[nodiscard]] bool valid() const noexcept {
@@ -84,7 +84,7 @@ public:
     // `[console]` 이 큐에 넣은 뒤 신호하는 핸들. 소유하지 않는다.
     [[nodiscard]] void* console_event() const noexcept { return console_event_; }
 
-    // 다른 스레드에서 종료를 건다. 3.2.7 종료의 (1) 이다.
+    // 다른 스레드에서 종료를 건다. concurrency.md 7장 종료의 (1) 이다.
     void request_shutdown() noexcept;
     [[nodiscard]] bool shutdown_requested() const noexcept { return shutting_down_; }
 
@@ -119,7 +119,7 @@ private:
 
 // 표준 입력을 읽어 큐에 넣고 이벤트를 신호한다 (`[console]`).
 //
-// 세션을 값으로 받는다. 이 스레드는 join 하지 않으므로 (architecture.md 3.2.7 종료)
+// 세션을 값으로 받는다. 이 스레드는 join 하지 않으므로 (concurrency.md 7장 종료)
 // `main` 이 빠져나간 뒤에도 깨어날 수 있고, 그때 건드릴 것을 스스로 붙들고 있어야 한다.
 void run_console_reader(std::shared_ptr<ConsoleSession> session);
 

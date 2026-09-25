@@ -26,7 +26,7 @@ TEST_CASE("timer: a deadline in the future is the remaining milliseconds", "[tim
 
 TEST_CASE("timer: a deadline that already passed waits zero", "[timer]") {
     // 뺄셈을 먼저 하면 여기서 언더플로해 거대한 값이 되고, 32비트로 좁히면 INFINITE 에
-    // 착지해 루프가 영원히 깨지 않는다 (architecture.md 3.2.2 대기).
+    // 착지해 루프가 영원히 깨지 않는다 (concurrency.md 2장 대기).
     REQUIRE(next_timeout_ms(1000, 1000) == 0);
     REQUIRE(next_timeout_ms(1000, 999) == 0);
     REQUIRE(next_timeout_ms(1000, 0) == 0);

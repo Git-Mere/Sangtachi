@@ -12,7 +12,7 @@
 //   - connect() 를 부르지 않는다
 //   - SIO_UDP_CONNRESET 을 끈다
 //
-// WSAEventSelect 로 FD_READ 를 이벤트에 묶는다 (architecture.md 3.2.2 대기). 그 호출이
+// WSAEventSelect 로 FD_READ 를 이벤트에 묶는다 (concurrency.md 2장 대기). 그 호출이
 // 소켓을 논블로킹으로 바꾸므로 ioctlsocket(FIONBIO) 을 따로 부르지 않는다.
 
 #include "sangtachi/network/endpoint.hpp"
@@ -29,7 +29,7 @@ namespace sangtachi::network {
 // protocol.md 6장의 SO_RCVBUF 요청값. 10진 바이트 수로 적는다.
 inline constexpr int kRecvBufferRequest = 262144;
 
-// 수신 버퍼는 MAX_DATAGRAM 보다 1 크다 (architecture.md 3.2.3 루프 한 바퀴).
+// 수신 버퍼는 MAX_DATAGRAM 보다 1 크다 (concurrency.md 3장 루프 한 바퀴).
 // 1 크게 잡아야 길이 비교가 판정이 되고, 시험이 1473바이트로 그 경로를 재현할 수 있다.
 inline constexpr std::size_t kRecvBufferSize = protocol::kMaxDatagram + 1;
 
@@ -69,7 +69,7 @@ public:
     [[nodiscard]] int rcvbuf_requested() const noexcept { return kRecvBufferRequest; }
     [[nodiscard]] int rcvbuf_applied() const noexcept { return rcvbuf_applied_; }
 
-    // architecture.md 3.2.2 의 대기 집합에 넣는 핸들. 소유는 이 객체가 한다.
+    // concurrency.md 2장 의 대기 집합에 넣는 핸들. 소유는 이 객체가 한다.
     [[nodiscard]] void* read_event() const noexcept { return event_; }
 
     // 원시 소켓 핸들. 소유권을 넘기지 않는다.
@@ -80,7 +80,7 @@ public:
     // 이유가 "OS 가 요청값을 그대로 주지 않을 수 있다" 이므로 그 자리는 검증되어야 한다.
     [[nodiscard]] std::uintptr_t native_handle() const noexcept { return handle_; }
 
-    // 이벤트를 리셋하고 네트워크 이벤트를 조회한다 (architecture.md 3.2.3).
+    // 이벤트를 리셋하고 네트워크 이벤트를 조회한다 (concurrency.md 3장).
     // 이 호출을 빠뜨리면 이벤트가 신호 상태로 남아 루프가 스핀한다.
     bool enumerate_events() noexcept;
 

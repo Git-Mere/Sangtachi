@@ -42,7 +42,7 @@
 | `31e4240` 기록 없음 | CMake 스모크 커밋. `commit_history/` 항목 미작성 |
 | 케이스 표 이관 | `control_plane.md` 의 케이스 표는 Phase 3 착수 시 `control-server/tests/` 로 옮긴다. 그때까지는 문서가 유일한 사본이다 |
 | 중복 주장 링크화 미완 | 살아 있는 문서 7개에서 같은 주장이 두 곳에 있는 자리를 링크로 바꾸는 작업이 중간에 멈춰 있다 (규칙 5). 10파일 +55/-44 분량이고 `git stash` 에 있다. `git stash list` 로 확인하고 `git stash pop` 으로 잇는다 |
-| 카운터 이름의 문서-코드 대조 | 이름 39개가 `protocol.md` 6·7·8장과 `architecture.md` 3.2.3·3.2.6·3.2.8 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. `docgate.py` 개수 검사와 같이 붙인다 |
+| 카운터 이름의 문서-코드 대조 | 이름 39개가 `protocol.md` 6·7·8장과 [`concurrency.md`](concurrency.md) 3·6·8장에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. `docgate.py` 개수 검사와 같이 붙인다 |
 
 ## 세션을 시작할 때
 

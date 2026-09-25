@@ -1312,12 +1312,6 @@ Sangtachi/
 
 The two language trees hold the same files. When editing a document, modify both sides in the same commit.
 
-### Difference from the Current State
-
-The current source tree is only `src/main.cpp` and `CMakeLists.txt` at the root (`docs/` is
-already populated). The relocation under `client/` and the creation of `control-server/` and
-`telemetry-server/` remain.
-
 ---
 
 ## 11. External Dependencies

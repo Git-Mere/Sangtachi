@@ -78,9 +78,15 @@
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
 | `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
+| `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
 | `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
 
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 `concurrency.md` 가 갖는다.
+
+**`ui/main_window` 가 어느 스레드에서 도는지는 정하지 않았다.** Qt 는 자기 이벤트 루프를
+갖고 `concurrency.md` 1장 스레드는 `[loop]` 를 프로세스 주 스레드로 정했다. 둘의 관계는
+[ADR 0007](decisions/0007-gui-핵심-범위-qt.md)이 미결로 두었고, 정하는 시점은
+[`roadmap.md`](roadmap.md) Phase 8 이 갖는다.
 
 **모든 UDP 송수신은 하나의 로컬 소켓을 공유하고, 그 소켓은 하나의 수신 루프가 배타적으로
 소유한다.** 이 제약은 Phase 2 시점부터 지켜야 한다.
@@ -756,6 +762,7 @@ Sangtachi/
 | Python 표준 라이브러리 | `asyncio`, `json` | 표준 라이브러리 |
 | AWS SDK for Python (`boto3`) | 제어 서버와 텔레메트리 서비스의 DynamoDB 접근 | **승인됨** |
 | Catch2 v3 | 시험 케이스 등록, 실행, 실패 보고. 시험 실행 파일에만 링크한다 | **승인됨.** 승인 주체는 [`spec.md`](spec.md) NFR-5 |
+| Qt | 최소 GUI의 창, 위젯, 이벤트 루프. 범위는 `spec.md` FR-15 | **승인됨.** 제품 의존성이라 승인 주체는 교수다 |
 | Amazon DynamoDB | 방·피어 상태와 지표의 영속 저장 | 외부 관리형 서비스 |
 
 Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, NAT 통과, 홀펀칭, 터널 프로토콜, 라우팅 결정, 세션 관리, 모니터링, 진단은 모두 이 프로젝트가 직접 구현한다. Wintun은 커널 모드 가상 NIC 드라이버에 대한 접근 수단일 뿐이다.
@@ -770,5 +777,4 @@ Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, 
 - **릴레이 폴백 (TURN 유사)**: 직접 연결 실패 시 대안 경로 없음. 스트레치 목표.
 - **완전한 ICE**: 초기에는 최소 연결 수립 절차만. Phase 9에서 ICE 개념과 비교 분석만 수행.
 - **3자 이상 메시**: 초기는 2 피어. 라우팅 테이블 구조는 확장 가능하게 두되 구현하지 않는다.
-- **GUI**: 콘솔 전용.
 - **macOS / 모바일**: 지원하지 않는다. Linux는 시간이 남으면 상호 운용성만 검토.

@@ -35,6 +35,7 @@ One-sentence definition:
 - **Telemetry and diagnostics**: connection success rate, establishment time, RTT, packet loss, jitter, session duration, per-stage failure codes
 - **Experiments and analysis**: repeated measurements across multiple network environments, comparison of successful and failed NAT cases, result visualization
 - **Minecraft Java Edition validation**: a real multiplayer session over the virtual IP
+- **Minimum GUI**: create and join a room, member list and connection status, failure code display, quit by closing the window. FR-15 owns the scope
 
 ### Excluded
 
@@ -55,7 +56,6 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 - Relay fallback for peers whose direct connection fails
 - Encrypted and authenticated peer sessions
 - Windows installer
-- Simple GUI
 - Automatic reconnection
 - Three or more parties in one virtual network
 - Validation with a UDP-based game
@@ -83,6 +83,14 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-12 | When a player enters `10.100.0.1:25565` in the Minecraft server address field, the client connects to the server on the remote host. |
 | FR-13 | Every connection attempt records success or failure and, on failure, a per-stage code (`STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED`). |
 | FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. |
+| FR-15 | The client provides five actions through a GUI: create a room and show the room code, enter a room code and join, a member list with each member's connection status, display of the FR-13 per-stage code on failure, and quit by closing the window. Any other screen is out of scope. |
+
+**There is no means to carry the FR-15 connection status yet.** The control plane's peer states
+are only `joined` and `registered`, and neither one tells whether the connection is up
+([`control_plane.md`](control_plane.md) 5.3). No tunnel message type serves that purpose either
+([`protocol.md`](protocol.md) chapter 5). **Until that means is decided, the FR-15 member
+connection status and the last condition of T-7 cannot be judged.** When it is decided is owned by
+[`roadmap.md`](roadmap.md).
 
 **Evidence in both directions for FR-6.** Both must hold.
 
@@ -100,7 +108,7 @@ decision formula is set by `protocol.md` 9.2 `CONNECTED` Condition.
 | NFR-2 | The tunnel layer contains no Minecraft-specific logic. Replacing Minecraft with another IP-based application does not change the tunnel code. |
 | NFR-3 | A control plane failure does not tear down an already established P2P tunnel. Telemetry transmission failures are ignored. **Failed records are not resent.** The next period sends that period's new metrics. The basis for verdicts is the local record file, not the upload ([`architecture.md`](architecture.md) chapter 9). |
 | NFR-4 | STUN, NAT traversal, hole punching, the tunnel protocol, routing, and session management are implemented directly. Wintun provides virtual interface access only. |
-| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Three are approved: Wintun, `boto3`, and Catch2. |
+| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Four are approved: Wintun, `boto3`, Catch2, and Qt. |
 | NFR-6 | The virtual adapter MTU is set with the tunnel header overhead in mind, and no IP fragmentation occurs for normal game traffic. |
 | NFR-7 | Failures are not hidden. NAT environments that cannot be traversed are explicitly marked as out of support scope and recorded. |
 | NFR-8 | Source control and weekly development records are maintained. Where AI tools contributed to code or documents, the contribution is verified and attributed according to course policy. |
@@ -111,7 +119,7 @@ decision formula is set by `protocol.md` 9.2 `CONNECTED` Condition.
 
 | Kind | What it is | Who approves | Today |
 |------|------------|--------------|-------|
-| Product dependency | The product needs it to run, client or server | The instructor | Wintun and `boto3` are approved |
+| Product dependency | The product needs it to run, client or server | The instructor | Wintun, `boto3`, and Qt are approved |
 | Test-only dependency | Only running the tests needs it | The repository owner | Catch2 is approved |
 
 The reason for the split is what this requirement blocks: replacing the list NFR-4 requires us to
@@ -149,9 +157,9 @@ C-5 has five tiers.
 |------|---------|-------|
 | P0 | UDP + STUN + endpoint exchange + hole punching + tunnel header + minimal `DATA` round trip + local record | 1-4 |
 | P1 | Protocol robustness. Loss and reordering aggregation, fuzz defense, long-run stability | 5 |
-| P2 | Wintun + virtual IP + Minecraft | 6-8 |
+| P2 | Wintun + virtual IP + Minecraft + minimum GUI | 6-8 |
 | P3 | Telemetry + diagnostics + analysis | 9 |
-| P4 | Encryption + relay + GUI + additional platforms | Stretch |
+| P4 | Encryption + relay + additional platforms | Stretch |
 
 The priority block in [`roadmap.md`](roadmap.md) **must have the same tier contents.** It need
 not match word for word. One is prose and the other is a code block.
@@ -165,7 +173,7 @@ This records which success criteria disappear when a tier is dropped.
 |-------------|-------------|----------------|
 | P4 (stretch) | Nothing. It was never in the calculation | Yes |
 | P3 (Phase 9) | A-1 ~ A-4, T-6, FR-14, verification of NFR-7 (per-environment failure records and aggregation), verification of NFR-10 | Yes. But **the analysis success the course requires disappears.** Minimum success remains |
-| P2 (Phase 6-8) | T-1 ~ T-5, FR-9 ~ FR-12, verification of NFR-2 (Phase 7 file transfer test), documenting the Wintun scope of NFR-5, NFR-6 (MTU fixed) | Yes. Minimum success remains |
+| P2 (Phase 6-8) | T-1 ~ T-5, T-7, FR-9 ~ FR-12, FR-15, verification of NFR-2 (Phase 7 file transfer test), documenting the Wintun and Qt scope of NFR-5, NFR-6 (MTU fixed) | Yes. Minimum success remains |
 | P1 (Phase 5) | FR-8 loss and reordering aggregation, completion of the FR-13 failure code set (`TUNNEL_DROPPED`), verification of NFR-3. **No M/T/A success criterion disappears** | Yes. Drop it knowing that requirement verification shrinks |
 | P0 (Phase 1-4) | All of M-1 ~ M-6 | **No.** Minimum success disappears |
 
@@ -274,6 +282,7 @@ All must be met in addition to minimum success.
 | T-4 | A real Minecraft Java Edition multiplayer session is established over the virtual network. | The player connects to `10.100.0.1:25565`, logs in, and enters the world |
 | T-5 | Sustained gameplay is maintained beyond the initial connection. | No forced termination during 30 or more minutes of continuous play |
 | T-6 | Latency, packet loss, connection time, and session stability are measured. | A dataset of RTT, loss rate, establishment time, and duration is obtained for whole sessions |
+| T-7 | The five actions of FR-15 are performed end to end through the GUI alone. | The host creates a room and reads the code, the player joins with that code, each side sees the other in its member list, and when one side is cut the other side's list shows that member as disconnected. No command line arguments are used |
 
 ### Analysis success (CSP requirement)
 

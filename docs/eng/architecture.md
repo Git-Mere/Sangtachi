@@ -79,9 +79,15 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `tunnel/router` | Virtual IP -> peer session mapping, destination decision | None |
 | `adapter/wintun_adapter` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper) | **Wintun (approved)**, IP Helper |
 | `telemetry/telemetry` | Metric collection, local buffering, transmission to the telemetry service | None |
+| `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
 | `control/control_client` | Control plane HTTP/JSON calls and DNS resolution. Owned by the `[control]` thread (`concurrency.md` chapter 8 The `[control]` Thread). Operations and encoding are in [`control_plane.md`](control_plane.md) | Winsock2 |
 
 The client is a single process. Thread composition and state ownership are in `concurrency.md`.
+
+**Which thread `ui/main_window` runs on is not decided.** Qt has its own event loop, and
+`concurrency.md` chapter 1 Threads made `[loop]` the process main thread. The relation between the
+two is left open by [ADR 0007](decisions/0007-gui-core-scope-qt.md), and
+[`roadmap.md`](roadmap.md) Phase 8 owns when it is decided.
 
 **All UDP send/receive shares one local socket, and one receive loop owns that socket
 exclusively.** This constraint holds from Phase 2 onward.
@@ -840,6 +846,7 @@ The two language trees hold the same files. When editing a document, modify both
 | Python standard library | `asyncio`, `json` | Standard library |
 | AWS SDK for Python (`boto3`) | DynamoDB access for the control server and the telemetry service | **Approved** |
 | Catch2 v3 | Test case registration, execution, failure reporting. Linked only into the test executable | **Approved.** [`spec.md`](spec.md) NFR-5 owns who approves |
+| Qt | Window, widgets, and event loop of the minimum GUI. `spec.md` FR-15 owns the scope | **Approved.** It is a product dependency, so the instructor approves |
 | Amazon DynamoDB | Persistent storage of room/peer state and metrics | External managed service |
 
 Be clear about what Wintun does **not** provide. Peer discovery, STUN, NAT traversal, hole
@@ -857,5 +864,4 @@ The following are deliberately left out of the initial architecture. When they b
 - **Relay fallback (TURN-like)**: no alternative path when direct connection fails. Stretch goal.
 - **Full ICE**: initially only the minimum connection establishment procedure. Phase 9 does only a comparative analysis against ICE concepts.
 - **Mesh of 3 or more**: initially 2 peers. The routing table structure is left extensible but not implemented.
-- **GUI**: console only.
 - **macOS / mobile**: not supported. Linux only gets an interoperability review if time remains.

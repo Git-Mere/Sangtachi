@@ -23,7 +23,7 @@ Maps each ID in [`spec.md`](spec.md) to the phase that satisfies it. No ID may b
 | 5 | FR-8 (loss and reordering accounting), FR-13, NFR-3 |
 | 6 | FR-9, NFR-5, NFR-6, T-1, T-2 |
 | 7 | FR-10, FR-11, NFR-2, NFR-6, T-3 |
-| 8 | FR-12, T-4, T-5 |
+| 8 | FR-12, FR-15, T-4, T-5, T-7 |
 | 9 | FR-14, NFR-7, NFR-10, T-6, A-1 to A-4 |
 | All phases | NFR-1, NFR-8, C-1, C-4, C-5 |
 
@@ -44,9 +44,9 @@ On scope overrun, work is dropped in reverse order of the priorities below.
 ```text
 P0: UDP + STUN + endpoint exchange + hole punching + tunnel header + minimum DATA round trip + local record (Phases 1-4)
 P1: Protocol robustness. Loss and reordering accounting, fuzz defenses, long-duration stability                (Phase 5)
-P2: Wintun + virtual IP + Minecraft                                                                            (Phases 6-8)
+P2: Wintun + virtual IP + Minecraft + minimum GUI                                                              (Phases 6-8)
 P3: Telemetry + diagnostics + analysis                                                                         (Phase 9)
-P4: Encryption + relay + GUI + extra platforms                                                                 (stretch)
+P4: Encryption + relay + extra platforms                                                                       (stretch)
 ```
 
 ---
@@ -972,7 +972,7 @@ Two Windows machines communicate using virtual IPs only.
 
 ## Phase 8: Minecraft Validation
 
-- **Goal:** Demonstrate a real multiplayer session.
+- **Goal:** Demonstrate a real multiplayer session through the GUI.
 - **Priority:** P2
 - **Requirements:** The [Requirement Traceability](#requirement-traceability) table is the source. Not repeated here
 
@@ -990,6 +990,21 @@ Two Windows machines communicate using virtual IPs only.
 - Extended play
 - Measure latency and disconnection behavior
 - Record packet and connection metrics
+- **Implement the minimum GUI** (the five actions of [`spec.md`](spec.md) FR-15). Qt is used
+- **Decide the means that carries member connection status first.** Today there is no such means,
+  so the FR-15 member connection status and the last condition of T-7 in the verification below
+  cannot be judged ([`spec.md`](spec.md), the FR-15 note under the FR table). The control plane's
+  peer states are only `joined` and `registered` ([`control_plane.md`](control_plane.md) 5.3), and
+  no tunnel message type serves that purpose either ([`protocol.md`](protocol.md) chapter 5).
+  [ADR 0006](decisions/0006-star-topology-no-relay.md) and
+  [ADR 0007](decisions/0007-gui-core-scope-qt.md) left the same question open
+- **Decide the GUI thread model first.** Before this Phase starts, decide which of the Qt event
+  loop and the `[loop]` main thread rule of [`concurrency.md`](concurrency.md) chapter 1 Threads
+  is the main thread, and write it in `concurrency.md`. [ADR 0007](decisions/0007-gui-core-scope-qt.md)
+  left it open
+- **Decide the startup input path the GUI uses.** Today the only input is CLI arguments
+  ([`architecture.md`](architecture.md) 3.5 Startup Inputs) and the room code and the rejoin proof
+  go to standard output
 
 ### Deliverable
 
@@ -999,6 +1014,10 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 
 ### Verification
 
+- **The five actions of FR-15 are performed end to end through the GUI alone** (`spec.md` T-7). No command line arguments are used
+- **When one side is cut, the other side's member list shows that member as disconnected.** That is
+  the last condition of T-7, and **it cannot be judged until the first item of the task list above
+  (the means that carries member connection status) is decided**
 - The player connects by entering only `10.100.0.1:25565`, with no public IP/port entry
 - Succeeds with no port forwarding rule on the host's router
 - No forced disconnect during 30 or more minutes of continuous play
@@ -1137,7 +1156,6 @@ Start only if Phases 1-9 finish with time to spare. Do not proceed at the expens
 | Relay fallback | For peers that cannot connect directly. Rescues environments classified as unsupported in Phase 4 |
 | Encryption and peer authentication | No in-house cryptographic algorithms |
 | Windows installer | |
-| Simple GUI | |
 | Automatic reconnection | |
 | Virtual network with 3 or more parties | Requires extending the router structure |
 | UDP-based game validation | Further proof that the tunnel is game-agnostic |

@@ -29,7 +29,7 @@ One-sentence definition:
 - **Python control plane (AWS EC2)**: room create/join, peer registration, virtual IP assignment, candidate endpoint exchange
 - **Python telemetry service (AWS EC2)**: receives and stores connection results and performance metrics. **It is a separate service from the control plane.** The boundary contract is in [`architecture.md`](architecture.md) 3.4 Telemetry Service
 - **UDP hole punching**: simultaneous bidirectional transmission, retries, keepalive, failure reason classification
-- **Own tunnel protocol**: 20-byte wire header, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`/`CLOSE`, serialization and corrupt packet validation
+- **Own tunnel protocol**: 20-byte wire header, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`/`CLOSE`/`ROSTER`, serialization and corrupt packet validation
 - **Windows virtual network adapter integration**: adapter creation and packet read/inject through Wintun, virtual IP address and route configuration through the Windows IP Helper API
 - **Virtual IP routing**: peer session selection by destination virtual IP, encapsulation and decapsulation
 - **Telemetry and diagnostics**: connection success rate, establishment time, RTT, packet loss, jitter, session duration, per-stage failure codes
@@ -57,7 +57,7 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 - Encrypted and authenticated peer sessions
 - Windows installer
 - Automatic reconnection
-- Three or more parties in one virtual network
+- Six or more parties in one virtual network
 - Validation with a UDP-based game
 - Linux interoperability
 
@@ -72,7 +72,7 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-1 | The client can open a UDP socket with Winsock2 and send to and receive from a specified remote endpoint in both directions. |
 | FR-2 | The client sends a Binding Request to a public STUN server with its own STUN client implementation and decodes `XOR-MAPPED-ADDRESS` to learn its public IP and UDP port. |
 | FR-3 | If the STUN response is missing or malformed, the client does not wait forever; after a timeout it records `STUN_DISCOVERY_FAILED`. |
-| FR-4 | The control plane supports room creation and joining, and assigns each joining peer a unique virtual IP in the `10.100.0.0/24` range. |
+| FR-4 | The control plane supports room creation and joining, and assigns each joining peer a unique virtual IP in the `10.100.0.0/24` range. One room holds at most 5 people, and tunnels are formed only between the host and each player. Players do not communicate with each other even over the virtual IP ([ADR 0006](decisions/0006-star-topology-no-relay.md)). |
 | FR-5 | The control plane accepts each peer's candidate endpoints (local, public) and delivers them to the other peers in the same room. The local candidate is used when two peers are on the same LAN. |
 | FR-6 | Clients attempt UDP hole punching toward the exchanged endpoints and establish a direct UDP path without manual port forwarding. Connection establishment is confirmed by **evidence in both directions**. The definition of that evidence is below. |
 | FR-7 | An established session keeps the NAT mapping alive with keepalives and measures RTT with `PING`/`PONG`. Disconnection is judged by an idle timeout (no packets received from the peer), not by transmission failure. |
@@ -85,12 +85,16 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. |
 | FR-15 | The client provides five actions through a GUI: create a room and show the room code, enter a room code and join, a member list with each member's connection status, display of the FR-13 per-stage code on failure, and quit by closing the window. Any other screen is out of scope. |
 
-**There is no means to carry the FR-15 connection status yet.** The control plane's peer states
-are only `joined` and `registered`, and neither one tells whether the connection is up
-([`control_plane.md`](control_plane.md) 5.3). No tunnel message type serves that purpose either
-([`protocol.md`](protocol.md) chapter 5). **Until that means is decided, the FR-15 member
-connection status and the last condition of T-7 cannot be judged.** When it is decided is owned by
-[`roadmap.md`](roadmap.md).
+**The tunnel carries the FR-15 connection status.** The host sends the room roster and each
+member's connection status to every player as a `ROSTER` ([`protocol.md`](protocol.md) 5.7). The
+control plane does not hold this information. Its peer states are only `joined` and `registered`,
+and neither one tells whether the connection is up
+([`control_plane.md`](control_plane.md) 5.3).
+
+**There is no connection status between players.** In the no-relay star, players do not form
+tunnels with each other ([ADR 0006](decisions/0006-star-topology-no-relay.md)), so what is shown
+for each member is **the status between that member and the host**. The last condition of T-7 is
+judged with that meaning too.
 
 **Evidence in both directions for FR-6.** Both must hold.
 

@@ -21,7 +21,7 @@ using sangtachi::to_token;
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
     // 이름은 protocol.md 6/7/8 장과 concurrency.md 3장 / 6장 / 8장 이 갖는다.
     // 개수가 바뀌면 이 줄을 먼저 보게 된다.
-    REQUIRE(kCounterCount == 39);
+    REQUIRE(kCounterCount == 48);
 }
 
 TEST_CASE("counters: every token is unique, non-empty and sorted", "[counters]") {
@@ -52,6 +52,9 @@ TEST_CASE("counters: known names are present", "[counters]") {
     REQUIRE(tokens.count("drop_oversize_datagram") == 1);
     REQUIRE(tokens.count("console_queue_dropped") == 1);
     REQUIRE(tokens.count("tx_err_send") == 1);
+    // 8.5 송신 측 검증과 5.7 ROSTER 가 쓰는 이름 (protocol.md).
+    REQUIRE(tokens.count("tx_drop_no_route") == 1);
+    REQUIRE(tokens.count("drop_roster_stale") == 1);
 }
 
 TEST_CASE("counters: start at zero and count up", "[counters]") {

@@ -179,8 +179,7 @@ becomes necessary is decided by [`roadmap.md`](roadmap.md).
 |------|------|:---:|-----|
 | Role | First positional argument `host` or `player` | Yes from Phase 3. Phase 1~2 only accepts and stores it, and starts without it | `host` calls `create_room`, `player` calls `join_room` |
 | Control server address | `--server <name or IPv4>[:<port>]` | Yes from Phase 3. Phase 1~2 only accepts and stores it, and starts without it | DNS name or IPv4 literal. If the port is omitted, `CONTROL_PORT` from [`control_plane.md`](control_plane.md) 2.6 Constants. No real address is hard-coded in documents |
-| Room code | `--room <6 chars>` | `player` always. `host` when `--rejoin` is given. Phase 3 onward | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
-| Rejoin proof | `--rejoin <peer_id>:<peer_token>` | No | If present, `join_room` is called in its rejoin form (`control_plane.md` 4.3 `join_room`). Usable with the `host` role too. A restarted host is also a rejoin |
+| Room code | `--room <6 chars>` | `player` always. **Giving it to `host` is a startup failure.** Phase 3 onward | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
 | STUN servers | `--stun <name or IPv4>:<port>`, repeatable | No | If given, it **replaces the default list below entirely**. The behavior when the list has one entry is below the table |
 
 **A `--stun` list with one entry leaves one `WARN` line at startup.** That list cannot produce
@@ -231,11 +230,13 @@ resolution is needed, and that call (`getaddrinfo`) is synchronous, so it is not
 Unlike the control server address, a resolution failure here is not a startup failure. The list
 has several entries, so one dead entry still allows progress.
 
-**Keeping the rejoin proof.** The client prints the `peer_id` and `peer_token` from the
-`join_room` and `create_room` responses as one line on **standard output**. A human copies it
-and passes it with `--rejoin`. It is not stored automatically in a file. Automatic retry is
-undecided (`protocol.md` 10.4 Endpoint Learning), and the storage method is decided together
-with it.
+**The `peer_token` never leaves the process.** It arrives in the `create_room` and `join_room`
+responses, is used for control plane calls during that participation, and is discarded
+(`control_plane.md` 2.3 `peer_token`). It is not put on standard output, not put in the log, and
+not stored in a file.
+
+> **Why.** There is no rejoin (`control_plane.md` 4.3 `join_room`), so a human has no reason to
+> carry that value. A secret with no use is not left on the screen and in the shell history.
 
 **The room code also goes to standard output.** The host has to pass the `room_id` from the
 `create_room` response to the other side. It is not put in the standard error log (chapter 9).
@@ -243,12 +244,22 @@ with it.
 > **Why.** If the log file becomes the list of room codes, reading the log is room hijacking.
 > Standard output is the screen a human watches, and not redirecting it is the default.
 
+**Failures also go to standard output.** The failure code of [`spec.md`](spec.md) FR-13 and a
+human-readable sentence go out together on one line. Chapter 8 Failure Diagnosis owns the code,
+and the sentence is in that table too.
+
 ```text
 ROOM <room_id>
-REJOIN <peer_id>:<peer_token>
+FAIL <failure code> <human-readable sentence>
 ```
 
-The first word of each of the two lines is fixed. Tests read the values with it.
+The first word is fixed. Tests split lines with it. **On a `FAIL` line, the third field through
+the end of the line is one sentence and contains spaces.** It is a different line from the
+`<name>=<value>` log format (chapter 9).
+
+> **Why emit the code and the sentence together.** Emitting the code alone leaves the user not
+> knowing what to do next, and emitting the sentence alone makes it impossible to match what the
+> user reported against the classification in chapter 8.
 
 **Two test-only arguments in Phase 1~2.** The table above is the product path input. Phase 1
 confirms send and receive with "two known endpoints", without the control plane and without
@@ -302,15 +313,13 @@ every span.
 | Value | Source |
 |-------|--------|
 | `--room` | `control_plane.md` 2.1 `room_id`, its normalization and checks |
-| `peer_id` in `--rejoin` | `control_plane.md` 2.2 `peer_id`. Written in decimal |
-| `peer_token` in `--rejoin` | `control_plane.md` 2.3 `peer_token` |
 | The port in `--server` | If omitted, `CONTROL_PORT` in `control_plane.md` 2.6 Constants |
 | Every port | 1~65535 |
 | The address in `--peer` | An IPv4 literal only. A name is not accepted |
 | The address in `--stun` | A name or an IPv4 literal. The port cannot be omitted |
 
 **The tests own the counterexample list.** The case tables for IPv4 literals, the port range,
-`--room`, and `--rejoin` live in `tests/`. Keeping them in the document means matching the same
+and `--room` live in `tests/`. Keeping them in the document means matching the same
 table in two places, and counterexamples grow as the implementation grows.
 
 ---
@@ -420,6 +429,7 @@ field** and fix the length as a constant.
 | `PING` `0x05` | Both | ping_id(8) | RTT measurement. The timestamp is not carried on the wire |
 | `PONG` `0x06` | Both | ping_id echo(8) | RTT measurement response |
 | `CLOSE` `0x07` | Both | reason(1) | Normal shutdown notice. Without it the remote holds a dead session until the 50-second idle timeout |
+| `ROSTER` `0x08` | **Host -> player** | generation(4) + count(1) + members(9 x count) | Room roster and member connection status. The GUI member list is drawn from it ([`spec.md`](spec.md) FR-15) |
 
 ### 5.3 Session State Machine
 
@@ -474,9 +484,14 @@ times out both sides.
 
 ### 6.1 Operations
 
-There are four operations: `create_room`, `join_room`, `register_candidate`, `get_peers`.
-Inputs, outputs, errors, and encoding are owned by [`control_plane.md`](control_plane.md)
-chapter 4 Operations. **There is no `register_peer`.** Rejoin is one form of `join_room`.
+There are five operations: `create_room`, `join_room`, `register_candidate`, `get_peers`,
+`host_report`. Inputs, outputs, errors, and encoding are owned by
+[`control_plane.md`](control_plane.md) chapter 4 Operations. **Only the host calls
+`host_report`.** One request does three things: it renews the room lease, reclaims the slot of a
+finished session, and confirms a pair as ready.
+
+**There is no `register_peer` and no `leave_room` either.** The basis is at the head of
+`control_plane.md` chapter 4.
 
 **`report_connection` and `report_telemetry` are not here.** Both are operations of the
 telemetry service and belong to 6.3 Telemetry Service Interface. The connection result is the
@@ -498,12 +513,18 @@ Host                 AWS (coordination / telemetry)     Player
  |                         |                          |
  |-- register_candidate -->|<-- register_candidate ---|
  |                         |                          |
- |--- get_peers ---------->|<-------- get_peers ------|
- |<-- peer endpoint -------|--- peer endpoint ------->|
+ |--- host_report -------->|<-------- get_peers ------|
+ |<-- peers (no candidates)|--- ready: false -------->|
+ |                         |                          |
+ |--- host_report(confirm)>|                          |
+ |<-- pair ready ----------|                          |
+ |                         |<-------- get_peers ------|
+ |                         |-- peer endpoint -------->|
  |                         |                          |
  |=========== simultaneous UDP HELLO (hole punching) ===|
  |=========== Direct P2P Tunnel established ==========|
  |                         |                          |
+ |--- host_report (period)>|                          |
  |--- report_connection -->|<--- report_connection ---|
 ```
 
@@ -548,9 +569,12 @@ attempt.
 - Range: `10.100.0.0/24`
 - `10.100.0.1`: the room creator (host). The game server runs here.
 - `10.100.0.2` and up: participants. The control plane assigns them sequentially.
-- A virtual IP is valid per room and is reclaimed when the room disappears. When a room
-  disappears, and why slots are not reclaimed while it is alive, are owned by
+- A virtual IP is valid per room. All of them are reclaimed when the room disappears, and while
+  the room is alive a slot is also reclaimed when the host reports that a peer's session is over,
+  so the next participant uses it. The reclamation rules and when a room disappears are owned by
   [`control_plane.md`](control_plane.md) 2.5 Virtual IP Pool and 5.1 Room.
+- **A departed peer does not come back at the same address.** Coming back in is a new join and
+  gets a new address.
 
 Players enter `10.100.0.1:25565` in the Minecraft server address field. They need not know any
 public IP or port.
@@ -573,6 +597,24 @@ is not accepted as a record.
 | `HOLE_PUNCH_TIMEOUT` | Hole punching | `got_ack` and `sent_ack` **both unset** at the punch deadline |
 | `PEER_HANDSHAKE_FAILED` | Handshake | **Only one of the two set** at the punch deadline |
 | `TUNNEL_DROPPED` | Maintenance | No remote packet received for the idle timeout after establishment |
+
+**This table owns the sentence a person sees.** The rule that the code and the sentence go out
+together is in the standard output part of 3.5 Startup Inputs, and the GUI uses the same
+sentence ([`spec.md`](spec.md) FR-15).
+
+| Code | Human-readable sentence |
+|------|------------------|
+| `STUN_DISCOVERY_FAILED` | Could not confirm your address on the internet. Check your network connection and try again. |
+| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not find the other side. Check that the room code is right and that the other side is still in the room. |
+| `HOLE_PUNCH_TIMEOUT` | Could not make a direct connection with the other side. Try again with one of you on a different network. |
+| `PEER_HANDSHAKE_FAILED` | The connection opened in one direction only. Check your firewall settings and try again. |
+| `TUNNEL_DROPPED` | The connection with the other side was lost. The other side closed the session, or the network is unstable. |
+
+**The sentence says what to do next.** It does not assert a cause. The decision basis above is
+what we observed, and that observation is not itself the cause.
+
+**Only the code stays in the log.** The chapter 9 log contract does not carry the sentence. The
+sentence goes out only on the paths a person sees.
 
 **The last two codes are split by the number of flags set, not by packet type.** The meaning
 of the two flags, and that which one is set first is not fixed, are in 5.3 Session State
@@ -676,7 +718,11 @@ reached `CONNECTED`, so there is no session to end. The establishment line is th
 last line. **Whether it got there can be read from the line count.** One line means it ended
 before establishment; two lines mean it connected and then ended.
 
-How the two lines are tied to one attempt is decided together with the line format.
+How the two lines are tied to one attempt is decided together with the line format. **One
+process records several attempts.** Leaving a room returns to the lobby and allows joining again
+([`concurrency.md`](concurrency.md) chapter 7 Shutdown), so the line needs an attempt identifier
+to be able to pick out the lines of one attempt. The file is append-only and is not reopened per
+attempt.
 
 **The path and line format are not yet decided.** They are decided in this document. Not
 arbitrarily in code. When they have to be decided is owned by [`roadmap.md`](roadmap.md).
@@ -695,7 +741,7 @@ to is this log.** The local record file is a Phase 4 deliverable and does not ex
 | Destination | Standard error (stderr). It is not trapped in buffering, so the line just before a crash survives, and it can be redirected separately from standard output |
 | Levels | Three: `INFO`, `WARN`, `ERROR`. No finer split |
 | Unit | One event per line. **A value carries no space and no control character.** Both become a single underscore. No escape notation and no quoting |
-| Failure notation | The chapter 8 failure code strings **as is**. Not translated or reworded |
+| Failure notation | The chapter 8 failure code strings **as is**. Not translated or reworded. This rule applies to the log only. The sentence a person sees is owned by the sentence table in chapter 8 and carried by the `FAIL` line of 3.5 Startup Inputs |
 
 The reason for three levels is that the only axes used for decisions are "normal progress /
 abnormal but can continue / that attempt failed". A finer split makes the boundaries differ per

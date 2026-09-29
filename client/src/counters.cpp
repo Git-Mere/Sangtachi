@@ -44,6 +44,9 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropRenegLimit: return "drop_reneg_limit";
         case Counter::DropRenegRate: return "drop_reneg_rate";
         case Counter::DropRetiredEpoch: return "drop_retired_epoch";
+        case Counter::DropRosterDirection: return "drop_roster_direction";
+        case Counter::DropRosterFlags: return "drop_roster_flags";
+        case Counter::DropRosterStale: return "drop_roster_stale";
         case Counter::DropShort: return "drop_short";
         case Counter::DropStaleEpoch: return "drop_stale_epoch";
         case Counter::DropTerminalState: return "drop_terminal_state";
@@ -57,6 +60,12 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropVersion: return "drop_version";
         case Counter::DropVipMismatch: return "drop_vip_mismatch";
         case Counter::TelemetryQueueDropped: return "telemetry_queue_dropped";
+        case Counter::TxDropBadSrc: return "tx_drop_bad_src";
+        case Counter::TxDropNoRoute: return "tx_drop_no_route";
+        case Counter::TxDropNotConnected: return "tx_drop_not_connected";
+        case Counter::TxDropNotIpv4: return "tx_drop_not_ipv4";
+        case Counter::TxDropOversize: return "tx_drop_oversize";
+        case Counter::TxDropShort: return "tx_drop_short";
         case Counter::TxErrAck: return "tx_err_ack";
         case Counter::TxErrSend: return "tx_err_send";
     }

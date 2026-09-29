@@ -43,7 +43,9 @@
 | 가상 IP 배정 | 지표 수집. 텔레메트리 서비스가 맡는다 ([`architecture.md`](architecture.md) 3.4, [ADR 0003](decisions/0003-텔레메트리-서비스-분리.md)) |
 | 후보 엔드포인트 저장과 전달 | **UDP 소켓을 열지 않는다.** NAT 매핑 수명 측정에 쓰는 EC2 쪽 UDP probe 송신기는 제어 서버의 기능이 아니라 별개 도구다. 그 도구의 소속과 절차는 [`roadmap.md`](roadmap.md) Phase 4 착수 전 항목이 갖는다 |
 | 랑데부 기준점(`punch_delay_ms`, `elapsed_since_ready_ms`) 제공 | NAT 유형 판정, 홀펀칭 결과 판정. 클라이언트가 한다 |
-| 재참가한 피어에게 같은 식별자 돌려주기 | 세션 재시도 개시. 누가 언제 재시도하는지는 미정이고 [`protocol.md`](protocol.md) 10.4 엔드포인트 학습이 그렇게 적었다 |
+| 호스트의 통지로 자리 회수 (4.6 `host_report`) | 세션 재시도 개시. 누가 언제 재시도하는지는 미정이고 [`protocol.md`](protocol.md) 10.4 엔드포인트 학습이 그렇게 적었다 |
+| 호스트의 신호로 방 임대 갱신 (4.6, 5.1) | **터널 생존 판정.** 임대가 끊겨도 이미 수립된 터널은 그대로 간다 ([`spec.md`](spec.md) NFR-3) |
+| 쌍의 준비 완료 기록 (4.6, 5.2) | **떠난 피어의 식별자 복구.** 재참가가 없다(4.3). 다시 들어오는 것은 새 참가다 |
 
 ### 1.2 신뢰 가정
 
@@ -54,7 +56,7 @@
 | 서버를 신뢰한다 | 클라이언트는 서버가 돌려준 상대 후보와 가상 IP 를 검증 없이 쓴다. 후보 위생(`protocol.md` 10.1 후보 수집과 위생)은 클라이언트가 따로 적용하지만 그것은 형식 검사이고 진위 검사가 아니다 | 악의적 서버는 임의의 후보를 넣어 클라이언트를 제3자에게 200ms 마다 패킷을 보내는 **반사 도구**로 쓸 수 있다. 그 반사의 상한은 `protocol.md` 2장 보안 모델이 적는다. 아래 "반사 후보를 넣는 것" 을 같이 본다 |
 | `room_id` 가 유일한 비밀이다 | 방에 참가하는 데 필요한 것은 `room_id` 하나다. 호스트가 그것을 참가자에게 다른 채널로 전달한다 | `room_id` 를 아는 임의의 호출자가 두 번째 피어로 참가해 후보를 받고 게임 상대가 된다. **방 탈취**다. 그러면 진짜 참가자는 `room_full` 을 받는다 |
 | 경로상 관측자가 있다 | TCP 평문이라 경로상 관측자가 `room_id`, `peer_token`, 양쪽의 로컬·공인 엔드포인트를 읽는다 | 위와 같은 방 탈취, 그리고 **내부망 주소 노출.** 로컬 후보는 사설 IP 와 포트다 |
-| `peer_token` 은 재참가 증명일 뿐이다 | 참가 시 발급하는 비밀로, 같은 피어임을 증명해 같은 `peer_id` 와 가상 IP 를 돌려받는다 | 평문 경로에서 새는 것은 `room_id` 와 같다. **경로상 관측자에 대한 방어가 아니다.** 막는 것은 `room_id` 만 아는 제3자가 이미 참가한 피어를 사칭해 그 피어의 후보를 바꾸는 것이다 |
+| `peer_token` 은 참가 안에서만 쓰는 인증 비밀이다 | 참가 시 발급하고 그 참가가 끝나면 버린다. 프로세스 밖으로 내보내지 않는다 ([`architecture.md`](architecture.md) 3.5 기동 입력) | 평문 경로에서 새는 것은 `room_id` 와 같다. **경로상 관측자에 대한 방어가 아니다.** 막는 것은 `room_id` 만 아는 제3자가 이미 참가한 피어를 사칭해 그 피어의 후보를 바꾸거나(4.4), 호스트를 사칭해 남의 자리를 지우는 것이다(4.6) |
 | 호출자 IP 를 그 TCP 연결에서 응답할 수 있는 주소로 본다 | 핸드셰이크를 마친 연결의 출발지다. 그 뒤에 NAT 나 프록시가 있어 여러 사용자가 한 주소로 보일 수 있고, 반대로 한 호출자가 여러 주소를 쓸 수 있다 | 6.4 속도 제한의 출발지별 예산이 이 가정 위에 선다. 주소가 많은 호출자에게는 효과가 그만큼 줄고, 주소를 공유하는 정상 사용자는 남의 예산 소진에 걸린다(6.4 케이스 표 12번) |
 | `client_nonce` 도 비밀이다 | 멱등성 키(2.4)이지만, 그 값을 아는 누구든 같은 요청을 다시 보내 **같은 응답**을 받는다. 응답에는 `peer_token` 이 들어 있다(4.2, 4.3) | 경로상 관측자는 토큰을 이미 읽으므로 새 능력은 아니다. 다만 클라이언트가 nonce 를 로그나 화면에 남기면 토큰을 남긴 것과 같다. **`room_id` 와 같은 등급으로 다룬다** |
 
@@ -82,13 +84,12 @@
 | 14장 계약 | 충족하는 자리 |
 |-----------|---------------|
 | 1. `peer_id` 방 안 유일 | 2.2 `peer_id`, 6.3 항목 (`PEER#` 항목의 조건부 쓰기) |
-| 2. 양쪽 등록 전 `not_ready` | 4.5 `get_peers`, 5.2 준비 완료 |
-| 3. `punch_delay_ms` 방 단위 1회 확정 | 4.4 `register_candidate`, 6.3 항목 (`attribute_not_exists(ready_at_wall_ms)`) |
-| 4. `elapsed_since_ready_ms` 포함, 단조 시계 | 4.5 `get_peers`, 7.4 시계 |
+| 2. 쌍의 양쪽 등록 전 `not_ready` | 4.5 `get_peers`, 5.2 준비 완료 |
+| 3. `punch_delay_ms` 쌍 단위 1회 확정 | 4.6 `host_report`, 6.3 항목 (`PAIR#` 의 조건부 쓰기) |
+| 4. `elapsed_since_ready_ms` 포함, 단조 시계 | 4.5 `get_peers`, 4.6 `host_report`, 7.4 시계 |
 | 5. 후보 위생 통과분만 저장·전달 | 4.4 `register_candidate` 의 위생 케이스 표 |
-| 6. 상대 가상 IP 전달 | 4.5 `get_peers` |
-| 7. 재참가는 같은 `peer_id` 와 가상 IP | 4.3 `join_room` 의 재참가 형식, 5.3 피어 |
-| 8. `peer_id` 는 CSPRNG 32비트 | 2.2 `peer_id` |
+| 6. 상대 가상 IP 전달 | 4.5 `get_peers`, 4.6 `host_report` |
+| 7. `peer_id` 는 CSPRNG 32비트 | 2.2 `peer_id` |
 
 ---
 
@@ -155,9 +156,12 @@ ABCDEFGHJKLMNPQRSTUVWXYZ23456789      (32자. I, O, 0, 1 을 뺐다)
 `join_room` 요청에 실린다. 멱등성 키다. 응답을 받지 못하고 재시도한 요청이 두 번째 피어
 자리를 다시 차지하는 것을 막는다(4.2, 4.3).
 
-클라이언트는 **한 기동에서 한 값**을 쓰고 재시도마다 바꾸지 않는다.
+클라이언트는 **한 참가에서 한 값**을 쓰고 그 참가의 재시도마다 바꾸지 않는다. 방을 나가
+다음 방에 참가할 때는 새 값을 뽑는다.
 
-> **왜.** 바꾸면 멱등성이 사라진다.
+> **왜.** 멱등이어야 하는 작업의 단위가 참가 1회다. 한 기동에 한 값으로 고정하면 로비에서
+> 다시 참가할 때 6.3 취소 사유 1번이 그 요청을 "이미 성립한 요청" 으로 보고 옛 방의 응답을
+> 돌려준다. 참가 안에서 값을 바꾸면 반대로 멱등성이 사라진다.
 
 ### 2.5 가상 IP 풀
 
@@ -165,22 +169,31 @@ ABCDEFGHJKLMNPQRSTUVWXYZ23456789      (32자. I, O, 0, 1 을 뺐다)
 |------|-----|
 | 대역 | `10.100.0.0/24` ([`spec.md`](spec.md) FR-4) |
 | 호스트(방 생성자) | `10.100.0.1`. 방 생성 시 확정 |
-| 참가자 풀 | `10.100.0.2` 부터 `10.100.0.(MAX_PEERS)` 까지. `MAX_PEERS` 가 2 이므로 **v1 의 풀은 `10.100.0.2` 하나**다 |
+| 참가자 풀 | `10.100.0.2` 부터 `10.100.0.(MAX_PEERS)` 까지. `MAX_PEERS` 가 5 이므로 풀은 `10.100.0.2` 부터 `10.100.0.5` 까지 넷이다 |
 | 배정 순서 | 풀을 낮은 주소부터 순회하며 `VIP#<ip>` 항목을 조건부 쓰기로 선점한다(6.3). 실패하면 다음 주소. 풀이 끝나면 `room_full` |
 | 시도 상한 | 풀 크기. 풀을 한 바퀴 돌면 끝난다. 무한히 돌지 않는다 |
-| 회수 | 방이 만료되면 항목이 TTL 로 삭제된다(6.5). **방 살아 있는 동안에는 회수하지 않는다.** 피어가 나가도 자리는 그 피어 것이다. 재참가(4.3)가 같은 주소를 돌려줘야 하기 때문이다 |
+| 회수 | 호스트가 4.6 `host_report` 로 그 피어의 이탈을 알리면 `PEER#` 와 `VIP#` 를 함께 지운다. 방이 만료되면 남은 항목이 TTL 로 삭제된다(6.5) |
 
-`MAX_PEERS` 를 올리면 풀이 그만큼 늘고 다른 것은 바뀌지 않는다. 3자 이상은 `spec.md`
+**회수한 주소는 다음 `join_room` 새 참가가 바로 쓴다.** 되돌아올 자리를 비워 두지 않는다.
+재참가가 없으므로(4.3) 그 주소를 원래 쓰던 피어가 다시 요구하는 경로 자체가 없다.
+
+**회수의 선행조건은 그 피어의 터널 세션이 종료 상태인 것이다.** 호스트는 세션이 끝난 뒤에만
+알린다(4.6). 아직 살아 있는 세션의 주소를 회수하면 클라이언트의 라우팅 표 한 칸을 두 세션이
+요구하게 된다([`protocol.md`](protocol.md) 8.5 송신 측 검증).
+
+`MAX_PEERS` 를 올리면 풀이 그만큼 늘고 다른 것은 바뀌지 않는다. 6인 이상은 `spec.md`
 스트레치 목표다.
 
 ### 2.6 상수
 
 ```python
 CONTROL_PORT              = 8000        # TCP. windows-prereq.md 6절이 이 값을 참조한다
-MAX_PEERS                 = 2           # protocol.md 1장. 한 방에 2 피어
-ROOM_TTL_S                = 3600        # 생성부터 만료까지. 연장 없음 (5.1)
+MAX_PEERS                 = 5           # protocol.md 1장. 한 방에 5 피어
+ROOM_LEASE_S              = 120         # host_report 1회가 미는 만료 시각 (4.6, 5.1)
+HOST_REPORT_OPEN_S        = 5           # 빈 자리가 있을 때 호스트의 host_report 간격 (4.6)
+HOST_REPORT_FULL_S        = 30          # 정원이 찼을 때의 간격 (4.6)
 STORAGE_GRACE_S           = 86400       # 만료 뒤 DynamoDB TTL 삭제까지 여유 (6.5)
-PUNCH_DELAY_MS            = 1000        # protocol.md 10.2. 준비 완료 시 방에 1회 기록
+PUNCH_DELAY_MS            = 1000        # protocol.md 10.2. 쌍이 준비 완료될 때 그 쌍에 1회 기록
 MAX_CANDIDATES            = 8           # protocol.md 3장과 같은 값. 피어당
 MAX_BODY_BYTES            = 4096        # 요청 본문 상한 (3.3)
 MAX_HEADER_BYTES          = 2048        # 요청 줄과 헤더 전체 상한 (3.3)
@@ -209,10 +222,10 @@ MAX_INFLIGHT              = 32          # 동시 처리 요청 상한 (7.2)
   어렵게 하는 보조 수단이다. 위조 `HELLO` 는 UDP 로 클라이언트에 직접 오므로 서버의 속도
   제한(6.4)이 그 추측을 늦추지 못하고, 추측 비용의 상한을 이 문서가 계산하지는 않는다.
   **경로상 관측자에게는 아무것도 숨기지 못한다.** 평문이다
-- **2.3 `peer_token` 이 필요한 이유는 둘이다.** (1) 재참가 시 같은 `peer_id` 와 가상 IP 를
-  돌려주려면 "같은 피어" 를 판정할 근거가 필요하다. (2) `register_candidate` 가 `room_id`
-  와 `peer_id` 만으로 되면 `room_id` 를 아는 제3자가 상대 피어의 후보를 덮어써 그 피어의
-  `HELLO` 를 임의의 주소로 보내게 할 수 있다
+- **2.3 `peer_token` 이 필요한 이유는 둘이다.** (1) `register_candidate` 가 `room_id` 와
+  `peer_id` 만으로 되면 `room_id` 를 아는 제3자가 상대 피어의 후보를 덮어써 그 피어의
+  `HELLO` 를 임의의 주소로 보내게 할 수 있다. (2) 4.6 `host_report` 는 남의 항목을 지우므로
+  호출자가 호스트 본인임을 판정할 근거가 필요하다
 
 ---
 
@@ -376,11 +389,18 @@ Connection: close\r\n
 
 ## 4. 연산
 
-연산은 넷이다. `create_room`, `join_room`, `register_candidate`, `get_peers`.
+연산은 다섯이다. `create_room`, `join_room`, `register_candidate`, `get_peers`,
+`host_report`.
 
-**`register_peer` 는 없다.** 재참가를 `join_room` 의 한 형식(4.3)으로 넣었으므로 별도
-연산이 할 일이 없다. 연산이 하나 줄고, 클라이언트가 "언제 `join_room` 이고 언제
-`register_peer` 인가" 를 판단하지 않는다.
+**앞의 넷은 누구나 부르고 `host_report` 는 호스트만 부른다.** 그 판정은 4.6 이 정한다.
+
+**`register_peer` 는 없다.** 참가는 `create_room` 과 `join_room` 둘로 끝나므로 별도 연산이
+할 일이 없다. 클라이언트가 "언제 `join_room` 이고 언제 `register_peer` 인가" 를 판단하지
+않는다.
+
+**`leave_room` 도 없다.** 나가는 본인이 부르는 연산을 두지 않는다. 자리를 회수해도 되는지를
+아는 것은 그 터널 세션의 한쪽 끝인 호스트이고(2.5 회수), 본인이 부르면 호스트가 아직 세션을
+닫기 전에 자리가 비는 상태가 생긴다.
 
 ### 4.1 공통 봉투
 
@@ -445,71 +465,47 @@ Connection: close\r\n
 
 ### 4.3 join_room
 
-**새 참가는 참가자가 부르고, 재참가는 어느 피어든 부른다.** 재시작한 호스트도
-재참가다([`architecture.md`](architecture.md) 3.5 기동 입력). 두 형식이 있고 **필드 조합으로
-가른다.**
+**참가자가 부른다.** 풀에서 가상 IP 를 선점하고 새 `peer_id` 와 `peer_token` 을 발급한다.
+형식은 하나다.
 
-| 형식 | 필드 | 뜻 |
-|------|------|-----|
-| 새 참가 | `room_id`, `client_nonce` | 풀에서 가상 IP 를 선점하고 새 `peer_id`, `peer_token` 을 발급 |
-| 재참가 | `room_id`, `peer_id`, `peer_token` | 같은 피어임을 증명하고 **같은 `peer_id` 와 가상 IP** 를 돌려받는다 ([`protocol.md`](protocol.md) 14장 계약 7) |
+**재참가는 없다.** 프로세스가 죽으면 그 피어의 자리는 호스트의 통지로 회수되고(2.5), 다시
+들어오는 것은 새 참가다. 새 `peer_id` 와 새 가상 IP 를 받는다.
 
-두 형식의 필드를 섞어 보내면(`client_nonce` 와 `peer_token` 둘 다) `bad_request` 다. 어느 쪽인지 서버가 추측하지 않는다.
+> **왜.** 되돌아올 자리를 비워 두려면 방이 살아 있는 동안 그 주소를 회수할 수 없다. 늦게 온
+> 참가자가 그 자리를 쓰는 것과 떠난 피어가 그 자리를 되받는 것은 같이 성립하지 않는다.
 
-**요청 (새 참가).**
+**요청.**
 
 | 필드 | 형 | 필수 |
 |------|-----|:---:|
 | `room_id` | 문자열 | 예. 2.1 정규화를 거친다 |
 | `client_nonce` | 16진수 32자 | 예 |
 
-**요청 (재참가).**
-
-| 필드 | 형 | 필수 |
-|------|-----|:---:|
-| `room_id` | 문자열 | 예 |
-| `peer_id` | uint32 | 예 |
-| `peer_token` | 16진수 32자 | 예 |
-
-**응답 (두 형식 공통).**
+**응답.**
 
 | 필드 | 형 | 뜻 |
 |------|-----|-----|
 | `room_id` | 문자열 6자 | 정규화된 값. 클라이언트는 이후 이 값을 쓴다 |
 | `peer_id` | uint32 | |
-| `peer_token` | 16진수 32자 | 재참가에서는 **받은 값 그대로** 다시 준다. 새 토큰을 발급하지 않는다 |
+| `peer_token` | 16진수 32자 | 이 참가 동안의 인증 비밀(2.3) |
 | `virtual_ip` | 점 십진 문자열 | |
-| `expires_in_s` | 정수 | |
+| `expires_in_s` | 정수 | 남은 임대(5.1). 표시에만 쓴다 |
 
-**재참가가 되돌려 놓는 것은 후보 목록뿐이다.** 방의 `ready_at` 은 지우지 않는다.
-
-- 후보 목록은 지운다. 재시작한 프로세스는 포트 0 으로 다시 bind
-  하므로(`protocol.md` 6장 소켓 소유권) 이전 후보는 전부 낡았다. 낡은 후보를
-  남기면 상대가 `get_peers` 로 죽은 주소를 받는다
-- 한 번 확정된 `punch_delay_ms` 기준점은 방 단위로 불변이다(14장 계약 3). 재참가한 피어가
-  새 후보를 등록해도 `get_peers` 는 준비 완료를 유지하고 `elapsed_since_ready_ms` 는 계속
-  커진다. 클라이언트 계산식 `max(0, punch_delay_ms - elapsed)` 가 0 이 되어 즉시 펀치한다.
-  그것이 `protocol.md` 10.2 랑데부가 정한 동작이다
-
-**재참가가 살아남은 상대를 살리지는 못한다.** 이 연산이 보장하는 것은 식별자와 가상 IP 의
-유지까지다.
-
-- 재시작한 쪽의 새 `HELLO` 가 상대 NAT 에 도착하지 않는 실측 한계는 `protocol.md` 10.4
-  엔드포인트 학습에 있다
-- 살아남은 쪽이 `get_peers` 를 다시 폴링해 새 후보를 받는 절차는 v1 에 없다. 그 절차를
-  나중에 넣을 때 이 계약이 전제가 된다
-
-**멱등성 (새 참가).** 같은 `room_id` 와 `client_nonce` 로 다시 오면 처음 발급한 것을 그대로
-준다. `NONCE#` 항목이 근거다. 다른 `client_nonce` 로 오면 새 참가이고, 풀의 주소가 전부
+**멱등성.** 같은 `room_id` 와 `client_nonce` 로 다시 오면 처음 발급한 것을 그대로 준다.
+`NONCE#` 항목이 근거다. 다른 `client_nonce` 로 오면 새 참가이고, 풀의 주소가 전부
 선점됐으면 `room_full` 이다.
 
 > **왜.** 응답을 잃은 클라이언트가 nonce 를 바꿔 재시도하면 자기 자신이 방을 채운다. 그래서
-> 2.4 `client_nonce` 가 한 기동에 한 값이라고 정했다.
+> 2.4 `client_nonce` 가 한 참가에 한 값이라고 정했다.
 
-**오류.** `room_not_found`, `room_expired`, `room_full`, `unauthorized`(재참가에서 토큰 불일치, 또는 그 `peer_id` 가 방에 없음). 공통 넷(4.1)은 따로 적지 않는다.
+**`room_full` 의 판정은 풀 순회 결과뿐이다.** 풀을 한 바퀴 돌아 빈 주소가 하나도 없을 때만
+이 오류다. 방이 `ready` 인지는 보지 않는다(5.1).
 
-`peer_id` 가 방에 없을 때 `room_not_found` 가 아니라 `unauthorized` 인 근거는 아래 "왜
-이렇게 정했나" 에 있다.
+> **왜.** 준비 완료가 쌍 단위이므로 이미 붙은 쌍이 있는 방에도 빈 자리가 있을 수 있다.
+> 자리의 진실은 `VIP#` 선점이고 피어 수는 그 파생이다. 두 곳에서 판정하면 회수 직후에
+> 어긋난다.
+
+**오류.** `room_not_found`, `room_expired`, `room_full`. 공통 넷(4.1)은 따로 적지 않는다.
 
 ### 4.4 register_candidate
 
@@ -587,34 +583,24 @@ Connection: close\r\n
 |------|-----|-----|
 | `accepted` | 정수 | 저장한 후보 수 |
 | `rejected` | 정수 | 위생에서 버린 후보 수. 클라이언트는 0 이 아니면 `WARN` 한 줄을 남긴다 |
-| `ready` | 불 | 이 등록으로 방이 준비 완료가 됐거나 이미 준비 완료였으면 참 |
 
-**준비 완료 판정. 자기 `PEER#` 를 쓴 뒤 방을 다시 읽어서 한다.** 순서를 못박는다.
+**이 연산은 준비 완료를 기록하지 않는다.** 후보를 저장하고 끝난다. 쌍의 준비 완료는 호스트가
+4.6 `host_report` 로 그 쌍을 확인할 때 기록된다(5.2).
 
-1. `PEER#` update 로 자기 후보를 저장한다
-2. **`Query(pk, ConsistentRead=true)` 를 다시 읽는다**
-3. 그 결과에서 방의 모든 피어(`MAX_PEERS` 명)가 후보를 1개 이상 갖고 있고 `ROOM.ready_at_wall_ms` 가 없으면, 조건부 쓰기로 `ready_at_*` 과 `punch_delay_ms = PUNCH_DELAY_MS` 를 한 번 기록한다(6.3)
+> **왜.** 쌍의 한쪽 끝은 항상 호스트이고, 호스트가 그 쌍의 존재를 모르는 채로 상대가 펀치를
+> 시작하면 호스트 쪽에서 나가는 패킷이 없어 구멍이 열리지 않는다
+> ([`protocol.md`](protocol.md) 10.3 펀치). 기준 시각을 호스트가 아는 시점으로 두면 두 피어가
+> 같은 값을 받는다.
 
-2번이 없으면 준비 완료가 한 번도 기록되지 않는 순서가 있다. 근거는 아래 "왜 이렇게
-정했나" 에 있다.
-
-**케이스 표.** `A`, `B` 는 두 피어의 `register_candidate` 다. `R` 은 1번 쓰기, `Q` 는 2번
-재읽기다.
-
-| 순서 | A 의 재읽기가 보는 것 | B 의 재읽기가 보는 것 | `ready_at` 기록 |
-|------|----------------------|----------------------|-----------------|
-| A 전체 → B 전체 (순차) | A 만 | A, B | B 가 1회 |
-| `A:R` → `B:R` → `A:Q` → `B:Q` | A, B | A, B | 먼저 조건부 쓰기에 성공한 쪽 1회 |
-| `A:R` → `B:R` → `B:Q` → `A:Q` | A, B | A, B | 같음 |
-| `A:R` → `A:Q` → `B:R` → `B:Q` | A 만 | A, B | B 가 1회 |
-| `B:R` → `B:Q` → `A:R` → `A:Q` | A, B | B 만 | A 가 1회 |
-| 재읽기를 하지 않는 구현(`R` 전에 읽은 결과로 판정) | — | — | **0회. 이 표가 잡는 결함이다** |
-
-마지막 행이 변이 시험이다. 2번을 지운 구현이 그 행에서 `FAIL` 해야 한다.
+**클라이언트는 이 연산의 성공 응답을 폴링 시작점으로 쓴다**(`protocol.md` 11장 타이머).
+등록 직후에는 아직 준비 완료가 아니므로 `get_peers` 가 `ready: false` 를 주는 것이 정상이다.
 
 **오류.** `room_not_found`, `room_expired`, `unauthorized`. 공통 넷(4.1)은 따로 적지 않는다.
 
 ### 4.5 get_peers
+
+**플레이어가 부른다.** 호스트는 부르지 않는다. 호스트가 같은 정보를 4.6 `host_report` 의
+응답으로 받기 때문이다.
 
 클라이언트가 [`protocol.md`](protocol.md) 11장 타이머의 간격(500ms)과 마감(60s)으로
 폴링한다. **간격과 마감은 그 문서가 소유한다.** 여기에 숫자를 다시 적지 않는다.
@@ -627,20 +613,12 @@ Connection: close\r\n
 | `peer_id` | uint32 | 예 |
 | `peer_token` | 16진수 32자 | 예 |
 
-**응답 (준비 전).**
-
-```json
-{"ok": true, "ready": false}
-```
-
-**응답 (준비 완료).**
+**응답.**
 
 | 필드 | 형 | 뜻 |
 |------|-----|-----|
-| `ready` | `true` | |
-| `punch_delay_ms` | 정수 | 방에 기록된 값. 응답마다 같다 |
-| `elapsed_since_ready_ms` | 정수 0 이상 | 준비 완료 기록 시점부터 이 응답을 만드는 시점까지. 계산 방법은 7.4 |
-| `peers` | 배열 | **자신을 제외한** 피어. v1 은 길이 1 |
+| `ready` | 불 | `peers` 에 준비 완료인 원소가 하나라도 있으면 참 |
+| `peers` | 배열 | **자신을 제외한** 피어. 플레이어가 부르면 길이 1 이다. 원소는 호스트뿐이다 |
 
 `peers` 원소:
 
@@ -648,23 +626,36 @@ Connection: close\r\n
 |------|-----|-----|
 | `peer_id` | uint32 | |
 | `virtual_ip` | 점 십진 문자열 | `protocol.md` 5.1 `HELLO` 의 `virtual_ip` 검증에 쓴다 (14장 계약 6) |
-| `candidates` | 배열 | 4.4 `register_candidate` 와 같은 원소 형. 저장된 순서대로 |
+| `ready` | 불 | 이 쌍의 `PAIR#` 항목이 있으면 참 |
+| `punch_delay_ms` | 정수 | 그 쌍에 기록된 값. `ready` 가 참일 때만 있다 |
+| `elapsed_since_ready_ms` | 정수 0 이상 | 그 쌍의 준비 완료 기록 시점부터 이 응답을 만드는 시점까지. `ready` 가 참일 때만 있다. 계산 방법은 7.4 |
+| `candidates` | 배열 | 4.4 `register_candidate` 와 같은 원소 형. 저장된 순서대로. `ready` 가 참일 때만 있다 |
 
-**준비 완료의 정의는 `ROOM.ready_at_wall_ms` 의 존재다.** 피어 수나 후보 수를 응답 시점에
-다시 세지 않는다.
+**원소의 필드 집합은 `ready` 가 가른다.** 케이스 표가 그것을 펼친다.
 
-> **왜.** 다시 세면 재참가(4.3)가 후보를 지운 순간 준비 완료가 거짓으로 돌아가 상대가 이미
-> 시작한 펀치와 어긋난다.
+| 그 쌍의 상태 | 원소에 있는 필드 |
+|--------------|------------------|
+| `PAIR#` 없음 | `peer_id`, `virtual_ip`, `ready: false` |
+| `PAIR#` 있음 | 위에 더해 `punch_delay_ms`, `elapsed_since_ready_ms`, `candidates` |
 
-**준비 완료인데 상대 후보가 0개인 응답이 있을 수 있다.** 재참가(4.3)가 후보를 지운 뒤 다시
-등록하기 전의 구간이다.
+> **왜.** 준비 전에 후보를 주면 클라이언트가 호스트의 확인 없이 펀치를 시작할 수 있다. 펀치
+> 시각을 맞추는 것이 4.6 의 확인이므로(5.2) 그 전에는 쏠 주소를 주지 않는다.
 
-- 클라이언트는 그 응답을 준비 완료로 취급하지 않고 **폴링을 계속한다.** 마감에 닿으면
-  `protocol.md` 9.6 실패 전이의 폴링 마감 초과로 `CONTROL_PLANE_EXCHANGE_FAILED` 다
-- 빈 목록으로 펀치에 들어가면 보낼 곳이 없는 채 10초를 기다려 `HOLE_PUNCH_TIMEOUT` 이
-  되고, 그것은 NAT 실패로 위장한 제어 평면 실패다
-- [`architecture.md`](architecture.md) 8장 실패 진단이 "상대 후보 없음" 을
-  `CONTROL_PLANE_EXCHANGE_FAILED` 로 분류한 것과 같은 판단이다
+**쌍의 준비 완료는 그 `PAIR#` 항목의 존재다.** 피어 수나 후보 수를 응답 시점에 다시 세지
+않는다.
+
+> **왜.** 다시 세면 한 피어가 후보를 다시 등록하는 순간 준비 완료가 거짓으로 돌아가 상대가
+> 이미 시작한 펀치와 어긋난다.
+
+**준비 완료인데 상대 후보가 0개인 응답은 없다.** `PAIR#` 를 쓰는 것은 호스트이고, 호스트는
+양쪽 후보를 확인한 뒤에만 쓴다(4.6). 클라이언트는 그래도 빈 목록을 받으면 준비 완료로
+취급하지 않고 폴링을 계속한다. 마감에 닿으면 `protocol.md` 9.6 실패 전이의 폴링 마감
+초과로 `CONTROL_PLANE_EXCHANGE_FAILED` 다.
+
+> **왜 그래도 검사하나.** 빈 목록으로 펀치에 들어가면 보낼 곳이 없는 채 10초를 기다려
+> `HOLE_PUNCH_TIMEOUT` 이 되고, 그것은 NAT 실패로 위장한 제어 평면 실패다.
+> [`architecture.md`](architecture.md) 8장 실패 진단이 "상대 후보 없음" 을
+> `CONTROL_PLANE_EXCHANGE_FAILED` 로 분류한 것과 같은 판단이다.
 
 **자신을 제외하는 판정은 `peer_id` 다.** 같은 `peer_id` 가 둘일 수 없으므로(2.2) 응답에
 자신과 같은 `peer_id` 가 있으면 서버 결함이다. 클라이언트는 그 경우
@@ -677,26 +668,105 @@ Connection: close\r\n
 > **왜.** 폴링이 정상 진행 중인 것이라 오류 봉투에 넣으면 클라이언트가 "오류지만 계속"
 > 이라는 예외 경로를 갖게 된다.
 
+### 4.6 host_report
+
+**호스트만 부른다.** 하나의 요청이 셋을 한다. 방의 임대를 갱신하고, 끝난 세션의 자리를
+회수하고, 아직 확인하지 않은 쌍을 준비 완료로 기록한다. 응답은 호스트가 알아야 할 방의
+현재 상태다.
+
+> **왜 하나로 묶나.** 셋 다 호스트가 주기적으로 제어 평면에 말하는 것이다. 나누면 같은 인증과
+> 같은 속도 제한 예산을 세 벌 두고, 세 요청의 순서가 어긋나는 경우를 따로 다뤄야 한다.
+
+**간격.** 빈 자리가 있으면 `HOST_REPORT_OPEN_S`(5초), 정원이 찼으면 `HOST_REPORT_FULL_S`(30초)
+마다 부른다. 판정은 직전 응답의 `peers` 길이로 한다.
+
+**두 간격은 `ROOM_LEASE_S` 보다 작아야 한다.** 그래야 정상 호스트의 방이 임대 만료로 죽지
+않는다. 지금 값은 5·30 대 120 이고 **연속 실패를 네 번까지 견딘다.** 값을 바꿀 때 이 여유를
+같이 본다.
+
+**요청.**
+
+| 필드 | 형 | 필수 | 뜻 |
+|------|-----|:---:|-----|
+| `room_id` | 문자열 | 예 | |
+| `peer_id` | uint32 | 예 | 호출자. 호스트의 `peer_id` 여야 한다 |
+| `peer_token` | 16진수 32자 | 예 | |
+| `departed` | 배열 | 아니오 | 세션이 끝난 피어의 `peer_id`. 없으면 빈 배열이거나 생략. 길이 `MAX_PEERS - 1` 이하 |
+| `confirm` | 배열 | 아니오 | 준비 완료로 기록할 상대의 `peer_id`. 같은 제약 |
+
+**호출자 판정.** `peer_id` 가 `ROOM.host_peer_id` 와 같고 `peer_token` 이 그 피어의 것일
+때만 처리한다. 둘 중 하나라도 어긋나면 `unauthorized` 다.
+
+> **왜 호스트만인가.** 자리를 회수해도 되는지는 그 터널 세션이 끝났는지로 정해지고(2.5),
+> 그것을 아는 것은 세션의 한쪽 끝인 호스트다. 나가는 본인이 부르면 호스트가 아직 세션을 닫기
+> 전에 자리가 비는 상태가 생긴다.
+
+**응답.**
+
+| 필드 | 형 | 뜻 |
+|------|-----|-----|
+| `expires_in_s` | 정수 | 갱신 뒤 남은 임대. 정상이면 `ROOM_LEASE_S` 다 |
+| `released` | 배열 | 실제로 지운 `peer_id`. 이미 없던 것은 담지 않는다 |
+| `confirmed` | 배열 | 이번 호출로 `PAIR#` 를 새로 쓴 상대의 `peer_id` |
+| `peers` | 배열 | 4.5 `get_peers` 와 같은 원소 형. 자신을 제외한 현재 피어 전부 |
+
+**처리 순서를 못박는다.** 한 요청 안에서 아래 순서로 돈다.
+
+1. 호출자 판정. 어긋나면 `unauthorized` 로 끝난다
+2. `departed` 의 각 `peer_id` 에 대해 `PEER#` 와 그 피어의 `VIP#`, 그리고 그 피어가 낀
+   `PAIR#` 를 지운다(6.3)
+3. `confirm` 의 각 `peer_id` 에 대해, 그 피어와 호출자가 **둘 다 후보를 1개 이상** 갖고 있고
+   그 쌍의 `PAIR#` 가 없으면 조건부 쓰기로 만든다. 항목에 `ready_at_*` 과
+   `punch_delay_ms = PUNCH_DELAY_MS` 를 넣는다(6.3)
+4. `ROOM.expires_at_ms` 를 `now + ROOM_LEASE_S * 1000` 으로 갱신한다
+5. `Query(pk, ConsistentRead=true)` 로 읽어 응답을 만든다
+
+**2번이 3번보다 먼저다.** 같은 요청에 `departed` 와 `confirm` 이 같은 `peer_id` 를 담으면
+회수가 이긴다. 끝난 세션을 준비 완료로 기록하면 그 자리가 다시 찬다.
+
+**4번이 5번보다 먼저다.** 응답의 `expires_in_s` 가 갱신 뒤의 값이어야 호스트가 자기 임대를
+바로 읽는다.
+
+**5번이 마지막인 것이 이 절의 변이 시험이다.** 1~4번의 쓰기 전에 읽은 결과로 응답을 만드는
+구현은 방금 회수한 피어를 `peers` 에 담는다.
+
+**케이스 표.** `H` 는 호스트의 `host_report`, `P` 는 플레이어의 `register_candidate` 다.
+
+| 순서 | 5번 읽기가 보는 것 | `PAIR#` 기록 | 호스트가 다음에 하는 것 |
+|------|-------------------|--------------|------------------------|
+| `P` → `H(confirm=[P])` | P 의 후보 있음 | 1회 | 펀치 |
+| `H(confirm=[P])` → `P` | P 의 후보 없음 | **0회.** 3번의 조건이 안 맞는다 | 다음 주기에 다시 `confirm` |
+| `H` 가 `confirm` 없이 부름 | P 의 후보 있음 | 0회 | 응답의 `peers` 를 보고 다음 주기에 `confirm` |
+| 같은 `P` 로 `H` 를 두 번 | — | 1회. 두 번째는 `PAIR#` 가 이미 있다 | 없음 |
+| `H(departed=[P], confirm=[P])` | P 없음 | 0회 | 없음 |
+| 3번을 조건 없이 쓰는 구현 | — | **후보 없는 쌍에도 기록. 이 표가 잡는 결함이다** | — |
+
+**멱등성.** `client_nonce` 를 쓰지 않는다. 같은 요청을 두 번 보내면 두 번째의 `released` 와
+`confirmed` 가 비고 저장소 상태가 같다. 갱신은 그때의 `now` 를 쓰므로 임대만 더 밀린다.
+
+**오류.** `room_not_found`, `room_expired`, `unauthorized`. 공통 넷(4.1)은 따로 적지 않는다.
+
+**만료된 방은 되살리지 못한다.** `expires_at_ms` 가 이미 지났으면 `room_expired` 이고 갱신도
+하지 않는다. 임대가 끊긴 방은 끝난 방이다.
+
 ### 왜 이렇게 정했나
 
-- **4.1 두 코드를 나눈다.** 사람이 방 코드를 잘못 친 것과, 맞게 쳤는데 호스트가 한 시간
-  전에 만든 것은 다른 조치가 필요하다. 합치면 어느 쪽인지 알 수 없다. 대신 **존재하지 않는
+- **4.1 두 코드를 나눈다.** 사람이 방 코드를 잘못 친 것과, 맞게 쳤는데 호스트가 신호를 멈춘
+  방인 것은 다른 조치가 필요하다. 합치면 어느 쪽인지 알 수 없다. 대신 **존재하지 않는
   방을 추측하는 호출자에게 만료된 방의 존재를 알려 준다.** 만료된 방은 참가할 수 없으므로
   알려 줘도 잃는 것이 없다
-- **4.3 없는 `peer_id` 도 `unauthorized` 다.** 방은 있다. 없는 것은 그 피어다. 존재하지
-  않는 `peer_id` 와 토큰이 틀린 `peer_id` 를 같은 코드로 답해야 `room_id` 만 아는 호출자가
-  방 안의 `peer_id` 를 열거하지 못한다. 32비트 공간이라 열거는 어차피 비현실적이지만,
-  응답으로 구분해 줄 이유가 없다
-- **4.4 재읽기가 없으면 0회가 된다.** 쓰기 전에 읽은 결과에 자기 등록만 얹어서 판정하면,
-  두 피어가 각자 쓰기 전에 읽었을 때 둘 다 상대의 후보를 못 본다. 조건부 쓰기
-  `attribute_not_exists(ready_at_wall_ms)` 는 두 번 쓰는 것을 막지 그 자리에서 0번 쓰는
-  것을 막지 못한다. 그러면 4.5 `get_peers` 의 정의상 응답이 영원히 `ready: false` 이고
-  양쪽이 폴링 마감까지 기다리다 `CONTROL_PLANE_EXCHANGE_FAILED` 로 끝난다. **NAT 실패로
-  위장한 제어 평면 실패다**
-- **4.4 쓰기 뒤에 읽으면 적어도 한쪽은 둘 다 본다.** 각자의 재읽기가 자기 쓰기 뒤에
-  오므로, 나중에 읽는 쪽은 상대의 쓰기도 이미 보인다. 둘 다 보는 경우에는 조건부 쓰기가 한
-  번만 성공하고 실패한 쪽은 이미 기록됐다는 뜻이므로 오류가 아니다. 이것이 14장 계약 3 의
-  충족이다
+- **4.6 없는 `peer_id` 로 부르면 `unauthorized` 다.** 방은 있다. 없는 것은 그 피어다.
+  존재하지 않는 `peer_id` 와 토큰이 틀린 `peer_id` 를 같은 코드로 답해야 `room_id` 만 아는
+  호출자가 방 안의 `peer_id` 를 열거하지 못한다. 32비트 공간이라 열거는 어차피
+  비현실적이지만, 응답으로 구분해 줄 이유가 없다
+- **4.6 확인을 쓰기 뒤에 읽는다.** 회수와 확인과 갱신을 마친 뒤 다시 읽어 응답을 만들지
+  않으면, 방금 지운 피어가 `peers` 에 남고 방금 확인한 쌍이 `ready: false` 로 나간다.
+  호스트는 그 응답을 보고 같은 상대를 다음 주기에 또 `confirm` 하고, 그 호출은 조건부 쓰기가
+  실패해 아무 일도 하지 않는다. 겉으로는 정상이라 결함이 드러나지 않는다
+- **4.6 확인의 조건이 양쪽 후보다.** 호스트가 후보 없는 상대를 `confirm` 해도 쓰지 않는다.
+  쓰면 4.5 `get_peers` 가 빈 후보 목록과 함께 준비 완료를 주고, 상대는 보낼 곳이 없는 채
+  펀치 마감을 기다려 `HOLE_PUNCH_TIMEOUT` 으로 끝난다. **NAT 실패로 위장한 제어 평면
+  실패다**
 
 ---
 
@@ -710,48 +780,55 @@ Connection: close\r\n
 
 | 상태 | 정의 |
 |------|------|
-| `waiting` | `ROOM` 항목이 있고, `now < expires_at`, `ready_at_wall_ms` 없음 |
-| `ready` | `ROOM` 항목이 있고, `now < expires_at`, `ready_at_wall_ms` 있음 |
-| `expired` | `ROOM` 항목이 있고, `now >= expires_at`. TTL 삭제 전까지 이 상태로 보인다 |
+| `open` | `ROOM` 항목이 있고 `now < expires_at` |
+| `expired` | `ROOM` 항목이 있고 `now >= expires_at`. TTL 삭제 전까지 이 상태로 보인다 |
 | (없음) | `ROOM` 항목이 없다. 처음부터 없었거나 TTL 이 지웠다 |
 
 ```text
-(없음) --create_room--> waiting --모든 피어가 후보를 갖게 한 register_candidate--> ready
-                          |                                                  |
-                          +---------------- ROOM_TTL_S 경과 -----------------+--> expired --TTL 삭제--> (없음)
+(없음) --create_room--> open --임대 만료--> expired --TTL 삭제--> (없음)
+                          ^                   |
+                          +-- host_report ----+   (갱신은 만료 전에만 된다)
 ```
 
-**만료는 연장하지 않는다.** `ROOM_TTL_S`(3600초)는 생성 시점부터 고정이다. 연결 수립
-뒤에는 제어 평면이 필요 없으므로(NFR-3) 이 값은 **방 코드가 유효한 기간**이고 세션 길이와
-무관하다.
+**준비 완료는 방의 상태가 아니다.** 쌍마다 따로 판정하므로(5.2) 같은 방에 준비된 쌍과 그렇지
+않은 쌍이 같이 있다.
 
-> **왜.** 활동으로 연장하면 "방이 언제 사라지는가" 를 아무도 답할 수 없다.
+**방은 호스트의 임대로 산다.** `host_report` 한 번이 만료 시각을 `now + ROOM_LEASE_S` 로
+민다(4.6). 절대 상한은 없다. 호스트가 신호하는 동안 방 코드는 유효하고, 몇 시간 뒤에 온
+참가자도 그 코드로 들어온다.
 
-**한 시간이 덮는 것과 덮지 않는 것을 나눠 적는다.** 3600초는 사람이 방 코드를 전달하고
-참가자가 클라이언트를 켜기까지의 여유다.
+> **왜 연장을 허용하나.** "방이 언제 사라지는가" 에 답할 수 있기 때문이다. 답은 **호스트가
+> 신호를 멈춘 뒤 `ROOM_LEASE_S` 안**이다. 고정 수명은 그 답이 더 단순한 대신, 호스트가 죽은
+> 방이 남은 시간만큼 살아 있고 살아 있는 방이 시간이 됐다고 죽는다. 근거는
+> [ADR 0009](decisions/0009-방-호스트-임대.md) 다.
+
+**임대는 터널의 생존 조건이 아니다.** 제어 평면이 죽어 호스트가 갱신에 실패해도 이미 수립된
+터널은 그대로 간다([`spec.md`](spec.md) NFR-3). 임대가 끊긴 방이 잃는 것은 **새 참가와 제어
+평면 연산**이다.
+
+**임대가 덮는 것과 덮지 않는 것을 나눠 적는다.**
 
 - 양쪽이 등록을 마치기까지의 여유는 이 값이 아니라 [`protocol.md`](protocol.md) 11장
   타이머의 `get_peers` 마감이다. 먼저 켠 쪽은 자기 `register_candidate` 성공 시점부터 그
-  마감 안에 상대의 등록을 봐야 하고, 넘기면 방이 아직 살아 있어도
+  마감 안에 상대의 등록과 호스트의 확인을 봐야 하고, 넘기면 방이 아직 살아 있어도
   `CONTROL_PLANE_EXCHANGE_FAILED` 로 끝난다(9.6)
-- 자동 재시도는 미정이므로(`protocol.md` 10.4 엔드포인트 학습) 그 뒤는 사람이 다시 띄운다.
-  방이 살아 있으므로 재참가로 같은 `peer_id` 와 가상 IP 를 돌려받는다(4.3)
-- 30분 게임 뒤 재참가가 필요해지면 만료된 방이라 `room_expired` 를 받고 새 방을 만든다. v1
-  이 수용하는 한계이고, 자동 재시도를 정할 때(`protocol.md` 10.4 미정 항목) 이 값을 다시
-  본다
+- 프로세스가 죽은 피어는 그 자리를 잃는다. 다시 들어오는 것은 새 참가이고 가상 IP 가 바뀐다
+  (4.3). 방은 살아 있으므로 같은 방 코드를 다시 쓴다
+- 호스트가 죽으면 방은 `ROOM_LEASE_S` 안에 만료된다. 그 사이에 들어온 참가자는 쌍을 확인해
+  줄 호스트가 없어 준비 완료에 닿지 못하고 폴링 마감으로 끝난다
 
 **두 값의 역할이 다르다는 것을 시연 대본에 반영한다.** 먼저 켠 쪽이 1분 안에 실패하는 것은
 제어 평면 장애가 아니다.
 
 **연산별 허용 상태.**
 
-| 연산 | `waiting` | `ready` | `expired` | (없음) |
-|------|-----------|---------|-----------|--------|
-| `create_room` | 같은 nonce 면 기존 방(4.2) | 같음 | 같은 nonce 면 `room_expired`(4.2) | 생성 |
-| `join_room` 새 참가 | 선점 시도 | 선점 시도. 주소가 전부 선점됐을 것이므로 `room_full` | `room_expired` | `room_not_found` |
-| `join_room` 재참가 | 토큰 검사 후 반환 | 같음 | `room_expired` | `room_not_found` |
-| `register_candidate` | 저장. 준비 판정 | 저장. 준비 판정은 이미 참 | `room_expired` | `room_not_found` |
-| `get_peers` | `ready: false` | 준비 완료 응답 | `room_expired` | `room_not_found` |
+| 연산 | `open` | `expired` | (없음) |
+|------|--------|-----------|--------|
+| `create_room` | 같은 nonce 면 기존 방(4.2) | 같은 nonce 면 `room_expired`(4.2) | 생성 |
+| `join_room` | 선점 시도. 빈 주소가 없으면 `room_full` | `room_expired` | `room_not_found` |
+| `register_candidate` | 저장 | `room_expired` | `room_not_found` |
+| `get_peers` | 쌍별 준비 여부를 담아 응답 | `room_expired` | `room_not_found` |
+| `host_report` | 회수·확인·갱신 | `room_expired`. 갱신하지 않는다 | `room_not_found` |
 
 **만료 판정 케이스 표.** `now` 는 서버 벽시계 밀리초, `expires_at_ms` 는 저장값이다.
 
@@ -770,9 +847,22 @@ Connection: close\r\n
 
 ### 5.2 준비 완료
 
-`ready_at_wall_ms` 는 **한 번 기록되면 방이 사라질 때까지 바뀌지 않는다.** 재참가가 후보를
-지워도, 어느 피어가 후보를 다시 등록해도 그대로다. 근거는 4.3 `join_room` 과 4.5
-`get_peers` 에 있다.
+**준비 완료의 단위는 쌍이다.** 호스트와 한 플레이어가 한 쌍이고, 그 쌍의 `PAIR#` 항목이
+있으면 준비 완료다(6.3).
+
+**쓰는 것은 호스트뿐이다.** 호스트가 `host_report` 의 `confirm` 으로 그 쌍을 지목하고,
+서버가 양쪽 후보를 확인한 뒤 조건부 쓰기로 만든다(4.6).
+
+> **왜 호스트가 쓰나.** 쌍의 한쪽 끝은 항상 호스트다(ADR 0006). 호스트가 모르는 채로 상대가
+> 펀치를 시작하면 호스트 쪽에서 나가는 패킷이 없어 구멍이 열리지 않는다. 기준 시각을 호스트가
+> 아는 시점으로 두면 두 피어가 같은 값을 받는다.
+
+`PAIR#` 의 `ready_at_wall_ms` 는 **한 번 기록되면 그 쌍이 사라질 때까지 바뀌지 않는다.**
+어느 피어가 후보를 다시 등록해도 그대로다. 근거는 4.5 `get_peers` 와 4.6 `host_report` 에
+있다.
+
+**쌍이 사라지는 것은 그 피어가 회수될 때뿐이다**(2.5, 4.6). 그때 `PEER#`, `VIP#`, `PAIR#`
+가 같이 지워진다.
 
 ### 5.3 피어
 
@@ -782,15 +872,15 @@ Connection: close\r\n
 | `registered` | `candidates` 가 1개 이상 |
 
 ```text
-(없음) --create_room / join_room 새 참가--> joined --register_candidate--> registered
-                                              ^                              |
-                                              +---- join_room 재참가 (후보를 지운다) ----+
+(없음) --create_room / join_room--> joined --register_candidate--> registered
+   ^                                                                   |
+   +------------------ host_report 의 departed (자리 회수) -------------+
 ```
 
-피어는 방과 함께 사라진다. 피어만 지우는 연산은 없다.
+**피어를 지우는 것은 호스트의 통지뿐이다.** 그 밖에는 방과 함께 사라진다.
 
-> **왜.** `leave_room` 을 두지 않는 이유는 방 수명이 짧고(5.1) 자리 회수가 재참가
-> 계약(2.5)과 충돌하기 때문이다.
+> **왜.** `leave_room` 을 두지 않는 이유는 4장 머리에 있다. 나가는 본인은 자기 세션이 호스트
+> 쪽에서도 닫혔는지를 모른다.
 
 ---
 
@@ -832,9 +922,10 @@ Connection: close\r\n
 | 용량 모드 | [ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 결정 4. provisioned. 값은 배포 설정 |
 | 인덱스 | 없음 (저장 2) |
 
-방에 속한 항목(`ROOM`, `PEER#`, `VIP#`)은 같은 파티션 키를 가지므로 방 하나의 전체 상태를
-`Query(pk = room_id, ConsistentRead=true)` 하나로 읽는다. 항목 수는 `1 + MAX_PEERS × 2`
-이하다(`ROOM` 하나, 피어마다 `PEER#` 와 `VIP#`). v1 에서 최대 5개다.
+방에 속한 항목(`ROOM`, `PEER#`, `VIP#`, `PAIR#`)은 같은 파티션 키를 가지므로 방 하나의
+전체 상태를 `Query(pk = room_id, ConsistentRead=true)` 하나로 읽는다. 항목 수는
+`1 + MAX_PEERS × 2 + (MAX_PEERS - 1)` 이하다(`ROOM` 하나, 피어마다 `PEER#` 와 `VIP#`,
+호스트와 각 플레이어의 쌍마다 `PAIR#` 하나). v1 에서 최대 15개다.
 
 **`NONCE#` 항목은 파티션 키가 다르다.**
 
@@ -845,8 +936,8 @@ Connection: close\r\n
 
 | `sk` | 속성 | 뜻 |
 |------|------|-----|
-| `ROOM` | `created_at_ms`, `expires_at_ms`, `host_peer_id`, `ttl` | 방. 아래 준비 완료 속성은 처음엔 없다 |
-| `ROOM` (준비 완료 뒤) | 위에 더해 `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms` | 7.4 시계가 세 값을 쓴다 |
+| `ROOM` | `created_at_ms`, `expires_at_ms`, `host_peer_id`, `ttl` | 방. `expires_at_ms` 는 `host_report` 가 민다(4.6) |
+| `PAIR#<lo>-<hi>` | `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms`, `ttl` | 쌍의 준비 완료. `lo` 와 `hi` 는 두 `peer_id` 를 10진수로 적고 오름차순으로 붙인다. 7.4 시계가 세 값을 쓴다 |
 | `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `candidates`(리스트), `client_nonce`, `joined_at_ms`, `ttl` | 피어. `peer_id` 는 `sk` 에서 10진수로 적는다. `peer_token` 은 원문이다(2.3) |
 | `VIP#<virtual_ip>` | `peer_id`, `ttl` | 가상 IP 선점 표식. `<virtual_ip>` 는 점 십진 |
 | (pk = `NONCE#<client_nonce>`, sk = `NONCE`) | `room_id`, `peer_id`, `ttl` | 멱등성 키 → 방과 피어 대응. **pk 가 방이 아니라 nonce 다** |
@@ -864,9 +955,10 @@ Connection: close\r\n
 |------|------|------|
 | `create_room` | 트랜잭션: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NONCE#` put | **네 put 전부 `attribute_not_exists(pk)`** 다. `ROOM` 실패는 `room_id` 충돌 → 재추첨(2.1). `NONCE#` 실패는 동시에 같은 nonce 가 들어온 것이므로 다시 읽어 그 결과를 돌려준다. `PEER#`·`VIP#` 는 `ROOM` 이 없으면 있을 수 없으므로 실패가 나면 저장소가 앞선 방의 항목을 일부만 지운 상태다. 그때는 `internal` 이고 재추첨하지 않는다 |
 | `join_room` 새 참가 | 풀의 주소마다 트랜잭션: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `PEER#<peer_id>` put, `NONCE#` put | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 사전 읽기와 쓰기 사이에 방이 만료되거나 삭제되는 경합을 막는다. `VIP#` 와 `PEER#` 와 `NONCE#` 각각 `attribute_not_exists(pk)`. 실패 처리는 아래 취소 사유 표 |
-| `join_room` 재참가 | `PEER#` update: `candidates = []` | `attribute_exists(pk) AND peer_token = :t`. 실패는 `unauthorized` |
 | `register_candidate` | `PEER#` update: `candidates = :list` | `attribute_exists(pk) AND peer_token = :t` |
-| 준비 완료 기록 | `ROOM` update: `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms` | `attribute_not_exists(ready_at_wall_ms)`. 실패는 오류가 아니다(4.4) |
+| `host_report` 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, 그 피어가 낀 `PAIR#` delete | **`PEER#` 에만 `attribute_exists(pk)` 를 건다.** 그 조건이 실패하면 이미 없던 대상이고 `released` 에 담지 않는다(4.6). 나머지 둘은 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 그 회수가 통째로 취소된다 |
+| `host_report` 확인 | 쌍마다 트랜잭션: `PEER#<호스트>` **ConditionCheck**, `PEER#<상대>` **ConditionCheck**, `PAIR#<lo>-<hi>` put | 두 ConditionCheck 는 각각 `attribute_exists(pk) AND size(candidates) > :zero` 다. put 은 `attribute_not_exists(pk)`. **양쪽 후보 조건을 저장소 조건으로 건다.** 읽고 나서 쓰기 전에 상대가 회수되거나 후보가 비워지는 경합이 있다. put 조건만 실패하면 이미 확인된 쌍이므로 오류가 아니다(4.6) |
+| `host_report` 갱신 | 트랜잭션: `ROOM` update(`expires_at_ms = :new`, `ttl = :new_ttl`) 와 **그 방의 나머지 항목마다 `ttl = :new_ttl` update** | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 실패는 `room_expired` 다. 나머지 항목은 조건 없는 update 다. **항목 목록은 이 요청의 첫 `Query` 결과다.** 항목 수가 `1 + MAX_PEERS × 2 + (MAX_PEERS - 1)` 이하라 트랜잭션 상한 안이다 |
 
 **트랜잭션이 취소되면 취소 사유를 항목별로 읽고 아래 우선순위로 판정한다.**
 `TransactionCanceledException` 의 `CancellationReasons` 는 트랜잭션에 넣은 항목과 **같은
@@ -885,12 +977,13 @@ Connection: close\r\n
 
 `NONCE#` 를 1번에 둔 근거는 아래 "왜 이렇게 정했나" 에 있다.
 
-**단일 항목 update(재참가, `register_candidate`, 준비 완료 기록)는 방 생존을 조건에 넣지
-않는다.** 7.3 연산 처리 순서대로 만료를 먼저 판정한 뒤 쓰므로, 걸리는 것은 읽기와 쓰기 사이
+**단일 항목 update(`register_candidate`, `host_report` 의 확인)는 방 생존을 조건에 넣지
+않는다.** `host_report` 의 갱신은 예외다. 그 쓰기의 목적이 방의 만료 시각이므로 조건에
+방 생존이 들어간다(위 표). 7.3 연산 처리 순서대로 만료를 먼저 판정한 뒤 쓰므로, 걸리는 것은 읽기와 쓰기 사이
 수십 ms 안에 방이 만료되는 경합뿐이다. 그 경합은 허용하고 그 결과를 정확히 적는다.
 
-- 현재 요청은 `ok` 를 받을 수 있다. `register_candidate` 라면 `accepted` 와 `ready` 까지
-  정상 값으로 돌아온다
+- 현재 요청은 `ok` 를 받을 수 있다. `register_candidate` 라면 `accepted` 까지 정상 값으로
+  돌아온다
 - 갱신된 항목은 만료된 방 안에 있고, 그 방을 읽는 **이후의** 모든 연산이 7.3 연산 처리 순서의 6번 만료 검사에서
   `room_expired` 로 끝난다. 그래서 갱신된 값이 실리는 응답은 그 요청 하나뿐이다
 - 클라이언트는 다음 요청(대개 `get_peers` 폴링)에서 `room_expired` 를 받고
@@ -909,11 +1002,13 @@ Connection: close\r\n
 |------|------|
 | `create_room` | `NONCE#` GetItem (멱등성). 있으면 그 `room_id` 로 `Query` 해 같은 응답을 조립 |
 | `join_room` 새 참가 | `NONCE#` GetItem → 있으면 저장된 `room_id` 가 요청과 같아야 한다(다르면 `bad_request`. nonce 를 다른 방에 재사용한 것이다) → 없으면 `ROOM` GetItem (만료·존재) → 트랜잭션 |
-| `join_room` 재참가 | `ROOM` GetItem → `PEER#` GetItem (토큰 검사) → update |
-| `register_candidate` | `Query(pk)` 로 `ROOM` 과 `PEER#` 전부 (만료·토큰 검사) → `PEER#` update → **`Query(pk)` 를 다시 읽어** 준비 판정 (4.4). 읽기가 두 번인 이유는 그 절에 있다 |
-| `get_peers` | `Query(pk)` 한 번. `ROOM` 과 `PEER#` 전부가 나온다. 토큰 검사도 그 결과로 한다 |
+| `register_candidate` | `Query(pk)` 로 `ROOM` 과 `PEER#` 전부 (만료·토큰 검사) → `PEER#` update |
+| `get_peers` | `Query(pk)` 한 번. `ROOM` 과 `PEER#` 와 `PAIR#` 전부가 나온다. 토큰 검사도 그 결과로 한다 |
+| `host_report` | `Query(pk)` 로 만료·호출자 판정 → 회수·확인·갱신 쓰기 → **`Query(pk)` 를 다시 읽어** 응답을 조립 (4.6). 읽기가 두 번인 이유는 그 절에 있다 |
 
-전부 `ConsistentRead=true` 다(저장 1). **재참가에서 `PEER#` 를 GetItem 으로 읽는 것은 `peer_id` 를 요청이 주기 때문이다.** 토큰만으로 피어를 찾는 형식을 두지 않은 이유가 그것이다. 토큰으로 찾으려면 피어 전부를 읽어 대조해야 한다.
+전부 `ConsistentRead=true` 다(저장 1). **토큰만으로 피어를 찾는 형식을 두지 않는다.** 모든
+인증 연산이 `peer_id` 를 함께 받으므로 그 키로 바로 읽는다. 토큰으로 찾으려면 피어 전부를
+읽어 대조해야 한다.
 
 ### 6.4 속도 제한
 
@@ -984,9 +1079,16 @@ Connection: close\r\n
 
 | 항목 | `ttl` 값 |
 |------|----------|
-| 방의 모든 항목 (`ROOM`, `PEER#`, `VIP#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S` |
+| 방의 모든 항목 (`ROOM`, `PEER#`, `VIP#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S` |
 
 같은 방의 항목은 같은 `ttl` 을 갖는다. 방이 만료된 뒤 하루가 지나면 DynamoDB 가 지운다.
+
+**임대를 갱신하면 그 방의 모든 항목의 `ttl` 을 같이 민다.** `ROOM` 만 밀면 오래 산 방의
+`PEER#`·`VIP#`·`PAIR#` 가 먼저 지워지고, 방은 살아 있는데 피어가 사라진다. 쓰기는 4.6
+`host_report` 의 갱신 트랜잭션이 한다(6.3).
+
+- **갱신 사이에 새로 생긴 항목은 그 시점의 `expires_at_ms` 로 `ttl` 을 갖는다.** 다음 갱신에서
+  함께 밀린다. 신호 간격이 최대 30초이고 `STORAGE_GRACE_S` 가 하루라 그 사이에 지워지지 않는다
 
 - **하루의 여유를 두는 이유는 만료 판정이 저장 4 대로 애플리케이션 몫이기 때문이다.** 만료
   직후 항목이 지워지면 `room_expired` 와 `room_not_found` 의 구분(4.1)이 삭제 시점에 따라
@@ -1076,12 +1178,13 @@ on_connection(reader, writer):
 ```text
 1. 필드 존재와 형 검사 (4장 표)             -> 실패: bad_request
 2. room_id 정규화 (2.1)                     -> 실패: bad_request
-3. 연산별 필드 조합 검사 (4.3 두 형식)       -> 실패: bad_request
+3. 연산별 필드 조합 검사 (4장 연산별 표)     -> 실패: bad_request
 4. 저장소 읽기 (6.3 읽기 표, ConsistentRead)
 5. 방 존재                                  -> 없음: room_not_found
 6. 방 만료 (5.1 케이스 표)                  -> 만료: room_expired
 7. 토큰 검사 (필요한 연산만)                 -> 실패: unauthorized
-8. 연산 본체 (조건부 쓰기, 준비 판정)
+   host_report 는 호출자가 호스트인지도 본다 (4.6)
+8. 연산 본체 (조건부 쓰기)
 9. 응답 조립
 ```
 
@@ -1149,7 +1252,9 @@ elapsed_since_ready_ms(room):
 |----------|-----------|--------------------|
 | `http.request` | `op`, `status`, `error`(성공이면 `-`), `src`, `ms` | 모든 연산 검증. **`peer_token`, 본문, `room_id` 를 싣지 않는다.** 방 코드가 로그에 남으면 로그 열람이 곧 방 탈취다 |
 | `room.created` | `peer_id`, `virtual_ip` | 가상 IP 배정 검증. `room_id` 는 싣지 않는다 |
-| `room.ready` | `peer_id` (준비 완료를 확정시킨 등록의 피어), `punch_delay_ms` | 준비 완료 1회 기록 검증. 방마다 **정확히 한 번** 나와야 한다. 방이 둘 이상인 로그에서 줄을 가르려면 `peer_id` 가 있어야 한다 |
+| `pair.ready` | `host_peer_id`, `peer_id` (쌍의 상대), `punch_delay_ms` | 준비 완료 1회 기록 검증. 쌍마다 **정확히 한 번** 나와야 한다. 방이 둘 이상인 로그에서 줄을 가르려면 두 `peer_id` 가 있어야 한다 |
+| `peer.released` | `peer_id`, `virtual_ip` | 자리 회수 검증 (4.6). 회수된 주소가 다시 `vip.claimed` 에 나오는 것으로 재배정을 본다 |
+| `room.renewed` | `host_peer_id`, `expires_in_s` | 임대 갱신 검증 (5.1). 호스트가 신호를 멈춘 뒤 이 줄이 끊기는 것을 본다 |
 | `vip.claimed` | `virtual_ip`, `peer_id` | 동시 참가 중복 배정 검증 |
 | `counter` | `name`, `value` | 아래 카운터 |
 
@@ -1241,9 +1346,9 @@ local 이라 자격 증명이 필요 없다.
 | 연산 | 일시 오류 시 |
 |------|--------------|
 | `create_room`, `join_room` 새 참가 | **같은 `client_nonce` 로** 1초 간격, **첫 시도를 포함해 총 3회**. 넘기면 `CONTROL_PLANE_EXCHANGE_FAILED` |
-| `join_room` 재참가 | 같은 `room_id`, `peer_id`, `peer_token` 으로 1초 간격, 첫 시도를 포함해 총 3회. 서버 쪽 동작이 멱등해서(후보 비우기) nonce 가 필요 없다 |
 | `register_candidate` | 1초 간격, 첫 시도를 포함해 총 3회. 교체 의미(4.4)라 재시도가 안전하다 |
 | `get_peers` | **재시도 규칙이 따로 없다.** 다음 폴링이 곧 재시도다. 폴링 간격과 마감은 [`protocol.md`](protocol.md) 11장 타이머 |
+| `host_report` | **재시도 규칙이 따로 없다.** 다음 주기가 곧 재시도다. 멱등하므로(4.6) 같은 요청을 그대로 다시 보낸다. 일시 오류가 이어져 임대가 끊겨도 터널은 유지한다(5.1) |
 
 확정 오류는 재시도하지 않고 즉시 `CONTROL_PLANE_EXCHANGE_FAILED` 다. **`rate_limited` 도
 확정 오류다.** 사람이 다시 시작한다.
@@ -1260,16 +1365,19 @@ local 이라 자격 증명이 필요 없다.
 [`protocol.md`](protocol.md) 11장 타이머의 것이고 여기서는 순서만 정한다.
 
 ```text
-1. 기동 입력을 읽는다 (architecture.md 3.5). 역할이 host 면 create_room, player 면 join_room
+1. 방을 만들지 참가할지를 받는다 (architecture.md 3.5). 호스트면 create_room, 플레이어면 join_room
 2. [control] 이 DNS 를 한 번 해석한다. 실패면 기동 실패
 3. UDP 소켓 bind, getsockname (protocol.md 6장)
 4. create_room 또는 join_room. 응답의 room_id 를 콘솔에 낸다 (host 는 이것을 상대에게 전한다)
 5. STUN (protocol.md 13장). 두 서버에 질의한다
 6. register_candidate. 로컬 후보 + 반사 후보. 8개를 넘으면 클라이언트가 먼저 자른다
-7. get_peers 폴링. ready: true 이고 상대 후보가 1개 이상일 때까지 (4.5).
+7. 플레이어: get_peers 폴링. 그 쌍의 ready: true 이고 상대 후보가 1개 이상일 때까지 (4.5).
    **폴링 간격과 마감은 6번의 성공 응답을 받은 시점부터 센다** (protocol.md 11장)
+   호스트: host_report 주기 호출. 응답의 peers 에서 후보를 가진 새 상대를 보면
+   다음 호출의 confirm 에 그 peer_id 를 넣는다 (4.6). get_peers 를 부르지 않는다
 8. 받은 후보에 10.1 위생을 다시 적용한다. 자신의 peer_id 가 보이면 CONTROL_PLANE_EXCHANGE_FAILED
 9. max(0, punch_delay_ms - elapsed_since_ready_ms) 뒤 펀치 (protocol.md 10.2)
+10. 세션이 끝나면 호스트가 다음 host_report 의 departed 에 그 peer_id 를 넣는다 (4.6)
 ```
 
 **4번이 5번보다 앞이다.** 순서를 바꿔도 프로토콜은 성립하지만 사람이 더 기다린다.
@@ -1277,9 +1385,11 @@ local 이라 자격 증명이 필요 없다.
 > **왜.** STUN 은 5초 마감이 있고 방 코드는 사람이 전달해야 한다. 방을 먼저 만들어 코드를
 > 내주고 그 사이에 STUN 을 돌리면 사람이 기다리는 시간이 겹친다.
 
-**재참가는 4번의 `join_room` 형식만 다르다.** 재참가에 필요한 `peer_id` 와 `peer_token` 을
-어디에 보관하는지는 기동 입력 절([`architecture.md`](architecture.md) 3.5 기동 입력)이
-정한다.
+**7번이 역할로 갈리는 유일한 자리다.** 호스트와 플레이어가 같은 정보를 다른 연산으로 받는다.
+데이터 평면은 갈리지 않는다([ADR 0006](decisions/0006-무중계-스타-토폴로지.md) 결정 6).
+
+**호스트는 4번 직후부터 `host_report` 를 시작한다.** 임대를 갱신해야 방이 살아 있기
+때문이다(5.1). 확인할 쌍이 없어도 주기는 돈다.
 
 ---
 
@@ -1289,7 +1399,8 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 이 문�
 케이스 표**를 갖는다.
 
 - 케이스 표가 있는 자리는 2.1 `room_id`, 3.3 HTTP 부분집합, 4.4 `register_candidate`(후보
-  위생과 준비 완료 경합 둘), 5.1 방, 6.4 속도 제한, 7.4 시계다
+  위생), 4.5 `get_peers`(원소의 필드 집합), 4.6 `host_report`(회수·확인 경합), 5.1 방,
+  6.4 속도 제한, 7.4 시계다
 - Phase 3 착수 시 `control-server/tests/` 로 옮겨 시험이 그 표를 직접 읽게 한다. 옮긴 뒤 이
   문서는 표 대신 그 파일을 가리킨다. 문서에 표 한 벌, 시험에 한 벌을 두지 않는다
 
@@ -1303,7 +1414,7 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 이 문�
 | 토큰 비교가 상수 시간이고 애플리케이션에서 먼저 한다 (6.3) | 시간 차이는 시험으로 재현하기 어렵다 |
 | 판정에 `ipaddress` 술어를 쓰지 않음 (7.1) | 케이스 표 행이 우연히 통과할 수 있다 |
 | `room_id` 와 `peer_token` 이 로그에 없음 (7.5) | 로그를 전부 훑어도 "어느 경로에서도 안 나온다" 는 증명이 아니다 |
-| 준비 완료 판정이 `PEER#` update **뒤에** 다시 읽는가 (4.4) | 두 요청의 읽기·쓰기 순서를 밖에서 강제할 수 없다. 그냥 동시에 보내면 대개 순차로 끝나 결함이 드러나지 않는다. 4.4 케이스 표의 마지막 행을 돌리려면 store 계층에 **쓰기 직후 지연을 넣는 주입점**이 있어야 하고, 그 주입점이 있는지도 코드로 본다 |
+| `host_report` 의 응답이 쓰기 **뒤에** 읽은 것인가 (4.6) | 두 요청의 읽기·쓰기 순서를 밖에서 강제할 수 없다. 그냥 동시에 보내면 대개 순차로 끝나 결함이 드러나지 않는다. 4.6 케이스 표의 마지막 행을 돌리려면 store 계층에 **쓰기 직후 지연을 넣는 주입점**이 있어야 하고, 그 주입점이 있는지도 코드로 본다 |
 
 ---
 
@@ -1315,6 +1426,7 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 이 문�
 | Elastic IP 와 DNS 이름의 실제 값 | Phase 3 배포 시. 문서에 주소를 박지 않는다 |
 | 텔레메트리 서비스의 포트, 스키마, 인증 | 이 문서 범위 밖. `roadmap.md` Phase 9 |
 | 두 서비스가 같은 테이블을 쓰는가, IAM 을 나누는가 | [ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 가 Phase 9 로 미뤘다 |
-| 자동 재시도와 살아남은 쪽의 재폴링 | [`protocol.md`](protocol.md) 10.4 미정 항목. 이 문서의 재참가 계약(4.3)이 그 전제다 |
+| 자동 재시도와 살아남은 쪽의 재폴링 | [`protocol.md`](protocol.md) 10.4 미정 항목. 재참가가 없으므로(4.3) 그 절차는 새 참가 위에 서야 한다 |
 | TLS, 호출자 인증 | 스트레치. 1.2 |
-| 방 만료 값 3600 초의 적정성 | Phase 8 시연 뒤. 30분 플레이 뒤 재참가가 필요했는지로 판단한다 |
+| `ROOM_LEASE_S`(120)와 신호 간격 두 값의 적정성 | Phase 8 시연 뒤. 호스트가 죽은 뒤 방이 사라지기까지와, 늦게 온 참가자가 기다리는 시간으로 판단한다 |
+| 갱신 쓰기가 프리 티어 안에 드는가 | `roadmap.md` Phase 3 착수 전 항목. 방 하나가 오래 떠 있을 때의 쓰기 건수를 계산한다 |

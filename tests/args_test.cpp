@@ -68,11 +68,17 @@ TEST_CASE("args: room is normalized to upper case", "[args]") {
     REQUIRE(*run({"--room", "ABCDEF"}).args->room == "ABCDEF");
 }
 
-TEST_CASE("args: rejoin splits id and token", "[args]") {
-    const auto r = run({"--rejoin", "4294967295:0123456789abcdef0123456789abcdef"});
-    REQUIRE(r.ok());
-    REQUIRE(r.args->rejoin->peer_id == 4294967295u);
-    REQUIRE(r.args->rejoin->peer_token == "0123456789abcdef0123456789abcdef");
+TEST_CASE("args: room is rejected for the host role", "[args]") {
+    // architecture.md 3.5. 방 코드는 create_room 응답으로만 생긴다.
+    const auto r = run({"host", "--room", "ABCDEF"});
+    REQUIRE_FALSE(r.ok());
+    REQUIRE(r.error == ArgError::RoomWithHost);
+    REQUIRE(r.offending == "--room");
+
+    // player 는 그대로 받는다.
+    REQUIRE(run({"player", "--room", "ABCDEF"}).ok());
+    // 역할이 없으면 Phase 1~2 경로라 통과한다.
+    REQUIRE(run({"--room", "ABCDEF"}).ok());
 }
 
 TEST_CASE("args: peer is an IPv4 endpoint", "[args]") {
@@ -123,17 +129,6 @@ TEST_CASE("args: reject case table", "[args]") {
         {{"--room", "ABCDE-"}, ArgError::BadRoom, "punctuation"},
         {{"--room", ""}, ArgError::BadRoom, "empty"},
 
-        // --rejoin. control_plane.md 2.2, 2.3
-        {{"--rejoin", "1"}, ArgError::BadRejoin, "no colon"},
-        {{"--rejoin", "0:0123456789abcdef0123456789abcdef"}, ArgError::BadRejoin, "peer_id 0 is excluded"},
-        {{"--rejoin", "4294967296:0123456789abcdef0123456789abcdef"}, ArgError::BadRejoin, "peer_id over 32 bits"},
-        {{"--rejoin", "-1:0123456789abcdef0123456789abcdef"}, ArgError::BadRejoin, "negative peer_id"},
-        {{"--rejoin", "1:0123456789abcdef0123456789abcde"}, ArgError::BadRejoin, "token of 31 characters"},
-        {{"--rejoin", "1:0123456789abcdef0123456789abcdef0"}, ArgError::BadRejoin, "token of 33 characters"},
-        {{"--rejoin", "1:0123456789ABCDEF0123456789abcdef"}, ArgError::BadRejoin, "token must be lower case"},
-        {{"--rejoin", "1:0123456789abcdefg123456789abcdef"}, ArgError::BadRejoin, "g is not hex"},
-        {{"--rejoin", "1:2:0123456789abcdef0123456789abcd"}, ArgError::BadRejoin, "second colon lands in the token"},
-
         // --server / --stun 호스트
         {{"--server", ""}, ArgError::BadHost, "empty host"},
         {{"--server", "-bad.example"}, ArgError::BadHost, "label starts with a hyphen"},
@@ -181,7 +176,7 @@ TEST_CASE("args: error tokens are stable", "[args]") {
     REQUIRE(sangtachi::to_token(ArgError::BadRole) == "bad_role");
     REQUIRE(sangtachi::to_token(ArgError::ExtraPositional) == "extra_positional");
     REQUIRE(sangtachi::to_token(ArgError::BadRoom) == "bad_room");
-    REQUIRE(sangtachi::to_token(ArgError::BadRejoin) == "bad_rejoin");
+    REQUIRE(sangtachi::to_token(ArgError::RoomWithHost) == "room_with_host");
     REQUIRE(sangtachi::to_token(ArgError::BadHost) == "bad_host");
     REQUIRE(sangtachi::to_token(ArgError::BadPort) == "bad_port");
     REQUIRE(sangtachi::to_token(ArgError::MissingPort) == "missing_port");

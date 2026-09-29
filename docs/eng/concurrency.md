@@ -481,12 +481,11 @@ so before that (8) is `[telemetry]` only.
 | 7 | **signal the cleanup-complete event** |
 | 8 | join `[telemetry]` and `[control]` |
 
-- **Reaching a terminal state ends the process too.** When a session becomes `FAILED` or
+- **A session ending does not end the process.** When a session becomes `FAILED` or
   `CLOSED` (`protocol.md` 9.6 Failure Transitions, 5.6 `CLOSE`), `[loop]` leaves that session's
-  record line and counters and then goes to `shutdown()` on its own. In the minimum scope there
-  is one session, so once it ends the process has nothing left to do. It does not wait for the
-  user's `quit`. **This line is revisited once automatic retry is decided** (the open item in
-  `protocol.md` 10.4 Endpoint Learning). With retry, `FAILED` would no longer mean shutdown.
+  record line and counters and removes it from the session list. When the list is empty it goes
+  to the **lobby**. "Lobby" below defines that state. The process ends only when the shutdown
+  event is signaled.
 - **No shutdown marker goes into the queue.** The queue drops new items when full, so if the
   marker is dropped at exactly that moment, `[telemetry]` never sees the shutdown. Shutdown is
   delivered only through the event outside the queue.
@@ -506,6 +505,39 @@ so before that (8) is `[telemetry]` only.
 - Cleanup of the adapter, virtual IP address, and route, and handling of leftovers after
   abnormal exit, are in [`windows-prereq.md`](windows-prereq.md) section 3.
 
+### Lobby
+
+**The session list is empty.** The process is alive and is in no room. Creating a room or
+joining with a room code creates sessions again.
+
+| What | In the lobby |
+|------|--------------|
+| UDP socket | **Kept.** It is not bound again ([`protocol.md`](protocol.md) chapter 6 Socket Ownership). If the port changes, the STUN result and the local candidates all go stale |
+| Adapter session | **Kept.** Only the address and the route are set again in the next room. Creating the adapter needs administrator rights and takes a few seconds |
+| Counters | Not reset. They are per process ([`architecture.md`](architecture.md) chapter 9) |
+| Local record file | Kept open and appended to. It is not reopened per attempt |
+| Late packets | They keep arriving because the socket is open. With no session they fall to `drop_unknown_peer` (`protocol.md` 8.1 Common Checks) |
+| The host's `host_report` | **Stops.** Leaving the room drops the lease ([`control_plane.md`](control_plane.md) 5.1) |
+
+**Do not assert that the mapping survives.** The socket is kept because rebinding changes the
+mapping **for certain**, and keeping it does not guarantee that the mapping lives. Whether to
+run STUN again on the next join after a long stay in the lobby is decided by measurement. That
+point in time belongs to [`roadmap.md`](roadmap.md).
+
+**The console vocabulary splits in two.**
+
+| Command | What it does |
+|------|---------|
+| `leave` | Close all sessions and go to the lobby. The process stays |
+| `quit` | Signal the shutdown event. It goes through the `shutdown()` order above |
+
+> **Why split the words.** Making one `quit` do different things depending on state forces the
+> verification scripts to track which state we are in now. Leaving the meaning of `quit` as it
+> is keeps the existing verification alive.
+
+**In the GUI, closing the window is `quit` and the leave-room button is `leave`.** There are
+then two sources of the shutdown signal, but both signal the same shutdown event and there is
+one `shutdown()`.
 
 ---
 

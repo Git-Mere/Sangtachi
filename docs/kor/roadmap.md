@@ -142,7 +142,7 @@ Client A <------ UDP ------> Client B
 - 공개 STUN 서버로 요청 송신. **어느 서버인지, 두 서버를 어떻게 고르고 실패 시 어떻게 바꾸는지는
   [`architecture.md`](architecture.md) 3.5 기동 입력이 정한다.** 코드에 서버 주소를 박지 않는다
 - 기동 입력 처리. 인자 목록과 형식은 `architecture.md` 3.5. 이 Phase 에 필요한 것은 `--stun` 이고
-  `--server`, `--room`, `--rejoin` 은 받아서 보관만 한다
+  `--server` 와 `--room` 은 받아서 보관만 한다
 - Binding Response 파싱
 - STUN 속성(TLV) 순회
 - `XOR-MAPPED-ADDRESS` 디코드
@@ -202,22 +202,23 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - **착수 전 EC2의 자격 증명 방식 확정.** 액세스 키를 소스나 문서에 적지 않는다. 문서 권장은 IAM 역할이다 (ADR 0004)
 - **착수 전 프리 티어 적용 범위를 계정에서 직접 확인.** 문서만으로는 25 WCU / 25 RCU / 25 GB 가 영구인지 확인되지 않았다 (ADR 0004 "확인하지 못한 것")
 - 로컬 시험은 DynamoDB local 로 돌린다. **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
-- **착수 시 `control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 5.1, 6.4, 7.4)를
+- **착수 시 `control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4)를
   `control-server/tests/` 로 옮기고 문서는 그 파일을 가리키게 고친다.** 표 한 벌이 두 곳에
   있으면 한쪽만 고쳐져 어긋난다. 옮긴 표마다 변이 시험을 붙인다
 - Python 제어 서버를 AWS EC2에 배포. systemd 서비스, 보안 그룹 TCP 8000. **배포 절차를 실제로
   한 번 돌린 뒤 도구로 넣고 문서는 가리킨다** (`control_plane.md` 7.6)
 - 방 생성 구현 (`create_room`, 멱등성 nonce)
-- 방 참가 구현 (`join_room` 새 참가와 재참가 두 형식)
+- 방 참가 구현 (`join_room`. 형식은 하나다. 재참가는 없다)
 - 가상 IP 할당 (`VIP#` 조건부 쓰기 선점)
-- 후보 엔드포인트 등록 (`register_candidate`, 서버 쪽 위생, 준비 완료 1회 기록). 로컬 후보는 두 피어가 같은 LAN일 때 쓰인다
+- 후보 엔드포인트 등록 (`register_candidate`, 서버 쪽 위생). 로컬 후보는 두 피어가 같은 LAN일 때 쓰인다
+- 호스트 주기 보고 구현 (`host_report`. 임대 갱신, 자리 회수, 쌍 확인 1회 기록)
 - 피어 정보 교환 (`get_peers`, 단조 시계 `elapsed_since_ready_ms`)
 - 출발지별 속도 제한과 `MAX_INFLIGHT`
 - DynamoDB에 방/피어 상태 저장
 - C++ 측 제어 평면 클라이언트 구현. `[control]` 스레드와 두 큐
   ([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
   오류 분류와 재시도 (`control_plane.md` 8장)
-- 기동 입력 처리 완성. `--server`, `--room`, `--rejoin` 이 실제로 쓰인다 (`architecture.md` 3.5)
+- 기동 입력 처리 완성. `--server` 와 `--room` 이 실제로 쓰인다 (`architecture.md` 3.5)
 
 ### 산출물
 
@@ -246,27 +247,33 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 만료 시각이 지난 방에 참가 시도 시 `room_expired`. 존재하지 않는 방은 `room_not_found`.
   **둘이 다른 코드다.** TTL 삭제를 기다리지 않는다 (저장 4, `control_plane.md` 4.1 공통 봉투).
   `now == expires_at_ms` 경계가 만료 쪽인 것도 본다
-- 재참가 (`control_plane.md` 4.3 join_room). `join_room` 을 같은 `peer_id` 와 `peer_token` 으로
-  다시 부르면 **같은 `peer_id` 와 같은 가상 IP** 가 돌아온다
-  - 후보가 비워진 것은 상대의 `get_peers` 응답으로 본다. 그 응답의 해당 피어 `candidates` 가
-    빈 배열이고 `ready` 는 `true` 다. 재참가 응답 자체에는 후보 필드가 없다
+- 자리 회수 (`control_plane.md` 4.6 host_report). 호스트가 `departed` 로 알린 피어의 `PEER#`
+  와 `VIP#` 가 사라지고, 그 가상 IP 를 다음 참가자가 받는다
+  - 호스트가 아닌 피어가 부르면 `unauthorized`
   - 토큰이 틀리면 `unauthorized`
-  - 존재하지 않는 `peer_id` 도 `unauthorized` 이고 `room_not_found` 가 아니다
+  - 이미 없는 `peer_id` 를 알리면 `released` 가 빈 배열이고 오류가 아니다
+- 임대 갱신 (`control_plane.md` 5.1 방). `host_report` 를 멈추면 `ROOM_LEASE_S` 안에 방이
+  만료되고 그 뒤의 `join_room` 이 `room_expired` 다
+  - **이미 수립된 터널은 그대로다** (`spec.md` NFR-3). 임대 만료가 세션을 끊지 않는다
+  - 만료된 방에 `host_report` 를 보내면 `room_expired` 이고 되살아나지 않는다
 - 멱등성 (`control_plane.md` 4.2 create_room, 4.3)
   - 같은 `client_nonce` 로 `join_room` 을 두 번 부르면 두 번째가 첫 번째와 같은 응답을
     돌려주고 **`VIP#` 항목이 하나만 생긴다**
   - 다른 nonce 로 부르면 `room_full`
   - `create_room` 도 같은 nonce 면 같은 방이다
-- 준비 완료가 **방마다 정확히 한 번** 기록된다 (`control_plane.md` 4.4 register_candidate,
+- 준비 완료가 **쌍마다 정확히 한 번** 기록된다 (`control_plane.md` 4.6 host_report,
   5.2 준비 완료)
-  - 두 피어가 `register_candidate` 를 동시에 보내도 서버 로그의 `room.ready` 가 한 줄이다
+  - 호스트가 같은 상대를 두 번 `confirm` 해도 서버 로그의 `pair.ready` 가 한 줄이다
   - 그 뒤 어느 피어가 후보를 다시 등록해도 `punch_delay_ms` 와 `elapsed_since_ready_ms` 의
     기준점이 바뀌지 않는다
-  - 경합 케이스 표(4.4)를 전 행 돌린다. 순서를 밖에서 강제할 수 없으므로 store 계층의 쓰기
+  - 경합 케이스 표(4.6)를 전 행 돌린다. 순서를 밖에서 강제할 수 없으므로 store 계층의 쓰기
     직후 지연 주입점으로 각 순서를 만든다
-  - 한 줄도 아니고 0 줄인 경우를 특히 본다. `PEER#` update 전에 읽은 결과로 판정하는 구현이
-    그 행에서 걸리고, 그것이 표의 마지막 행이다
-- 재참가가 후보를 지워도 `get_peers` 는 `ready: true` 를 유지한다. 준비 완료의 정의가 `ready_at` 의 존재이기 때문이다. 후보 수를 다시 세는 구현은 여기서 걸린다 (`control_plane.md` 4.5 get_peers)
+  - **후보가 없는 상대를 `confirm` 했을 때 0 줄인 것**을 특히 본다. 조건 없이 쓰는 구현이 그
+    행에서 걸리고, 그것이 표의 마지막 행이다
+- 호스트가 확인하기 전에는 `get_peers` 가 그 쌍을 `ready: false` 로 주고 상대 후보를 싣지
+  않는다. 양쪽 등록만으로 준비 완료를 주는 구현은 여기서 걸린다 (`control_plane.md` 4.5 get_peers)
+- 늦은 참가. 이미 한 쌍이 `CONNECTED` 인 방에 새 플레이어가 들어와도 기존 쌍의
+  `punch_delay_ms` 기준점이 바뀌지 않고, 새 쌍만 따로 준비 완료가 된다
 
 **케이스 표 전 행 통과.** 아래가 가리키는 `control_plane.md` 의 절은 그 표가 **어디서 왔는지**를
 말한다. 위 작업 절이 표를 `control-server/tests/` 로 옮긴 뒤에는 그 파일이 돌리는 대상이다.
@@ -310,14 +317,15 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
     총 3회**를 시도한다
   - 연산마다 판정 축이 다르다. `create_room` 은 방이 하나만 생기는 것으로 본다
     (`ROOM` 항목 수 1)
-  - `join_room` 새 참가는 두 번째 응답이 첫 번째와 같은 `peer_id` 와 가상 IP 인 것으로 본다.
-    `VIP#` 항목 수로는 판정되지 않는다
+  - `join_room` 은 두 번째 응답이 첫 번째와 같은 `peer_id` 와 가상 IP 인 것으로 본다.
+    **`VIP#` 항목 수 1 도 같이 본다.** 풀이 넷이므로(`control_plane.md` 2.5) nonce 를 무시하는
+    구현은 두 번째 주소를 선점해 항목이 둘이 된다
   - connect 타임아웃과 `unavailable` 은 저장소에 닿기 전이라 nonce 동일성이 저장소에 남지
     않는다. store 계층에 커밋 뒤 응답 직전에 실패를 내는 주입점을 두고 그것으로 `internal`
     재시도를 돌린다
 
-  > **왜.** `VIP#` 항목 수로 판정되지 않는 이유는 풀이 하나뿐이라 nonce 를 바꾼 변이도 두 번째가
-  > `room_full` 로 끝나 항목이 하나이기 때문이다.
+  > **왜 두 축을 같이 보나.** 항목 수만 보면 정원이 찬 방에서 변이가 `room_full` 로 끝나 항목이
+  > 그대로인 경우를 통과시킨다. `peer_id` 동일성이 그 경우를 잡는다.
 
 ---
 
@@ -410,9 +418,10 @@ PC A <========== Direct UDP ==========> PC B
 검증 절차가 쓰는 도구의 계약이다. 검증 기준이 아니라 준비물이다.
 
 - **검증 절차가 쓰는 콘솔 명령을 못박는다.** Phase 1~5 의 `[console]` 스캐폴딩
-  ([`concurrency.md`](concurrency.md))이 받는 최소 어휘는 넷이다
+  ([`concurrency.md`](concurrency.md))이 받는 최소 어휘는 다섯이다
   - `quit` 는 종료 이벤트를 신호해 정상 종료 절차를 시작한다 (`concurrency.md` 3장 루프 한
-    바퀴)
+    바퀴). **로비에 있든 세션이 있든 프로세스를 끝낸다**
+  - `leave` 는 세션을 전부 닫고 로비로 간다. 프로세스는 남는다 (`concurrency.md` 7장 로비)
   - `counters` 는 카운터 전량을 즉시 로그로 낸다 (`architecture.md` 9장). 카운터를 보는 검증
     항목이 이 명령으로 시점을 잡는다
   - `raw <바이트 수>` 는 Phase 1~2 의 원시 송신이고 그 계약은 `architecture.md` 3.5 기동
@@ -425,8 +434,9 @@ PC A <========== Direct UDP ==========> PC B
   - `size` 는 생략하면 아래 100바이트이고, 주면 20 이상 `MAX_INNER`(1452) 이하의 정수로 그
     크기의 패킷을 만든다 (Phase 5 경계 표가 쓴다)
   - 범위 밖이거나 정수가 아니면 아무것도 보내지 않고 `WARN` 한 줄을 남긴다
-  - 세션이 `CONNECTED` 가 아니면 보내지 않고 `WARN` 한 줄을 남긴다. 8.5 검사 1번이 어차피
-    막지만, 명령 단계에서 걸러 시험이 무엇을 보는지 흐리지 않는다
+  - 세션이 `CONNECTED` 가 아니면 보내지 않고 `WARN` 한 줄을 남긴다. 8.5 의
+    `tx_drop_not_connected` 검사가 어차피 막지만, 명령 단계에서 걸러 시험이 무엇을 보는지
+    흐리지 않는다
   - 송신은 한 바퀴에 몰아넣지 않고 `MAX_DRAIN` 예산과 같은 방식으로 나눠 보낸다
   - 중간에 `sendto` 가 실패하면 거기서 멈추고 보낸 개수를 남긴다
   - **보내는 바이트를 못박는다.** 아래 표가 그 레이아웃이다
@@ -884,7 +894,7 @@ Windows 가상 네트워킹은 예상보다 복잡할 수 있다. 이 작업은 
   스레드의 `[loop]` 주 스레드 규칙 중 어느 쪽이 주 스레드인지를 이 Phase 착수 전에 정하고
   `concurrency.md` 에 적는다. [ADR 0007](decisions/0007-gui-핵심-범위-qt.md)이 미결로 두었다
 - **GUI 가 쓰는 기동 입력 경로를 정한다.** 지금 입력은 CLI 인자뿐이고
-  ([`architecture.md`](architecture.md) 3.5 기동 입력) 방 코드와 재참가 증명이 표준 출력이다
+  ([`architecture.md`](architecture.md) 3.5 기동 입력) 방 코드와 실패 줄이 표준 출력이다
 
 ### 산출물
 

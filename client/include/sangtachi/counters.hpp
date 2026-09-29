@@ -3,7 +3,7 @@
 // 폐기·오류 카운터 (architecture.md 9장 로그 출력의 `counter` 이벤트).
 //
 // 이름의 출처는 세 문서다. 여기서 새로 짓지 않는다.
-//   protocol.md 6장·7장·8장   tx_err_*, drop_* 의 대부분
+//   protocol.md 6장·7장·8장   tx_err_*, tx_drop_*, drop_* 의 대부분
 //   concurrency.md 3장     drop_oversize_datagram, drop_inject_error, drop_no_sink, adapter_rx
 //   concurrency.md 6장·8장  telemetry_queue_dropped, console_queue_dropped, control_queue_dropped
 //
@@ -48,6 +48,9 @@ enum class Counter : std::size_t {
     DropRenegLimit,
     DropRenegRate,
     DropRetiredEpoch,
+    DropRosterDirection,
+    DropRosterFlags,
+    DropRosterStale,
     DropShort,
     DropStaleEpoch,
     DropTerminalState,
@@ -61,12 +64,18 @@ enum class Counter : std::size_t {
     DropVersion,
     DropVipMismatch,
     TelemetryQueueDropped,
+    TxDropBadSrc,
+    TxDropNoRoute,
+    TxDropNotConnected,
+    TxDropNotIpv4,
+    TxDropOversize,
+    TxDropShort,
     TxErrAck,
     TxErrSend,
 };
 
 // 이름 순으로 적어 두었다. 값 자체에 의미를 두지 않는다.
-inline constexpr std::size_t kCounterCount = 39;
+inline constexpr std::size_t kCounterCount = 48;
 
 // architecture.md 9장의 `counter` 이벤트가 `name` 으로 싣는 문자열.
 [[nodiscard]] std::string_view to_token(Counter counter) noexcept;

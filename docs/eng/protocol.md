@@ -94,6 +94,7 @@ constexpr size_t   MAX_INNER      = 1452;
 constexpr size_t   MAX_DATAGRAM   = HEADER_SIZE + MAX_INNER;   // 1472
 constexpr uint32_t STUN_COOKIE    = 0x2112A442;                // RFC 5389
 constexpr size_t   MAX_CANDIDATES = 8;                         // cap per peer
+constexpr size_t   MAX_PEERS      = 5;                         // people in one room. Also the cap in 5.7 ROSTER
 constexpr size_t   REPLAY_WINDOW  = 64;                        // 4.5. moves together with the seen_bits width
 constexpr size_t   MAX_PENDING_PINGS   = 16;
 constexpr size_t   MAX_PROBE_PATHS     = 4;                    // 10.4 (c) cap on concurrent tentative paths
@@ -322,6 +323,7 @@ Packets dropped with `drop_too_old` are already confirmed as loss and are not re
 | `0x05` | `PING` | 8 | RTT measurement request |
 | `0x06` | `PONG` | 8 | RTT measurement response |
 | `0x07` | `CLOSE` | 1 | Graceful shutdown notice |
+| `0x08` | `ROSTER` | 14 ~ 50 | Room roster and member connection state. Only the host sends it |
 
 A value not in the list is dropped and `drop_unknown_type` is incremented.
 
@@ -450,6 +452,82 @@ Without `CLOSE`, graceful shutdown and a crash cannot be distinguished, and the 
 
 ---
 
+### 5.7 ROSTER (14 ~ 50 bytes)
+
+```text
+ Offset  Size  Field        Description
+   0      4   generation   uint32. The host increments it each time the roster changes
+   4      1   count        member count. At least 1, at most MAX_PEERS (5)
+   5     9*n  members      n members. The layout below, repeated back to back
+
+ One member (9 bytes)
+   +0     4   peer_id      uint32
+   +4     4   virtual_ip   uint32, network byte order
+   +8     1   flags        bit 0 = connected to the host. Bits 1~7 are reserved and must be 0
+```
+
+The payload length is `5 + 9 * count`. With `count` 1 it is 14, with 5 it is 50.
+
+**The host sends it to each player.** Players do not send it. A `ROSTER` sent by a player is
+dropped and `drop_roster_direction` is incremented.
+
+> **Why one direction.** The roster originates from the host. The host holds every session
+> directly, so it already knows who is attached
+> ([ADR 0006](decisions/0006-star-topology-no-relay.md)). Players have no tunnel between each
+> other, so a player has nothing to report.
+
+**The roster holds everyone in the room, including itself.** The host is in it and so is the
+receiver. There is no rule for the receiver to filter out its own entry.
+
+> **Why.** The member list a person sees has to include that person ([`spec.md`](spec.md) FR-15).
+> Removing it per receiver would make the host build a different payload for each receiver, and
+> then the path that builds one copy and sends it to several sessions disappears.
+
+**What bit 0 means is "is the tunnel to the host `CONNECTED`".** It is not the connection state
+between players. In a star with no relay, players do not establish tunnels with each other
+(ADR 0006 decision 1). The host's own entry always has bit 0 set to 1.
+
+**When it is sent.** Three cases.
+
+| Trigger | Action |
+|------|------|
+| The roster changed (join, leave, connection state change) | Increment `generation` and send once immediately to every `CONNECTED` session |
+| After that | Send the same content 2 more times at 5-second intervals |
+| No change | Keep sending at 15-second intervals |
+
+> **Why periodic sending.** The tunnel is UDP, so if one copy is lost that player's screen stays
+> wrong. Adding acknowledgement and retransmission puts a reliability layer on the tunnel and
+> grows the retransmission state per session. A period writes the bound as a single value and adds
+> no session state. **The longest time a screen can be wrong is 15 seconds.**
+
+**Receive validation adds four checks after the 8.1 Common Checks.**
+
+| # | Check | Failure counter |
+|---|------|-------------|
+| 1 | The sender is the host | `drop_roster_direction` |
+| 2 | `1 <= count <= MAX_PEERS` and `payload_length == 5 + 9 * count` | `drop_type_length` |
+| 3 | `generation` is greater than the last value accepted on that session | `drop_roster_stale` |
+| 4 | Bits 1~7 of every member's `flags` are 0 | `drop_roster_flags` |
+
+**The roster is for display only.** The received value changes neither receive validation nor
+routing.
+
+- The comparison set of check 7 in 8.1 Common Checks is **decided by the session.** Even a packet
+  that arrives with a `peer_id` from the roster is `drop_unknown_peer` if there is no session with
+  that peer
+- It does not create a slot in the routing table (8.5). An inner packet sent to another player's
+  virtual IP is `tx_drop_no_route`
+
+> **Why.** The allow list is not widened by remote input. If the roster decided the validation set,
+> forging the roster would be the same as being allowed in. In v1, which does not authenticate the
+> host, anyone on the path can build that value (Chapter 2).
+
+**`generation` only has meaning while the room lives.** When a session is newly established the
+receiver accepts from 0. If the host restarts the room ends (ADR 0006 decision 4), so the value
+never goes backwards within one room.
+
+---
+
 ## 6. Socket Ownership
 
 **One local UDP socket is owned exclusively by one receive loop.** The thread layout, wait
@@ -572,7 +650,7 @@ Tunnel candidates are checked in the order below. Each step has its own drop cou
 | 3 | `version == TUNNEL_VERSION` | `drop_version` |
 | 4 | `type` is in the Chapter 5 list | `drop_unknown_type` |
 | 5 | `payload_length == len - HEADER_SIZE` | `drop_length` |
-| 6 | Per-type length rule met: `HELLO`/`HELLO_ACK` exactly 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452 | `drop_type_length` |
+| 6 | Per-type length rule met: `HELLO`/`HELLO_ACK` exactly 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` the `5 + 9 * count` defined by 5.7 | `drop_type_length` |
 | 7 | `peer_id` matches the peer ID of this room's other peer | `drop_unknown_peer` |
 | 8 | `session_epoch` is not on the retired list | `drop_retired_epoch` |
 
@@ -654,17 +732,71 @@ a Wintun read; before that it is a synthetic packet built by tests. The checks a
 
 | # | Check | Failure counter |
 |---|------|-------------|
-| 1 | State is `CONNECTED` | `tx_drop_not_connected` |
-| 2 | Length >= 20 | `tx_drop_short` |
-| 3 | IP version nibble == 4 | `tx_drop_not_ipv4` |
-| 4 | Length <= `MAX_INNER` | `tx_drop_oversize` |
-| 5 | Source IP == our own virtual IP | `tx_drop_bad_src` |
-| 6 | Destination IP == the peer's virtual IP | `tx_drop_no_route` |
+| 1 | Length >= 20 | `tx_drop_short` |
+| 2 | IP version nibble == 4 | `tx_drop_not_ipv4` |
+| 3 | Length <= `MAX_INNER` | `tx_drop_oversize` |
+| 4 | Source IP == our own virtual IP | `tx_drop_bad_src` |
+| 5 | Pick the session by destination IP. Fail if there is none | `tx_drop_no_route` |
+| 6 | The picked session is `CONNECTED` | `tx_drop_not_connected` |
 
-**Check 2 comes before checks 5 and 6.** Source and destination sit at offsets 12~20, so reading them before confirming the 20-byte lower bound
-reads outside the buffer. On the receive side, check 6 of 8.1 guarantees the same lower bound, but the transmit side
-had no counterpart. Wintun rarely hands out fewer than 20 bytes, but a decision function does not leave rare
+**The length check comes first.** Source and destination sit at offsets 12~20, so reading them before confirming the 20-byte lower bound
+reads outside the buffer. On the receive side, check 6 of 8.1 Common Checks guarantees the same lower bound, but the transmit side
+has no counterpart. Wintun rarely hands out fewer than 20 bytes, but a decision function does not leave rare
 cases as assumptions.
+
+**Picking the session comes before the state check.** With several sessions, "that state" does not
+belong to any session until the destination has picked one. The host holds at most `MAX_PEERS - 1`
+sessions ([ADR 0006](decisions/0006-star-topology-no-relay.md) decision 3).
+
+**The routing table is a fixed array of 6 slots.** The index is the last octet of the destination
+virtual IP and the value is a session. Lookup has two steps.
+
+| Step | Action |
+|:----:|---------|
+| 1 | Check that the destination is inside `10.100.0.0/24` and that the last octet is at least 1 and at most `MAX_PEERS` (5) |
+| 2 | Read the slot at that octet as index. An empty slot means no route |
+
+**Case table.**
+
+| Destination | Step 1 | Step 2 | Result |
+|--------|-------|-------|------|
+| `10.100.0.1` (host, session exists) | pass | session in the slot | go to check 6 |
+| `10.100.0.3` (nobody there yet) | pass | empty slot | `tx_drop_no_route` |
+| Our own virtual IP | pass | **permanently empty slot** | `tx_drop_no_route` |
+| Another player's virtual IP (sent by a player) | pass | empty slot | `tx_drop_no_route` |
+| `10.100.0.0` | blocked (octet 0) | not read | `tx_drop_no_route` |
+| `10.100.0.6` ~ `10.100.0.255` | blocked (out of range) | not read | `tx_drop_no_route` |
+| `8.8.8.8`, `224.0.0.1`, `255.255.255.255` | blocked (out of range) | not read | `tx_drop_no_route` |
+
+- **Slot 0 is permanently empty.** `10.100.0.0` is the network address and is never assigned. Step 1
+  already blocks it, but the slot is kept so there is no index arithmetic
+- **Our own slot is empty too.** A packet sent to our own virtual IP has no route
+- **A player's table fills only the host slot.** The other player slots being empty is where no relay
+  (ADR 0006 decision 2) is enforced
+- The table is owned by the `[loop]` thread and changes only when a session is created or removed
+  ([`concurrency.md`](concurrency.md) chapter 5 State Ownership)
+
+**No slot ever holds two sessions at once.** A reclaimed virtual IP is handed to a new peer, so the
+same slot is reused. The order is fixed.
+
+| When | What `[loop]` does |
+|------|---------------------|
+| A session reaches a terminal state | Clear its slot **first.** The record line and the counters come after |
+| A new session is created | Confirm the slot for that virtual IP is empty, then fill it. A non-empty slot is an implementation defect |
+
+**The same address does not mean the same peer.** Packets from the old peer that arrive after the
+reclaim are dropped on receive. Check 7 of the 8.1 common checks compares `peer_id`, not the virtual
+IP, and the old peer's `peer_id` differs from that of the new session (`drop_unknown_peer`). The
+inner source check of `DATA` also compares against the new session's peer virtual IP, so even an
+identical value is already caught in the header.
+
+`tx_drop_no_route` is a global counter, not a per-session one. It covers the case where no session
+was picked, so there is no session to attribute it to.
+
+**The check numbers of this table are not cited from other sections.** Point at it from outside by
+counter name instead (for example, "the `tx_drop_not_connected` check of 8.5"). Adding one check
+shifts the numbers, but the counter name stays, and the counter name is also the string the tests
+actually look for.
 
 ---
 
@@ -994,18 +1126,26 @@ and the two tables differ on loopback. The reason is written in Chapter 7.
 
 If the punch starts are misaligned, one side's packets are all discarded at the peer's NAT.
 
-1. Both peers complete `register_candidate`.
-2. `get_peers` returns `not_ready` until both have registered.
-3. **The moment the second registration completes, the server fixes `punch_delay_ms = 1000` once per
-   room and stores it.** Every later `get_peers` response returns the stored value as is. Recomputing
+**The unit is the pair.** The host and one player form a pair, and each pair becomes ready and punches on its own.
+
+1. Both peers of the pair complete `register_candidate`.
+2. `get_peers` gives that element as `ready: false` until the pair is ready.
+3. **The moment the host confirms that pair, the server fixes `punch_delay_ms = 1000` once for
+   that pair and stores it.** Every later response returns the stored value as is. Recomputing
    per response gives the two peers different times.
-4. The response carries `elapsed_since_ready_ms` (time elapsed on the server since ready) along with
+4. The response carries `elapsed_since_ready_ms` (time elapsed on the server since it recorded that pair as ready) along with
    `punch_delay_ms`. **No absolute time is used.** There is no guarantee client clocks are
    synchronized.
-5. The client polls `get_peers` at 500ms intervals. Up to 60 seconds.
+5. The player polls `get_peers` at 500ms intervals. Up to 60 seconds. The host does not poll; it receives the same values in the responses to its own periodic calls.
 6. On receiving a ready response, start the punch after `max(0, punch_delay_ms - elapsed_since_ready_ms)` milliseconds. If negative, start immediately.
 
-This works even if the peer launches its client 50 seconds late. The earlier side keeps polling, and the moment readiness occurs both compute the delay from the same reference point.
+**The host does the confirming because one end of the pair is always the host.** If the peer starts
+punching while the host does not know about the pair, no packet leaves the host side and no hole
+opens. The encoding and the period of that confirmation belong to
+[`control_plane.md`](control_plane.md) 4.6.
+
+This works even if the peer launches its client 50 seconds late. A pair that is already attached is
+unaffected; only the new pair runs this procedure.
 
 **Bound on the residual skew.** The difference between the two peers' actual punch start times is bounded
 by `polling interval (500ms) + the difference in delivery delay of the two responses`.
@@ -1186,9 +1326,9 @@ noted above (automatic retry). When 4.3 `session_epoch` says it blocks "delayed 
 it means **filtering delayed packets**, not reconnecting a restarted session.
 
 There is a method where the surviving side re-polls the control plane and receives the peer's new candidates. v1 does not
-adopt it. Its precondition, "`peer_id` and virtual IP are preserved on rejoin", was fixed as contract 7 of Chapter 14, so
-the reason for not adopting it is not a missing precondition but that **who initiates re-polling, and when**, is undecided,
-just like the automatic retry above.
+adopt it. There is no rejoin (`control_plane.md` 4.3 `join_room`), so the restarted side comes in with a new `peer_id` and
+a new virtual IP, and to the surviving side that is **a different peer**. Adding this procedure would first require a rule
+that attaches a new peer to an old session, and that rule is undecided, just like the automatic retry above.
 
 (c) is not removed. There are two reasons.
 
@@ -1255,12 +1395,15 @@ validation.
 |--------|-----|------|-------------|------|
 | STUN retry | 500ms, 1s, 2s (3 times) | STUN request sent | None | Response received |
 | STUN deadline | 5s. **Per server** | First request sent to that server | None | Response from that server |
-| `get_peers` polling | 500ms interval | **Successful `register_candidate` response** | Each response | Ready response |
-| `get_peers` deadline | 60s | **Successful `register_candidate` response** | None | Ready response |
-| Punch delay | Value computed in 10.2 Rendezvous | Ready response | None | Punch starts on expiry |
+| `get_peers` polling | 500ms interval | **Successful `register_candidate` response** | Each response | Ready response for that pair |
+| `get_peers` deadline | 60s. **Counted per pair** | The moment that peer first appears in a response. For the first peer, the successful `register_candidate` response | None | Ready response for that pair |
+| `host_report` period | 5s while a slot is free, 30s when full. **Host only** | Successful `create_room` response | Each send | Leaving the room |
+| Punch delay | Value computed in 10.2 Rendezvous | Ready response for that pair | None | Punch starts on expiry |
 | `HELLO` retransmission | 200ms interval | Punch start, **9.5 renegotiation (step 10)** | Each send | `CONNECTED` reached, 9.6 failure transition |
 | Punch deadline | 10s | **Actual local punch start** | 9.5 renegotiation | `CONNECTED` reached |
 | `KEEPALIVE` | 15s interval | `CONNECTED` entry, **after sending once immediately** | Each send | Session end |
+| `ROSTER` period | 15s interval. **Host only** | `CONNECTED` entry, after sending once immediately | Each send | Session end |
+| `ROSTER` change resend | 5s interval, 2 times | After the immediate send on a roster change | Ends once the 2 sends are done | Session end, next roster change |
 | Idle timeout | 50s | `CONNECTED` entry | Packet received that passed every validation for its type (9.4) | Session end |
 | `PING` | 5s interval. **Nothing is sent on entry. The first send is 5s after entry** | `CONNECTED` entry | Each send | Session end |
 | `pending_pings` cleanup | Every time before insertion | - | - | - |
@@ -1357,8 +1500,8 @@ satisfied is indexed by section 1.3 of that document (Mapping to the protocol.md
 Contracts).**
 
 1. `peer_id` is unique within a room (4.2)
-2. `get_peers` returns `not_ready` until both have registered (10.2)
-3. `punch_delay_ms` is fixed once per room when the second registration completes and does not change afterwards (10.2)
+2. `get_peers` returns a pair as `not_ready` until both sides of that pair have registered (10.2)
+3. `punch_delay_ms` is fixed once per pair when the host confirms that pair and does not change afterwards (10.2)
 4. The `get_peers` response includes `elapsed_since_ready_ms`, and that value is computed from a
    **monotonic clock** (10.2 Rendezvous)
    - Computed from the wall clock, the values the two peers receive diverge the moment NTP steps the
@@ -1368,13 +1511,13 @@ Contracts).**
      guaranteed
 5. Only candidates that passed the rules of 10.1 Candidate Collection and Hygiene are stored and forwarded
 6. Each peer's virtual IP is told to the other (needed for the `virtual_ip` check of 5.1 `HELLO`)
-7. **A rejoining peer is given back the same `peer_id` and the same virtual IP.** If new values were
-   given, everything would be dropped on the peer side at check 7 of 8.1 (`drop_unknown_peer`) and the
-   `virtual_ip` check of 5.1 `HELLO`, and it could not become a renegotiation trigger either. The
-   conditions under which a rejoin holds are defined by that document
-8. `peer_id` is drawn as **32 bits from a CSPRNG**. Uniqueness alone would let sequential assignment satisfy the contract, but then the "guess" in "knows or guesses" of Chapter 2 becomes trivial
+7. `peer_id` is drawn as **32 bits from a CSPRNG**. Uniqueness alone would let sequential assignment satisfy the contract, but then the "guess" in "knows or guesses" of Chapter 2 becomes trivial
 
-If any of these 8 contracts breaks, the tunnel protocol does not hold.
+If any of these 7 contracts breaks, the tunnel protocol does not hold.
+
+**Reclaiming a virtual IP slot is not in this list.** Reclaiming finishes inside the control plane
+and never appears on the wire. A new peer does receive a reclaimed address, though, so the contract
+that the old peer's session has already ended by then is in `control_plane.md` 2.5.
 
 ---
 
@@ -1414,7 +1557,10 @@ Everything below has to be in the code in Phase 4. Phase 4 is the stage that imp
 - [ ] `tx_err_send` on `sendto` failure (Chapter 6). `HELLO_ACK` also `tx_err_ack` (9.2)
 - [ ] `pending_pings` cap and cleanup
 - [ ] Chapter 13 STUN scope
-- [ ] 5.4 `DATA` type, 8.4 inner validation (checks 9~15), 8.5 transmit-side validation (checks 1~6, including the length lower bound)
+- [ ] 5.4 `DATA` type, 8.4 inner validation (checks 9~15), all of 8.5 transmit-side validation
+- [ ] The 8.5 routing table. Fixed array of 6 slots, two-step lookup, every row of the case table
+- [ ] `ROSTER` send/receive of 5.7. Direction, length, `generation`, and reserved-bit checks with the three dedicated counters
+- [ ] The three `ROSTER` send triggers of 5.7 (immediately on change, twice at 5 seconds, 15-second period)
 
 Added in Phase 5: 4.5 loss accounting and `baseline` (accounting that does not count reordering as loss), fuzz defense.
 **The 64-slot acceptance window itself is a Phase 4 item above.** The window and the accounting are different things.

@@ -29,6 +29,7 @@ coverage/
 .idea/
 *.swp
 .prime/
+.good/
 
 # OS
 .DS_Store
@@ -40,3 +41,4 @@ tools/nat-probe/results/**
 tools/nat-probe/records/**
 !tools/nat-probe/results/.gitkeep
 !tools/nat-probe/records/.gitkeep
+.commitmsg

@@ -41,17 +41,10 @@ struct HostPort {
     std::uint16_t port = 0;
 };
 
-// --rejoin 이 나르는 재참가 증명.
-struct Rejoin {
-    std::uint32_t peer_id = 0;
-    std::string peer_token;
-};
-
 struct Args {
     Role role = Role::None;
     std::optional<HostPort> server;
     std::optional<std::string> room;   // control_plane.md 2.1 대로 대문자로 정규화한 값
-    std::optional<Rejoin> rejoin;
     std::vector<HostPort> stun;        // 비어 있으면 architecture.md 3.5 의 기본 목록
     std::optional<network::Endpoint> peer;
 };
@@ -69,7 +62,7 @@ enum class ArgError {
     BadRole,
     ExtraPositional,
     BadRoom,
-    BadRejoin,
+    RoomWithHost,
     BadHost,
     BadPort,
     MissingPort,

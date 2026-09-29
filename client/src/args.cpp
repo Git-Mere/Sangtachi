@@ -20,10 +20,6 @@ constexpr bool is_ascii_digit(char c) noexcept {
     return c >= '0' && c <= '9';
 }
 
-constexpr bool is_ascii_lower_hex(char c) noexcept {
-    return is_ascii_digit(c) || (c >= 'a' && c <= 'f');
-}
-
 constexpr bool is_ascii_letter(char c) noexcept {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
@@ -31,7 +27,6 @@ constexpr bool is_ascii_letter(char c) noexcept {
 // control_plane.md 2.1 room_id 의 알파벳. I, O, 0, 1 이 없다.
 constexpr std::string_view kRoomAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 constexpr std::size_t kRoomLength = 6;
-constexpr std::size_t kPeerTokenLength = 32;
 
 // ASCII 소문자만 대문자로 바꾼다. ASCII 밖 바이트는 그대로 두고, 그러면 아래 알파벳
 // 검사에서 걸린다. 로캘에 기대는 변환을 쓰지 않는다.
@@ -145,45 +140,6 @@ HostPortParse parse_host_port(std::string_view text, std::uint16_t default_port,
     return {HostPort{std::string(host), *port}, ArgError::None};
 }
 
-// "<peer_id>:<peer_token>".
-//
-// 콜론 개수를 따로 세지 않는다. 둘째 콜론은 토큰 쪽에 들어가고 16진수 검사가 거부한다.
-std::optional<Rejoin> parse_rejoin(std::string_view text) {
-    const std::size_t colon = text.find(':');
-    if (colon == std::string_view::npos) {
-        return std::nullopt;
-    }
-    const std::string_view id_text = text.substr(0, colon);
-    const std::string_view token = text.substr(colon + 1);
-
-    // control_plane.md 2.2 peer_id. 32비트, 0 제외. 10진수로 적는다.
-    if (id_text.empty() || id_text.size() > 10) {
-        return std::nullopt;
-    }
-    std::uint64_t id = 0;
-    for (const char c : id_text) {
-        if (!is_ascii_digit(c)) {
-            return std::nullopt;
-        }
-        id = id * 10 + static_cast<std::uint64_t>(c - '0');
-    }
-    if (id == 0 || id > 0xFFFFFFFFull) {
-        return std::nullopt;
-    }
-
-    // control_plane.md 2.3 peer_token. 소문자 16진수 32자.
-    if (token.size() != kPeerTokenLength) {
-        return std::nullopt;
-    }
-    for (const char c : token) {
-        if (!is_ascii_lower_hex(c)) {
-            return std::nullopt;
-        }
-    }
-
-    return Rejoin{static_cast<std::uint32_t>(id), std::string(token)};
-}
-
 ParseResult fail(ArgError error, std::string_view offending) {
     ParseResult result;
     result.error = error;
@@ -201,7 +157,7 @@ std::string_view to_token(ArgError error) noexcept {
         case ArgError::BadRole:         return "bad_role";
         case ArgError::ExtraPositional: return "extra_positional";
         case ArgError::BadRoom:         return "bad_room";
-        case ArgError::BadRejoin:       return "bad_rejoin";
+        case ArgError::RoomWithHost:    return "room_with_host";
         case ArgError::BadHost:         return "bad_host";
         case ArgError::BadPort:         return "bad_port";
         case ArgError::MissingPort:     return "missing_port";
@@ -232,7 +188,7 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
         }
 
         const bool takes_value =
-            token == "--server" || token == "--room" || token == "--rejoin" ||
+            token == "--server" || token == "--room" ||
             token == "--stun" || token == "--peer";
         if (!takes_value) {
             return fail(ArgError::UnknownOption, token);
@@ -261,12 +217,6 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
                 return fail(ArgError::BadRoom, value);
             }
             args.room = std::move(*room);
-        } else if (token == "--rejoin") {
-            auto rejoin = parse_rejoin(value);
-            if (!rejoin) {
-                return fail(ArgError::BadRejoin, value);
-            }
-            args.rejoin = std::move(*rejoin);
         } else {  // --peer
             // Endpoint::parse 를 쓰지 않는다. 그것은 성공과 실패만 돌려주므로 주소가
             // 틀린 것인지 포트가 틀린 것인지를 오류 코드로 가를 수 없다.
@@ -284,6 +234,12 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
             }
             args.peer = Endpoint(*address, *port);
         }
+    }
+
+    // architecture.md 3.5 기동 입력. 방 코드는 create_room 응답으로만 생기므로 호스트가
+    // 미리 정할 수 없다. 조용히 무시하면 틀린 입력이 성공으로 보인다.
+    if (args.role == Role::Host && args.room) {
+        return fail(ArgError::RoomWithHost, "--room");
     }
 
     ParseResult result;

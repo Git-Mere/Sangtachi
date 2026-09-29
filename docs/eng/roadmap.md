@@ -159,7 +159,7 @@ Client A <------ UDP ------> Client B
   switched on failure are decided by [`architecture.md`](architecture.md) 3.5 Startup Inputs.** Do
   not hard-code server addresses
 - Handle startup inputs. The argument list and format are in `architecture.md` 3.5. This Phase needs
-  `--stun`; `--server`, `--room`, and `--rejoin` are accepted and stored only
+  `--stun`; `--server` and `--room` are accepted and stored only
 - Parse the Binding Response
 - Iterate STUN attributes (TLV)
 - Decode `XOR-MAPPED-ADDRESS`
@@ -230,23 +230,24 @@ is Phase 4.
 - **Before starting, fix the EC2 credential method.** Access keys are not written in source or documents. The document recommends an IAM role (ADR 0004)
 - **Before starting, check the free tier coverage directly in the account.** Documents alone did not confirm whether 25 WCU / 25 RCU / 25 GB is permanent (ADR 0004 "Not confirmed")
 - Local tests run on DynamoDB local. **The consistency path is not judged there, though.** Local reads usually look up to date, so a missing `ConsistentRead` does not show (ADR 0004)
-- **At start, move the case tables of `control_plane.md` (2.1, 3.3, 4.4, 5.1, 6.4, 7.4) into
+- **At start, move the case tables of `control_plane.md` (2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4) into
   `control-server/tests/` and change the document to point at those files.** A table kept in two
   places gets fixed in one and drifts. Attach a mutation test to each moved table
 - Deploy the Python control server to AWS EC2. systemd service, security group TCP 8000. **Run the
   deployment procedure once for real, then put it in a tool and have the document point at it**
   (`control_plane.md` 7.6)
 - Implement room creation (`create_room`, idempotency nonce)
-- Implement room join (`join_room`, both the new-join and rejoin forms)
+- Implement room join (`join_room`. There is one form. There is no rejoin)
 - Virtual IP allocation (`VIP#` conditional-write claim)
-- Candidate endpoint registration (`register_candidate`, server-side sanitation, ready recorded once). Local candidates are used when both peers are on the same LAN
+- Candidate endpoint registration (`register_candidate`, server-side sanitation). Local candidates are used when both peers are on the same LAN
+- Implement the host periodic report (`host_report`. Lease renewal, slot reclamation, pair confirmation recorded once)
 - Peer information exchange (`get_peers`, monotonic-clock `elapsed_since_ready_ms`)
 - Per-source rate limiting and `MAX_INFLIGHT`
 - Store room/peer state in DynamoDB
 - Implement the C++ control plane client. The `[control]` thread and two queues
   ([`concurrency.md`](concurrency.md) chapter 8 The `[control]` Thread), a minimal HTTP/1.1 client,
   error classification and retry (`control_plane.md` 8)
-- Complete startup input handling. `--server`, `--room`, and `--rejoin` are actually used
+- Complete startup input handling. `--server` and `--room` are actually used
   (`architecture.md` 3.5)
 
 ### Deliverable
@@ -279,31 +280,35 @@ Two clients on different networks obtain each other's endpoints through AWS.
   `room_not_found`. **They are different codes.** Do not wait for TTL deletion (store 4,
   `control_plane.md` 4.1 Common Envelope). Also check that the `now == expires_at_ms` boundary is on
   the expired side
-- Rejoin (`control_plane.md` 4.3 join_room). Calling `join_room` again with the same `peer_id` and
-  `peer_token` returns **the same `peer_id` and the same virtual IP**
-  - That the candidates were cleared is seen in the peer's `get_peers` response. In that response the
-    peer's `candidates` is an empty array and `ready` is `true`. The rejoin response itself carries no
-    candidate field
+- Slot reclamation (`control_plane.md` 4.6 host_report). The `PEER#` and `VIP#` of a peer the host
+  reported as `departed` disappear, and the next participant receives that virtual IP
+  - A call from a peer that is not the host yields `unauthorized`
   - A wrong token yields `unauthorized`
-  - A non-existent `peer_id` is also `unauthorized`, not `room_not_found`
+  - Reporting a `peer_id` that is already gone gives an empty `released` array and is not an error
+- Lease renewal (`control_plane.md` 5.1 Room). If `host_report` stops, the room expires within
+  `ROOM_LEASE_S` and a later `join_room` yields `room_expired`
+  - **An already established tunnel is unaffected** (`spec.md` NFR-3). Lease expiry does not tear
+    down a session
+  - Sending `host_report` to an expired room yields `room_expired` and does not revive it
 - Idempotency (`control_plane.md` 4.2 create_room, 4.3)
   - Calling `join_room` twice with the same `client_nonce` returns the same response the second time
     and **creates only one `VIP#` item**
   - A different nonce yields `room_full`
   - `create_room` with the same nonce is also the same room
-- Ready is recorded **exactly once per room** (`control_plane.md` 4.4 register_candidate, 5.2 Ready)
-  - Even when two peers send `register_candidate` at the same time, the server log has one
-    `room.ready` line
+- Ready is recorded **exactly once per pair** (`control_plane.md` 4.6 host_report, 5.2 Ready)
+  - Even when the host `confirm`s the same peer twice, the server log has one `pair.ready` line
   - Re-registering candidates by either peer afterwards does not move the reference point of
     `punch_delay_ms` and `elapsed_since_ready_ms`
-  - Run every row of the race case table (4.4). The order cannot be forced from outside, so build each
+  - Run every row of the race case table (4.6). The order cannot be forced from outside, so build each
     order with a delay injection point right after the write in the store layer
-  - Watch especially for the case of 0 lines, not just more than one. An implementation that judges
-    from a read taken before the `PEER#` update is caught on that row, and that is the last row of the
-    table
-- Even after a rejoin clears candidates, `get_peers` keeps `ready: true`. Ready is defined as the
-  existence of `ready_at`. An implementation that recounts candidates is caught here
+  - Watch especially for **0 lines when a peer with no candidates is `confirm`ed**. An implementation
+    that writes without a condition is caught on that row, and that is the last row of the table
+- Until the host confirms, `get_peers` gives that pair `ready: false` and does not carry the peer's
+  candidates. An implementation that grants ready from both registrations alone is caught here
   (`control_plane.md` 4.5 get_peers)
+- Late join. Even when a new player enters a room where one pair is already `CONNECTED`, the
+  `punch_delay_ms` reference point of the existing pair does not move, and only the new pair becomes
+  ready on its own
 
 **All rows of the case tables pass.** The `control_plane.md` sections below say **where each table
 came from.** Once the task above has moved the tables into `control-server/tests/`, those files are
@@ -355,14 +360,16 @@ what gets run.
     first attempt, with the same `client_nonce`**
   - The judging axis differs per operation. For `create_room`, check that only one room is created
     (`ROOM` item count 1)
-  - For a new `join_room`, check that the second response has the same `peer_id` and virtual IP as the
-    first. The `VIP#` item count does not decide it
+  - For `join_room`, check that the second response has the same `peer_id` and virtual IP as the
+    first. **Also check that the `VIP#` item count is 1.** The pool holds four addresses
+    (`control_plane.md` 2.5), so an implementation that ignores the nonce claims a second address and
+    ends with two items
   - Connect timeout and `unavailable` happen before the store is reached, so nonce sameness leaves no
     trace in the store. Put an injection point in the store layer that fails right after the commit
     and just before the response, and run the `internal` retry through it
 
-  > **Why.** The `VIP#` item count does not decide it because the pool holds only one address, so even
-  > a mutant that changed the nonce ends the second attempt with `room_full` and leaves one item.
+  > **Why look at two axes.** The item count alone lets through the case where a mutant ends with
+  > `room_full` in a full room and the count stays the same. Sameness of `peer_id` catches that case.
 
 ---
 
@@ -470,9 +477,11 @@ Established without router port forwarding in supported environments. The packet
 Contracts of the tools the verification procedures use. These are equipment, not pass criteria.
 
 - **Pin the console commands used by the verification procedures.** The minimum vocabulary accepted by
-  the `[console]` scaffolding of Phases 1-5 ([`concurrency.md`](concurrency.md)) is four commands
+  the `[console]` scaffolding of Phases 1-5 ([`concurrency.md`](concurrency.md)) is five commands
   - `quit` signals the shutdown event and starts the normal shutdown procedure (`concurrency.md`
-    chapter 3 One Loop Iteration)
+    chapter 3 One Loop Iteration). **It ends the process whether in the lobby or in a session**
+  - `leave` closes every session and goes to the lobby. The process stays (`concurrency.md` chapter 7
+    Lobby)
   - `counters` dumps all counters to the log immediately (`architecture.md` 9). Verification items
     that read counters take their snapshot with this command
   - `raw <byte count>` is the raw send of Phases 1-2, and its contract is in `architecture.md` 3.5
@@ -485,8 +494,9 @@ Contracts of the tools the verification procedures use. These are equipment, not
   - `size` defaults to the 100 bytes below; if given, it is an integer from 20 to `MAX_INNER` (1452)
     inclusive and builds a packet of that size (the Phase 5 boundary table uses it)
   - Out of range or not an integer sends nothing and leaves one `WARN` line
-  - If the session is not `CONNECTED`, nothing is sent and one `WARN` line is left. 8.5 check 1 blocks
-    it anyway, but filtering at the command stage keeps the test's subject clear
+  - If the session is not `CONNECTED`, nothing is sent and one `WARN` line is left. The
+    `tx_drop_not_connected` check of 8.5 blocks it anyway, but filtering at the command stage keeps
+    the test's subject clear
   - Transmission is not crammed into one round; it is split the same way as the `MAX_DRAIN` budget
   - If `sendto` fails midway, stop there and record the count sent
   - **Pin the bytes that go out.** The table below is that layout
@@ -1003,7 +1013,7 @@ Two Windows machines communicate using virtual IPs only.
   is the main thread, and write it in `concurrency.md`. [ADR 0007](decisions/0007-gui-core-scope-qt.md)
   left it open
 - **Decide the startup input path the GUI uses.** Today the only input is CLI arguments
-  ([`architecture.md`](architecture.md) 3.5 Startup Inputs) and the room code and the rejoin proof
+  ([`architecture.md`](architecture.md) 3.5 Startup Inputs) and the room code and the failure line
   go to standard output
 
 ### Deliverable

@@ -44,6 +44,8 @@ $cases = @(
     @{ args = @('--peer', 'a.example:3478');   expect = 2; contains = 'reason=bad_host' }
     @{ args = @('--stun', 'a.example');        expect = 2; contains = 'reason=missing_port' }
     @{ args = @('--server', '999.999.999.999'); expect = 2; contains = 'reason=bad_host' }
+    # 방 코드는 create_room 응답으로만 생긴다 (architecture.md 3.5).
+    @{ args = @('host', '--room', 'ABCDEF');   expect = 2; contains = 'reason=room_with_host arg=--room' }
 
     # 값에 공백과 제어문자를 싣지 않는다. 둘 다 밑줄로 바꾼다 (architecture.md 9장).
     @{ args = @('a b');                        expect = 2; contains = 'arg=a_b' }
@@ -69,8 +71,9 @@ function Format-Argument([string]$value) {
 
 $failed = 0
 foreach ($c in $cases) {
-    # 인자가 맞으면 이 프로그램은 이벤트 루프로 들어가 quit 을 받을 때까지 끝나지 않는다
-    # (concurrency.md 7장 종료). 그래서 표준 입력으로 quit 을 넣고 닫는다.
+    # 인자가 맞으면 이 프로그램은 이벤트 루프로 들어가 quit 을 받을 때까지 끝나지 않는다.
+    # 세션이 끝나도 로비로 갈 뿐 프로세스는 남는다 (concurrency.md 7장 로비). 프로세스를
+    # 끝내는 것은 quit 하나이므로 표준 입력으로 그것을 넣고 닫는다.
     #
     # 표준 오류는 직접 읽는다. 파이프라인에 섞으면 PowerShell 이 ErrorRecord 로 감싸
     # 원래 줄을 그대로 볼 수 없다.

@@ -319,9 +319,17 @@ adapter gave `1`. The original errors were all `Category=ObjectNotFound`, and th
 `CmdletizationQuery_NotFound_InterfaceAlias,Get-NetIPAddress`,
 `CmdletizationQuery_NotFound_InterfaceAlias,Get-NetRoute` respectively.
 
-## 4. Wintun packaging and signature
+## 4. Distribution packaging
 
-**Status: unverified.** Wintun has not been brought in yet. That is Phase 6 work. The commands
+**Status: unverified.** The runtimes the two subsections cover have not been brought in yet. Each
+subsection states its reason and when it gets verified.
+
+Two runtimes ship with the distribution: Wintun, which opens the virtual adapter, and Qt, which
+draws the GUI.
+
+### Wintun DLL and signature
+
+**Reason it is unverified.** Wintun has not been brought in yet. That is Phase 6 work. The commands
 below can be run after `wintun.dll` is placed in the distribution.
 
 Wintun ships as a single DLL with the driver embedded in it. **The architecture must match**
@@ -388,6 +396,24 @@ procedures inside documents too.
 **When blocked.** A driver load failure shows up as the adapter creation API failing. At that point
 it is indistinguishable from missing administrator rights (section 1), so the client must check the
 two conditions **separately** and say which one is the cause.
+
+### Qt runtime
+
+**Reason it is unverified.** Qt has not been brought in yet. That is Phase 8 work. There is no
+distribution to check.
+
+**Premise.** The Qt runtime ships with the distribution. [`spec.md`](spec.md) FR-15 fixes what the
+GUI does, and without the runtime none of it can come up.
+
+**Pass criterion.** The GUI comes up from the distribution alone on a target PC with no separate Qt
+installation. The user is not asked to install a development environment.
+
+**Owner: person (at build time).** What gets bundled is decided when the distribution is built.
+
+**Verified in Phase 8.** The Qt version, the link mode, the licence terms, the list of files to
+bundle and their size, and the check commands are not decided yet. Whether the approval covers them
+was not communicated either ([ADR 0007](decisions/0007-gui-core-scope-qt.md)). Until those are
+decided this subsection does not judge a pass.
 
 ## 5. Minecraft server bind address
 
@@ -908,7 +934,7 @@ If the binary was changed right before the demo, run it once more with that file
 | 1 | Administrator rights | person | every run |
 | 2 | Firewall profile and rules | client | right after adapter creation |
 | 3 | Leftover cleanup | client | at start |
-| 4 | Bundling and signing the Wintun DLL | person (build) | when making the distribution |
+| 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | person (build) | when making the distribution |
 | 5 | `server.properties` | person | when first setting up the server |
 | 6 | EC2 security group and bind address | person | when setting up the instance |
 | 7 | Subnet overlap check | client | before creating the adapter |

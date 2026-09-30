@@ -122,6 +122,12 @@ mix sockets and event handles in one wait, it has to be `WaitForMultipleObjects`
 `WSAEventSelect` automatically switches the socket to non-blocking mode, so
 `ioctlsocket(FIONBIO)` is not called separately.
 
+**The basis for this choice exists only inside Windows.** `epoll` and `kqueue` do not have the problem
+of mixing sockets and event handles in one wait at all. So on a move to another OS the wait primitive of
+this chapter is not a place to fix but a place to rewrite
+([ADR 0010](decisions/0010-platform-porting-seams.md) seam 2). The order and the budget of One Loop
+Iteration below hold in that place too.
+
 ---
 
 ## 3. One Loop Iteration
@@ -188,7 +194,7 @@ drain_udp(budget) -> {EMPTY, BUDGET}:
             if e == WSAEWOULDBLOCK:  return EMPTY      # source is empty
             if e == WSAEMSGSIZE:                       # even 1473 bytes was not enough
                 drop_oversize_datagram++; continue     # the datagram is already consumed
-            increment counter, then return EMPTY       # the socket stays in use
+            rx_err_recv++; return EMPTY                # the socket stays in use
         if n > MAX_DATAGRAM:                           # exactly 1473 bytes arrived
             drop_oversize_datagram++; continue
         classify(buf, n, src)                          # protocol.md chapter 7
@@ -199,6 +205,11 @@ drain_udp(budget) -> {EMPTY, BUDGET}:
 already left the socket queue by the time it is returned. Doing `return EMPTY` there ends that
 iteration's drain after one item, so mixing in oversize datagrams alone would defeat batching.
 Drop it and keep draining. For other errors the cause is unknown, so end that iteration.
+
+**Every other receive error is counted by `rx_err_recv`.** With only a log line (`socket.error` of
+`architecture.md` chapter 9), why that iteration ended early would not be left in a full counter dump.
+It is the pair of `tx_err_send` on the send side. It is not split per error code. The code is carried by
+the log.
 
 **The receive buffer is `MAX_DATAGRAM + 1` (1473) bytes.** One byte larger, the decision
 becomes the length comparison `n > MAX_DATAGRAM`, and a test can send 1473 bytes to reproduce
@@ -302,11 +313,13 @@ way `[telemetry]` and `[control]` wake on the same signal, and the next iteratio
 from the shutdown handle and follows the order of chapter 7 Shutdown exactly. The "if not done yet"
 in chapter 7 (1) is this path.
 
-**Send backlog created by the console counts toward `busy`.** `send <n>` (Phase 4~5) and `raw`
-(`architecture.md` 3.5 Startup Inputs) are not pushed out in one iteration but split the same
-way as `MAX_DRAIN`, so an iteration with backlog left must have `busy = true` for the next wait
-to return immediately with timeout 0. Otherwise the remaining sends stretch out by one timer
-interval each.
+**Send backlog created by the console counts toward `busy`.** `send <n>` (Phase 4~5) is not pushed
+out in one iteration but split the same way as `MAX_DRAIN`, so an iteration with backlog left must
+have `busy = true` for the next wait to return immediately with timeout 0. Otherwise the remaining
+sends stretch out by one timer interval each.
+
+`raw` does not belong here. It sends one datagram and finishes, so there is no such thing as backlog
+([`architecture.md`](architecture.md) 3.5 Startup Inputs).
 
 `drain_control` drains the results that `[control]` pushed to the response queue and applies
 them to session state (chapter 8 The `[control]` Thread). Both queues are small and requests arrive
@@ -339,16 +352,20 @@ list.
   effectively no wraparound (about 580 million years). Only RTT measurement uses
   `QueryPerformanceCounter`, and **values from the two clocks are never compared with each
   other.**
-- The timer set is small. The table in [`protocol.md`](protocol.md) chapter 11 Timers is a
-  single-digit count, and in the minimum scope there is one session. Every iteration does a
-  linear scan for the earliest deadline. No timer wheel is needed.
+- The timer set is small. The table in [`protocol.md`](protocol.md) chapter 11 Timers has no more
+  than twenty kinds, and the cap on the number of sessions one process holds is a single digit
+  (`protocol.md` 8.5 Transmit-Side Validation). The number of live deadlines does not exceed the
+  product of the two. Every iteration does a linear scan for the earliest deadline. No timer wheel
+  is needed.
   - The "expiry value" table in the same chapter (discard list, nonce, probe, `pending_pings`)
     holds **a lifetime attached to each item**, not a session timer, so it is checked while
     walking those items
-- `protocol.md` chapter 11 Timers uses a strict inequality for deadline comparison and defines
+- `protocol.md` chapter 11 Timers defines the deadline comparison as `deadline <= now` and defines
   priority by dequeue time. Receive events dequeued in the same iteration are processed before
   that iteration's timers. **This loop order, drain receives first and run timers after, is the
   implementation of that rule.**
+  - That inequality has to be the same as the one in `next_timeout` of chapter 2 Waiting. The
+    reason is in `protocol.md` chapter 11
   - The reason it is not arrival time is the drain budget, and the rationale is in
     `protocol.md` chapter 11
 
@@ -394,10 +411,11 @@ No struct gets a "thread safe" comment. Single ownership is the only rule, and t
 - **There is not a single lock in the data plane.**
 
 **The ring holds 256 entries.** The basis is the background production rate of automatic
-periodic metrics. Looking only at fixed-period items like `PING` at 5 seconds and keepalive at
-15 seconds, the average is under 1 record/second, and at that rate 256 slots hold minutes'
-worth, which covers a span where one upload hits the socket timeout (chapter 7 Shutdown) and
-consumption falls behind by a few seconds.
+periodic metrics. The fixed-period items attach per session (`PING` at 5 seconds, keepalive at 15
+seconds, the host's `ROSTER` at 15 seconds) and the cap on the number of sessions is a single
+digit, so their sum is a few records per second. At that rate 256 slots hold minutes' worth, which
+covers a span where one upload hits the socket timeout (chapter 7 Shutdown) and consumption falls
+behind by a few seconds.
 
 **Bursts are not covered by this size.** Test-driven consecutive connection attempts, manual
 RTT samples, and spans where drop counters pile up can produce several records in the same
@@ -461,6 +479,14 @@ keeps the join bound is not this value but the `_exit` below. The reason for 1.5
 |------|--------|
 | `CTRL_C_EVENT`, `CTRL_BREAK_EVENT` | signal the event and return `TRUE` immediately |
 | `CTRL_CLOSE_EVENT`, `CTRL_LOGOFF_EVENT`, `CTRL_SHUTDOWN_EVENT` | signal the shutdown event, then wait for the cleanup-complete event up to inside the OS grace period (3 seconds) before returning |
+
+**A control signal not in the table is not handled.** The handler returns `FALSE` and passes it to the
+next handler. Hanging shutdown on a signal whose meaning is unknown is worse.
+
+**Failing to install the handler is a startup failure.** The exit code is the same as the startup
+failure of [`architecture.md`](architecture.md) 3.5 Startup Inputs. Coming up without it installed means
+closing the window ends the process without cleanup, so the shutdown contract of this chapter cannot be
+kept.
 
 For the latter three signals, **Windows terminates the process the moment the handler
 returns.** Signaling and returning means neither the `CLOSE` send nor the adapter cleanup runs.

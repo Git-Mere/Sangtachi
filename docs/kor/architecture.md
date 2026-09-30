@@ -73,7 +73,6 @@
 |------|------|-----------|
 | `network/udp_socket` | Winsock2 초기화/해제, UDP 소켓 생성, 논블로킹 송수신, 이벤트 핸들 노출 ([`concurrency.md`](concurrency.md)) | Winsock2 |
 | `network/endpoint` | `IP:Port` 값 타입, 파싱, 비교, 직렬화 | 없음 |
-| `network/stun_client` | STUN Binding Request 생성, 트랜잭션 ID 관리, 응답 파싱, `XOR-MAPPED-ADDRESS` 디코드, 타임아웃/재시도 | 없음 (RFC 5389 직접 구현) |
 | `peer/peer` | 피어 식별자, 가상 IP, 후보 엔드포인트 목록 | 없음 |
 | `peer/hole_punch` | 양방향 동시 송신, 재시도, 성공 판정, 실패 사유 분류 | 없음 |
 | `peer/session` | 핸드셰이크, keepalive, 연결 상태 머신, RTT 측정 | 없음 |
@@ -85,12 +84,12 @@
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
 | `loop` | 이벤트 루프 한 바퀴, 대기 집합, 소스별 비우기 예산, 콘솔 명령 처리. 구조는 `concurrency.md` 2·3장 | 없음 |
 | `timer` | 주기 타이머 집합과 다음 대기 타임아웃 계산 (`concurrency.md` 4장) | 없음 |
-| `console` | `[console]` 스레드의 줄 큐와 그 수명 (`concurrency.md` 6장). Phase 6 에서 사라지는 스캐폴딩이다 | 없음 |
+| `console` | `[console]` 스레드의 줄 큐와 그 수명 (`concurrency.md` 6장 텔레메트리 격리가 그 큐 정책을 함께 갖는다). Phase 6 에서 사라지는 스캐폴딩이다 | 없음 |
 | `log` | 9장 로그 출력의 줄 형식과 필드 인코딩 | 없음 |
 | `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md)와 `concurrency.md` 다 | 없음 |
 | `args` | 기동 인자 파싱 (3.5) | 없음 |
 | `hash` | `rx.raw` 가 싣는 SHA-256 | Windows CNG |
-| `network/stun` | STUN 메시지 구성과 파싱. 순수 함수만 둔다 ([`protocol.md`](protocol.md) 13장) | 없음 |
+| `network/stun` | STUN 메시지 구성과 파싱. `XOR-MAPPED-ADDRESS` 디코드를 포함하고 순수 함수만 둔다. RFC 5389 를 직접 구현한다 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위) | 없음 |
 | `network/stun_client` | STUN 재시도와 마감, 서버 선택과 교체. 시계·소켓·난수원·이름 해석을 주입받는다 | 없음 |
 | `platform/wait` | 단조 시계, 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
 | `platform/random` | CSPRNG 바이트. 트랜잭션 ID 와 뒤의 epoch·nonce 가 쓴다 | Win32 |
@@ -100,8 +99,9 @@
 
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 `concurrency.md` 가 갖는다.
 
-위 표의 이름은 책임이다. 그 책임을 어느 OS 의 API 로 채웠는지는 원본이 있는 디렉터리가
-말한다. **OS 헤더를 포함하는 원본은 `client/src/platform/` 아래에만 둔다.** 이식할 때 다시
+위 표의 이름은 **공개 헤더의 자리**이고 그 이름이 책임을 가리킨다. 그 책임을 어느 OS 의
+API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 다를 수 있다. `network/udp_socket`
+의 헤더는 `network/` 에 있고 그 구현은 `platform/win32/` 에 있다. **OS 헤더를 포함하는 원본은 `client/src/platform/` 아래에만 둔다.** 이식할 때 다시
 쓰는 자리가 그 디렉터리이고, 규칙과 그 결정의 근거는
 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md)이 갖는다. `tools/platformgate/` 가 그 규칙을
 판정하고, **현재 그 자리에 무엇이 있는지는 10장 레포 구조의 트리가 갖는다.**

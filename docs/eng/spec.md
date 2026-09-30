@@ -119,6 +119,10 @@ decision formula is set by `protocol.md` 9.2 `CONNECTED` Condition.
 | NFR-9 | STUN, hole punching, and tunnel traffic all use the same local UDP socket. A different socket gets a different NAT mapping, which invalidates the discovered endpoint. |
 | NFR-10 | The telemetry service is a separate deployment unit from the control plane, and there is **no call dependency** between the two services. If the telemetry service process stops, the control plane's operations and the data plane are not blocked by it. The limits of this scope are below. |
 
+**The scope of NFR-2.** "A different IP-based application" means a client-server one. An
+application whose peers talk to each other is not judged by this requirement. The basis is the
+tunnel topology FR-4 fixes, and the test that judges this requirement is designed for that scope.
+
 **The two kinds under NFR-5.** They differ in who approves.
 
 | Kind | What it is | Who approves | Today |

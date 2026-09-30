@@ -36,21 +36,26 @@
                  |                                |
                  +----------------+---------------+
                                   |
-              +-------------------+-------------------+
-              |                                       |
-      +-------v---------+                    +--------v--------+
-      | Windows Client A|                    | Windows Client B|
-      |  Wintun Adapter |                    |  Wintun Adapter |
-      |  Router         |                    |  Router         |
-      |  Tunnel         |<==================>|  Tunnel         |
-      |  Hole Punch     |   Direct P2P UDP   |  Hole Punch     |
-      |  STUN Client    |   (game traffic)   |  STUN Client    |
-      |  Telemetry      |                    |  Telemetry      |
-      +-------+---------+                    +--------+--------+
-              |                                       |
-      Minecraft Server                         Minecraft Client
-        10.100.0.1:25565                          10.100.0.2
+            +---------------------+---------------------+-- ...
+    +-------v---------+   +-------v---------+   +-------v---------+
+    | Windows Host    |   | Windows Player 1|   | Windows Player 2|
+    |  Wintun Adapter |   |  Wintun Adapter |   |  Wintun Adapter |
+    |  Router         |   |  Router         |   |  Router         |
+    |  Tunnel         |   |  Tunnel         |   |  Tunnel         |
+    |  Hole Punch     |   |  Hole Punch     |   |  Hole Punch     |
+    |  STUN Client    |   |  STUN Client    |   |  STUN Client    |
+    |  Telemetry      |   |  Telemetry      |   |  Telemetry      |
+    +-+-+-+-----------+   +--------+--------+   +--------+--------+
+      | | |                        |                     |
+      | | +==== Direct P2P UDP ====+                     |
+      | +================ Direct P2P UDP ================+
+      |
+    Minecraft Server      Minecraft Client      Minecraft Client
+      10.100.0.1:25565      10.100.0.2            10.100.0.3
 ```
+
+**Only two players are drawn.** [`spec.md`](spec.md) FR-4 owns the member cap and the range
+over which tunnels are established.
 
 Even if the control plane dies, **an already established P2P tunnel keeps working.** The
 control plane is needed only for session establishment.
@@ -70,7 +75,6 @@ instance, but there is no dependency in either direction. The boundary contract 
 |------|------|-----------|
 | `network/udp_socket` | Winsock2 init/teardown, UDP socket creation, non-blocking send/receive, exposing the event handle ([`concurrency.md`](concurrency.md)) | Winsock2 |
 | `network/endpoint` | `IP:Port` value type, parsing, comparison, serialization | None |
-| `network/stun_client` | STUN Binding Request construction, transaction ID management, response parsing, `XOR-MAPPED-ADDRESS` decoding, timeout/retry | None (direct RFC 5389 implementation) |
 | `peer/peer` | Peer identifier, virtual IP, candidate endpoint list | None |
 | `peer/hole_punch` | Simultaneous bidirectional send, retry, success decision, failure reason classification | None |
 | `peer/session` | Handshake, keepalive, connection state machine, RTT measurement | None |
@@ -80,9 +84,31 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `adapter/wintun_adapter` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper) | **Wintun (approved)**, IP Helper |
 | `telemetry/telemetry` | Metric collection, local buffering, transmission to the telemetry service | None |
 | `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
+| `loop` | One loop iteration, the wait set, the per-source drain budget, console command handling. `concurrency.md` chapters 2 and 3 own the structure | None |
+| `timer` | The periodic timer set and the next wait timeout calculation (`concurrency.md` chapter 4) | None |
+| `console` | The line queue of the `[console]` thread and its lifetime (`concurrency.md` chapter 6 Telemetry Isolation also owns that queue policy). Scaffolding that disappears in Phase 6 | None |
+| `log` | Line format and field encoding of the chapter 9 log output | None |
+| `counters` | The table of the chapter 9 `counter` event. The names come from [`protocol.md`](protocol.md) and `concurrency.md` | None |
+| `args` | Startup argument parsing (3.5) | None |
+| `hash` | The SHA-256 carried by `rx.raw` | Windows CNG |
+| `network/stun` | STUN message construction and parsing. Includes `XOR-MAPPED-ADDRESS` decoding and holds pure functions only. RFC 5389 is implemented directly ([`protocol.md`](protocol.md) chapter 13 STUN Scope) | None |
+| `network/stun_client` | STUN retries and deadlines, server selection and replacement. The clock, socket, random source and name resolution are injected | None |
+| `platform/wait` | Monotonic clock, event handles, waiting on several handles at once (`concurrency.md` chapters 2 and 4) | Win32 |
+| `platform/random` | CSPRNG bytes. Used by the transaction ID and later by epoch and nonce | Win32 |
+| `platform/resolve` | Name to IPv4 endpoint. Called once at startup (3.5) | Win32 |
+| `platform/console_ctrl` | Receives console control signals, signals the shutdown event and waits for cleanup to finish (`concurrency.md` chapter 7) | Win32 |
 | `control/control_client` | Control plane HTTP/JSON calls and DNS resolution. Owned by the `[control]` thread (`concurrency.md` chapter 8 The `[control]` Thread). Operations and encoding are in [`control_plane.md`](control_plane.md) | Winsock2 |
 
 The client is a single process. Thread composition and state ownership are in `concurrency.md`.
+
+The names in the table above are **where the public header sits**, and that name points at the
+responsibility. Which OS API fills that responsibility is told by **the directory the source sits
+in**, and the two can differ. The header of `network/udp_socket` sits in `network/` while its
+implementation sits in `platform/win32/`. **Source files that include OS headers go only under
+`client/src/platform/`.** That directory is the place rewritten when porting, and
+[ADR 0010](decisions/0010-platform-porting-seams.md) owns the rule and the reasoning behind that
+decision. `tools/platformgate/` decides that rule, and **what is in that place right now is
+owned by the tree in chapter 10 Repository Structure.**
 
 **Which thread `ui/main_window` runs on is not decided.** Qt has its own event loop, and
 `concurrency.md` chapter 1 Threads made `[loop]` the process main thread. The relation between the
@@ -191,8 +217,9 @@ selection" below.
 
 **STUN default list.** The source is `DEFAULT_STUN_SERVERS` in
 [`tools/nat-probe/natprobe.py`](../../tools/nat-probe/natprobe.py). The 22 measurements ran
-with that list. **The values in the two places have to be the same.** If one changes, change
-the other with it.
+with that list. **There are two more places that copy that value.** The block below in this
+section and the default list constant in the client. If one place changes, change all three
+together.
 
 ```text
 stun.l.google.com:19302
@@ -203,10 +230,35 @@ stun.nextcloud.com:3478
 
 **Server selection.** Query the first two servers in the list **simultaneously** on the same
 socket. The transaction ID separates the responses ([`protocol.md`](protocol.md) chapter 13
-STUN Usage Scope). The STUN deadline is per server (`protocol.md` chapter 11 Timers). If one
-server hits its own deadline, switch to the next server in the list and query again, and that
-server's retry schedule and deadline start fresh. The bound for the whole step is computed by
-that document.
+STUN Usage Scope). The STUN deadline is per server (`protocol.md` chapter 11 Timers).
+
+**When a slot becomes free, the next server in the list takes that slot.** There are three
+triggers that free a slot.
+
+| Trigger | How that server is read |
+|------|----------------------|
+| It hit the deadline | There is no answer |
+| A success response arrived | One observation was obtained |
+| An error response (Binding Error Response) arrived | An answer arrived and that answer is a refusal. It is not retried |
+
+The server that comes in starts its retry schedule and deadline fresh. The bound for the whole
+step is computed by [`protocol.md`](protocol.md) chapter 11 Timers, and **the "list length" in
+that computation is the length after the deduplication below.**
+
+> **Why refill the slot even when a response arrived.** Refilling only on the deadline makes
+> the remaining entries take one slot in turn after an early answer from a leading server, and
+> the step then exceeds the bound.
+
+**Entries that resolve to the same endpoint count as one.** A different name does not mean a
+different server. One provider commonly puts several names on the same address. After
+resolution, if the same `IP:port` remains, only the first one stays in the list and the rest are
+removed while leaving one `WARN` line. The "fewer than two" decision below is applied after
+that.
+
+> **Why.** The reason for asking two servers is to see whether the mapping stays the same when
+> the destination changes ([`spec.md`](spec.md) supported network conditions). Asking the same
+> address twice makes the destination single, so that decision does not hold, while the entry
+> count alone still looks like two.
 
 **If the list is exhausted without responses from two different servers, it is
 `STUN_DISCOVERY_FAILED`.** Even one response only is a failure.
@@ -226,6 +278,11 @@ resolution is needed, and that call (`getaddrinfo`) is synchronous, so it is not
   `control_plane.md` 3.2 Address. `AAAA` is not used
 - **An entry that fails to resolve is removed from the list and leaves one `WARN` line.** If
   fewer than two entries remain, it is `STUN_DISCOVERY_FAILED` per the rule above
+- **A name made of digits only is not resolved.** If every label split by dots is decimal or
+  `0x` hexadecimal notation, it is read as a mistyped IPv4 literal and ends with no value.
+  Asking something with too few parts such as `1.2.3` as a name returns a wrong address on
+  networks that append a search suffix. **A normal name that starts with a digit such as
+  `1drv.ms` is not blocked.** If even one label is not a number, it is a name
 
 Unlike the control server address, a resolution failure here is not a startup failure. The list
 has several entries, so one dead entry still allows progress.
@@ -239,7 +296,8 @@ not stored in a file.
 > carry that value. A secret with no use is not left on the screen and in the shell history.
 
 **The room code also goes to standard output.** The host has to pass the `room_id` from the
-`create_room` response to the other side. It is not put in the standard error log (chapter 9).
+`create_room` response to the players who will play together. It is not put in the standard
+error log (chapter 9).
 
 > **Why.** If the log file becomes the list of room codes, reading the log is room hijacking.
 > Standard output is the screen a human watches, and not redirecting it is the default.
@@ -274,7 +332,10 @@ STUN (`roadmap.md` Phase 1), so it needs a place to take the remote address.
 
 **The receiving side emits one `rx.raw` log line.** The fields are `from` (source
 `IPv4:port`), `len`, and `sha256` (the first 16 hex characters of the received byte string's
-hash). The byte string itself is not put in the log. **The sending side emits the same line.**
+hash). **This line goes out for every datagram received.** That includes what
+[`protocol.md`](protocol.md) chapter 7 Receive Classification drops, and from Phase 2 onward
+STUN responses are printed here too. What is dropped has to stay in diagnostics, and the log is
+not a reply, so it comes before classification. The byte string itself is not put in the log. **The sending side emits the same line.**
 If `len` and `sha256` match on both lines, the Phase 1 "matches byte for byte" holds.
 
 **On the sending side `from` is its own local endpoint.** The source of that datagram is
@@ -568,7 +629,7 @@ attempt.
 
 - Range: `10.100.0.0/24`
 - `10.100.0.1`: the room creator (host). The game server runs here.
-- `10.100.0.2` and up: participants. The control plane assigns them sequentially.
+- `10.100.0.2` through `10.100.0.5`: four participants. The control plane assigns them sequentially.
 - A virtual IP is valid per room. All of them are reclaimed when the room disappears, and while
   the room is alive a slot is also reclaimed when the host reports that a peer's session is over,
   so the next participant uses it. The reclamation rules and when a room disappears are owned by
@@ -582,6 +643,12 @@ public IP or port.
 Windows routing is handled by attaching a `10.100.0.0/24` route to the virtual adapter. The
 client sets this route directly through the Windows IP Helper API when creating the adapter and
 removes it on exit. Wintun does not configure addresses or routes.
+
+**Players do not talk to each other over the virtual IP either** ([`spec.md`](spec.md) FR-4).
+The route setup above sends all of `10.100.0.0/24` to the virtual adapter, so a packet a player
+sends to another player's address still enters the adapter. What drops that packet is not the
+operating system but the client's routing table, and [`protocol.md`](protocol.md) 8.5
+Transmit-Side Validation owns the decision.
 
 ---
 
@@ -783,9 +850,11 @@ below. Value formats are not fixed. Verification searches by key and field name.
 Events not listed here may be added freely. **Only these ten keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
-**`timer.tick` is emitted by a timer that exists only in the test build.** It is not in the
-product build. The test build puts one 200ms periodic timer (`name=probe200`) into the `[loop]`
-timer set and emits this line on every expiry. **`elapsed_ms` is there so that the interval can
+**`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From
+Phase 2 onward the STUN retries and deadlines enter the same `[loop]` timer set, so this line
+goes out in the product build too ([`protocol.md`](protocol.md) chapter 11 Timers). **The test
+build adds one 200ms periodic timer (`name=probe200`) to that set.** That timer is not in the
+product build. **`elapsed_ms` is there so that the interval can
 be decided even though the log line carries no timestamp.** That is the only value verification
 looks at, so the timestamp format of the line itself does not have to be fixed. It is turned on
 by the same CMake option as the echo responder (`roadmap.md` Phase 4), and a build with it on
@@ -840,11 +909,19 @@ Sangtachi/
 |   +-- src/
 |   |   +-- main.cpp
 |   |   +-- args.cpp     startup argument parsing (3.5)
-|   |   +-- network/     wsa, udp_socket, endpoint, stun_client
+|   |   +-- loop.cpp     event loop and console commands (concurrency.md chapters 2 and 3)
+|   |   +-- timer.cpp    timer set (concurrency.md chapter 4)
+|   |   +-- console.cpp  [console] line queue (concurrency.md chapter 6)
+|   |   +-- log.cpp      log line format (chapter 9)
+|   |   +-- counters.cpp counter table (chapter 9)
+|   |   +-- platform/    source files including OS headers go only here (ADR 0010)
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve
+|   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session
 |   |   +-- tunnel/      packet, tunnel, router
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
+|   |   +-- ui/          main_window
 |   |   +-- control/     control_client
 |   +-- CMakeLists.txt
 +-- control-server/      module responsibilities are in control_plane.md 7.1
@@ -888,6 +965,7 @@ The two language trees hold the same files. When editing a document, modify both
 | Wintun | Windows virtual network interface access only. Adapter creation, packet read/inject | **Approved** |
 | Windows IP Helper / NetIO API | IP address and route configuration of the virtual adapter. **Wintun does not provide this** | OS built-in |
 | Winsock2 | Windows standard socket API | OS built-in |
+| Windows CNG (`BCryptHash`) | The SHA-256 carried by chapter 9 `rx.raw` | OS built-in |
 | Public STUN servers | Binding Response. The server is not implemented, only used | External public service |
 | Python standard library | `asyncio`, `json` | Standard library |
 | AWS SDK for Python (`boto3`) | DynamoDB access for the control server and the telemetry service | **Approved** |
@@ -909,5 +987,9 @@ The following are deliberately left out of the initial architecture. When they b
 - **Encryption and peer authentication**: tunnel payload is plaintext. Stretch goal.
 - **Relay fallback (TURN-like)**: no alternative path when direct connection fails. Stretch goal.
 - **Full ICE**: initially only the minimum connection establishment procedure. Phase 9 does only a comparative analysis against ICE concepts.
-- **Mesh of 3 or more**: initially 2 peers. The routing table structure is left extensible but not implemented.
+- **6 or more members and a player-to-player mesh**: a room holds at most 5 members and tunnels
+  are established only between the host and each player ([`spec.md`](spec.md) FR-4). 6 or more
+  is a stretch goal.
 - **macOS / mobile**: not supported. Linux only gets an interoperability review if time remains.
+  The scope is not widened, but **the places rewritten when porting are fixed as five seams**
+  ([ADR 0010](decisions/0010-platform-porting-seams.md)).

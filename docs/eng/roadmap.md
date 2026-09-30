@@ -23,7 +23,7 @@ Maps each ID in [`spec.md`](spec.md) to the phase that satisfies it. No ID may b
 | 5 | FR-8 (loss and reordering accounting), FR-13, NFR-3 |
 | 6 | FR-9, NFR-5, NFR-6, T-1, T-2 |
 | 7 | FR-10, FR-11, NFR-2, NFR-6, T-3 |
-| 8 | FR-12, FR-15, T-4, T-5, T-7 |
+| 8 | FR-12, FR-15, NFR-5, T-4, T-5, T-7 |
 | 9 | FR-14, NFR-7, NFR-10, T-6, A-1 to A-4 |
 | All phases | NFR-1, NFR-8, C-1, C-4, C-5 |
 
@@ -170,9 +170,15 @@ Client A <------ UDP ------> Client B
 
 ```text
 INFO socket.bind local=0.0.0.0:51000 rcvbuf_requested=262144 rcvbuf_applied=262144
+WARN stun.duplicate server=stun1.l.google.com:19302 same_as=stun.l.google.com:19302
 INFO stun.result server=stun.l.google.com:19302 mapped=x.x.x.x:51000
-INFO stun.result server=stun1.l.google.com:19302 mapped=x.x.x.x:51000
+INFO stun.result server=stun.cloudflare.com:3478 mapped=x.x.x.x:51000
 ```
+
+**Why the second line is not the second entry of the list.** If the first two names of the default
+list resolve to the same address, the later one is dropped and the next entry takes its place
+([`architecture.md`](architecture.md) 3.5 Startup Inputs). Which names collide is decided by the DNS
+answer at the time, so the lines above are one example.
 
 The bound endpoint is `0.0.0.0:<port>` ([`protocol.md`](protocol.md) 6). An interface address
 (`192.168.x.x`) is a **local candidate** of 10.1 Candidate Collection and Hygiene, and collecting it
@@ -192,6 +198,11 @@ is Phase 4.
   record file is a Phase 4 deliverable and does not exist in this Phase
 - Truncated responses or a wrong magic cookie are rejected without a crash
 - Query at least two public STUN servers and record each server-reflexive address. **Identical results are not required.** If servers differ, record the observation as destination-dependent mapping
+  - **The record is kept outside the repository.** The observation contains a public IP, for the same
+    reason the raw measurements under `tools/nat-probe/` are kept locally via `.gitignore`. The
+    repository only states how many observations there were and whether the servers differed
+  - `scripts/e2e-check.ps1` does not judge this item. That script has to run without a network, so it
+    does not call public servers
 - NFR-4 verdict. **Read the code** to confirm that STUN message construction, parsing, and retry are
   our own. An implementation that calls an external STUN library is caught here. A behavior test does
   not tell the two apart
@@ -227,6 +238,18 @@ is Phase 4.
   - Whether the implementation of `time.get_clock_info('monotonic')` is
     `clock_gettime(CLOCK_MONOTONIC)`
   - Whether `/proc/sys/kernel/random/boot_id` changes across a reboot
+- **Before starting, write the input the lobby takes into [`architecture.md`](architecture.md) 3.5
+  Startup Inputs.** [ADR 0008](decisions/0008-star-topology-followup-decisions.md) decision 8 makes
+  the console build go back to the lobby too and delegated "the relation between the console
+  vocabulary and the CLI arguments" to 3.5, but that text is not there yet
+  - 3.5 states only the CLI taken once at startup, and the five words of the minimum console
+    vocabulary have no command to create a room or to enter a room code. No document has a path for
+    entering a new room after going to the lobby
+  - Without it, `leave` becomes a command that makes the process unusable
+  - **In the same place, fix the `FAIL <code> <sentence>` standard output line and the behavior of
+    the process after a failed attempt.** `architecture.md` 3.5 fixed that line, but Phase 2 only
+    emits the log (`session.failed`). Where to emit that line is decided only once it is settled
+    whether a failed attempt goes back to the lobby or ends
 - **Before starting, fix the EC2 credential method.** Access keys are not written in source or documents. The document recommends an IAM role (ADR 0004)
 - **Before starting, check the free tier coverage directly in the account.** Documents alone did not confirm whether 25 WCU / 25 RCU / 25 GB is permanent (ADR 0004 "Not confirmed")
 - Local tests run on DynamoDB local. **The consistency path is not judged there, though.** Local reads usually look up to date, so a missing `ConsistentRead` does not show (ADR 0004)
@@ -293,7 +316,9 @@ Two clients on different networks obtain each other's endpoints through AWS.
 - Idempotency (`control_plane.md` 4.2 create_room, 4.3)
   - Calling `join_room` twice with the same `client_nonce` returns the same response the second time
     and **creates only one `VIP#` item**
-  - A different nonce yields `room_full`
+  - A different `client_nonce` is a new join. It gets a new `peer_id` and a new virtual IP
+  - Only a join after every address in the pool is taken yields `room_full`
+    (`control_plane.md` 4.3 join_room)
   - `create_room` with the same nonce is also the same room
 - Ready is recorded **exactly once per pair** (`control_plane.md` 4.6 host_report, 5.2 Ready)
   - Even when the host `confirm`s the same peer twice, the server log has one `pair.ready` line
@@ -303,6 +328,9 @@ Two clients on different networks obtain each other's endpoints through AWS.
     order with a delay injection point right after the write in the store layer
   - Watch especially for **0 lines when a peer with no candidates is `confirm`ed**. An implementation
     that writes without a condition is caught on that row, and that is the last row of the table
+  - Run the case of five joining at once as well. That table assumes two parties, so it says nothing
+    about how a room with four pairs behaves under a race
+    ([ADR 0008](decisions/0008-star-topology-followup-decisions.md))
 - Until the host confirms, `get_peers` gives that pair `ready: false` and does not carry the peer's
   candidates. An implementation that grants ready from both registrations alone is caught here
   (`control_plane.md` 4.5 get_peers)
@@ -425,6 +453,11 @@ they are decided
 - **Before starting, re-measure with `tools/nat-probe`.** Confirm that the verdict "a direct
   connection is established" still holds. If conditions have changed, this is the point where there
   is still time to revert the design ([ADR 0001](decisions/0001-no-direct-connection-fallback.md))
+  - **Measure at the same time how one host behaves while punching four pairs at once.** The 22
+    measurements today assume two parties and say nothing about the host side of a star topology
+    ([ADR 0006](decisions/0006-star-topology-no-relay.md))
+  - This measurement decides whether to judge the risk of the host NAT before the room is created and
+    warn the person (ADR 0006). If it goes in, first fix what that verdict takes as input
 - **Before starting, fix the path and line format of the local record file.**
   [`architecture.md`](architecture.md) 9 has only 4 contracts and no format. **M-6 cannot be judged
   until it is fixed.** Do not decide it in code; fix that document first
@@ -436,11 +469,19 @@ implementation, not design.
 - Exclusive socket ownership by a single receive loop, STUN/tunnel demultiplexing (`protocol.md` 6-7)
 - Required socket options: `SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, no `connect()` call
 - Receive validation pipeline and dedicated drop counters (`protocol.md` 7-8)
-  - Chapter 7 source sanitation (before classification), 8.1 common checks 1-8, 8.4 inner validation
+  - Chapter 7 source hygiene (before classification), 8.1 common checks 1-8, 8.4 inner validation
     9-15, and 8.5 sender-side checks 1-6 are all in this Phase
   - **In this Phase the input to 8.5 Transmit-Side Validation is a synthetic inner packet.** Wintun
     reads become the input from Phase 6, and the checks themselves are the same
 - `session_epoch` generation and pinning
+- **The own-subnet broadcast verdict of chapter 7 source hygiene goes in here.** The
+  classification in Phase 2 left that row empty. Computing it needs the interface address and
+  netmask, and the place that reads them is the candidate gathering just below
+  - **Until then a datagram whose source is our own subnet broadcast passes the classification
+    step.** It is a path where a reply can be amplified, and the code that emits replies
+    (`HELLO_ACK`, `PONG`) appears in Phase 4, so it is blocked in the same Phase as that code
+  - A remote subnet's broadcast cannot be blocked because we do not know its netmask. That is where
+    chapter 7 records a residual risk, and this item does not change it
 - Candidate gathering (local/server-reflexive) and control plane rendezvous polling (`protocol.md`
   10.1, 10.2). **This wires the control plane client built in Phase 3 into the session state
   machine.** The operation calls themselves are a Phase 3 deliverable; here their results become the
@@ -456,6 +497,11 @@ implementation, not design.
   defined in `protocol.md` 5.4 `DATA`. Without Wintun, build and insert a synthetic IPv4 packet.
   Virtual IPs are the values distributed by the control plane in Phase 3
 - `DATA` sender-side validation (`protocol.md` 8.5)
+- The fixed array of the routing table and the two-step lookup. Run every row of that section's case
+  table (`protocol.md` 8.5 Transmit-Side Validation)
+- `ROSTER` send and receive with dedicated drop counters. Check the direction, the length, the
+  `generation`, and the reserved bits (`protocol.md` 5.7 ROSTER)
+- The three `ROSTER` send moments (`protocol.md` 5.7)
 - Write the connection result (success or an FR-13 failure code) and RTT to the **local record file.** Not uploaded to the control plane (M-6)
 
 > **The protocol is already fixed.** Implementation cannot start without a fixed wire protocol. That
@@ -494,9 +540,12 @@ Contracts of the tools the verification procedures use. These are equipment, not
   - `size` defaults to the 100 bytes below; if given, it is an integer from 20 to `MAX_INNER` (1452)
     inclusive and builds a packet of that size (the Phase 5 boundary table uses it)
   - Out of range or not an integer sends nothing and leaves one `WARN` line
-  - If the session is not `CONNECTED`, nothing is sent and one `WARN` line is left. The
+  - If the chosen session is not `CONNECTED`, nothing is sent and one `WARN` line is left. The
     `tx_drop_not_connected` check of 8.5 blocks it anyway, but filtering at the command stage keeps
     the test's subject clear
+  - **How the destination is chosen is decided together with the routing table.** With several
+    sessions, nothing decides which session it goes to without a destination
+    (`protocol.md` 8.5 Transmit-Side Validation)
   - Transmission is not crammed into one round; it is split the same way as the `MAX_DRAIN` budget
   - If `sendto` fails midway, stop there and record the count sent
   - **Pin the bytes that go out.** The table below is that layout
@@ -592,7 +641,7 @@ The round-trip test and the failure-code test below are started and ended with t
 **Receive hygiene and caps.**
 
 - Continuously sending to a non-responding candidate does not kill the receive loop via `WSAECONNRESET`
-- Check source sanitation (`protocol.md` 7) at two layers
+- Check source hygiene (`protocol.md` 7) at two layers
   - (a) Run that section's case table as-is against the **verdict function.** Multicast, limited
     broadcast, the directed broadcast of one's own subnet, unspecified, and port 0 are rejected, and
     loopback and ordinary unicast pass
@@ -884,6 +933,14 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
   - The behavioral contract (discard, `drop_inject_error`, no retry, non-blocking loop) is already
     fixed, so the only thing this item blocks is counter granularity
 - Wintun dependency **approved.** Documentation of what it provides is kept as is
+- The sources that call Wintun and IP Helper live in `client/src/platform/win32/`
+  ([ADR 0010](decisions/0010-platform-porting-seams.md) seam 3). `tools/platformgate/` judges it
+  - **Put every OS header we start using into that tool's `OS_HEADERS` list first.** A header that is
+    not on the list is not judged and passes. If a `.h` or `.c` source is brought in, fix
+    `SOURCE_SUFFIXES` too. The current content of both lists is owned by
+    [`../../tools/platformgate/README.md`](../../tools/platformgate/README.md)
+  - When an adapter source appears, fix the target structure of [`architecture.md`](architecture.md)
+    chapter 10 as well. That document is the source of the current layout
 - Create and open the virtual adapter
 - Assign the virtual IP address
 - Read packets from the adapter
@@ -1001,13 +1058,10 @@ Two Windows machines communicate using virtual IPs only.
 - Measure latency and disconnection behavior
 - Record packet and connection metrics
 - **Implement the minimum GUI** (the five actions of [`spec.md`](spec.md) FR-15). Qt is used
-- **Decide the means that carries member connection status first.** Today there is no such means,
-  so the FR-15 member connection status and the last condition of T-7 in the verification below
-  cannot be judged ([`spec.md`](spec.md), the FR-15 note under the FR table). The control plane's
-  peer states are only `joined` and `registered` ([`control_plane.md`](control_plane.md) 5.3), and
-  no tunnel message type serves that purpose either ([`protocol.md`](protocol.md) chapter 5).
-  [ADR 0006](decisions/0006-star-topology-no-relay.md) and
-  [ADR 0007](decisions/0007-gui-core-scope-qt.md) left the same question open
+- **The member list and each member's connection status are read from the roster the host sends over
+  the tunnel** ([`protocol.md`](protocol.md) 5.7 ROSTER). What that status means is set by the FR-15
+  note under the FR table of `spec.md`. Sending, receiving, and validating the roster are Phase 4
+  deliverables; this Phase only displays it
 - **Decide the GUI thread model first.** Before this Phase starts, decide which of the Qt event
   loop and the `[loop]` main thread rule of [`concurrency.md`](concurrency.md) chapter 1 Threads
   is the main thread, and write it in `concurrency.md`. [ADR 0007](decisions/0007-gui-core-scope-qt.md)
@@ -1015,6 +1069,20 @@ Two Windows machines communicate using virtual IPs only.
 - **Decide the startup input path the GUI uses.** Today the only input is CLI arguments
   ([`architecture.md`](architecture.md) 3.5 Startup Inputs) and the room code and the failure line
   go to standard output
+- **Before starting, fix the relation between GUI operation and the control plane rate limit.** When
+  a person clicks buttons quickly, calls pile up from the same source. Today the limit is owned by
+  [`control_plane.md`](control_plane.md) 6.4 Rate Limit and that document does not cover the GUI.
+  Decide whether the window blocks it or shows the error it got, and write it in that place
+- **Before starting, fix when privilege elevation and leftover cleanup happen in the GUI.**
+  [`windows-prereq.md`](windows-prereq.md) 14 Automatic and manual puts administrator rights on the
+  person every time they run it and leftover cleanup on the client at startup. Whether that is before
+  or after the window appears, and what the window shows when elevation is refused, is missing
+- **Before starting, check the distribution form of the Qt runtime.** After confirming what gets
+  attached to the distribution and how much the execution premise grows, fix
+  [`windows-prereq.md`](windows-prereq.md) 4 Distribution packaging (ADR 0007)
+- **Measure whether host shutdown fits inside the OS grace period.** Measure whether the up to four
+  `CLOSE` messages sent per session plus adapter cleanup finish inside the 3-second grace of
+  `CTRL_CLOSE_EVENT`. This is measuring, not deciding (`concurrency.md` chapter 7 Shutdown)
 
 ### Deliverable
 
@@ -1025,9 +1093,16 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 ### Verification
 
 - **The five actions of FR-15 are performed end to end through the GUI alone** (`spec.md` T-7). No command line arguments are used
-- **When one side is cut, the other side's member list shows that member as disconnected.** That is
-  the last condition of T-7, and **it cannot be judged until the first item of the task list above
-  (the means that carries member connection status) is decided**
+- **When one player is cut, the other player's member list shows that member as disconnected**
+  (the last condition of T-7). The judgement deadline is the moment the host learns of the
+  disconnect plus one roster period (`protocol.md` 5.7 ROSTER)
+  - A clean shutdown makes it the moment the host receives `CLOSE` (`protocol.md` 5.6 CLOSE)
+  - Killing the process makes it the moment of the idle timeout (`protocol.md` chapter 11 Timers)
+  - Run each of the two once. Running only one leaves one disconnect verdict path untested
+  - **If the one cut is the host, there is no side left to send the roster.** What the player sees
+    then is not a change in the member list but leaving the room and returning to the lobby, and that
+    rule is owned by the Lobby section of [`concurrency.md`](concurrency.md) chapter 7. Run that case
+    once too
 - The player connects by entering only `10.100.0.1:25565`, with no public IP/port entry
 - Succeeds with no port forwarding rule on the host's router
 - No forced disconnect during 30 or more minutes of continuous play
@@ -1167,9 +1242,9 @@ Start only if Phases 1-9 finish with time to spare. Do not proceed at the expens
 | Encryption and peer authentication | No in-house cryptographic algorithms |
 | Windows installer | |
 | Automatic reconnection | |
-| Virtual network with 3 or more parties | Requires extending the router structure |
+| Virtual network with 6 or more parties | One room caps at 5 ([ADR 0006](decisions/0006-star-topology-no-relay.md)). Above that, the router structure has to be extended |
 | UDP-based game validation | Further proof that the tunnel is game-agnostic |
-| Linux interoperability | |
+| Linux interoperability | The places that get rewritten are the five seams ([ADR 0010](decisions/0010-platform-porting-seams.md)) |
 
 ---
 

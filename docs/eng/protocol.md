@@ -17,7 +17,7 @@ The goal is that **the implementer never has to invent anything.** If a value is
 | Outer transport | IPv4 UDP only |
 | Inner payload | IPv4 packets only. Inner IPv6 is dropped and a counter is incremented |
 | Byte order | Every multi-byte integer is **big-endian** |
-| Peer count | 2 peers per room |
+| Peer count | At most 5 peers per room. One host and four players, and a tunnel is a pair of the host and each player |
 | Encryption | None (Chapter 2) |
 
 IPv6 support is v2 or later. v1 opens sockets with `AF_INET` only and resolves STUN servers to IPv4 only.
@@ -38,7 +38,8 @@ An on-path or off-path attacker who knows or guesses `peer_id` and `session_epoc
 **Forcing session renegotiation with a forged `HELLO` has a weaker precondition. `peer_id` alone is enough.**
 The trigger for renegotiation is "a `HELLO` with an epoch different from the pinned one" (9.3), so the
 attacker does not need to know the epoch and can put in any value. The only remaining check a `HELLO` has
-to pass is the `virtual_ip` match (5.1), and that value is predictable: `10.100.0.1` and `10.100.0.2`.
+to pass is the `virtual_ip` match (5.1), and that value is predictable: one of the five from `10.100.0.1`
+to `10.100.0.5`.
 
 **One shot ends the session on both sides. This is certain, not merely reachable.** There are four paths.
 
@@ -340,7 +341,7 @@ retransmissions use the same value. If it changed on each retransmission, an arr
 could not be matched to the nonce it answers. The nonce of a previous attempt is kept on the retired
 list for 2 minutes and not reused.
 
-Consumer of `virtual_ip`: the receiver compares it with the peer's virtual IP given by the control plane. If they differ, drop and increment `drop_vip_mismatch`.
+Consumer of `virtual_ip`: the receiver compares it with that session's peer virtual IP given by the control plane. If they differ, drop and increment `drop_vip_mismatch`.
 
 **probe nonce.** The path-validation `HELLO` of 10.4 (c) uses a separate **probe nonce**, not the
 attempt nonce. One is drawn per tentative path and kept in a separate table for 5 seconds. The "one
@@ -578,6 +579,10 @@ is the cause of `sent_ack` not rising in 9.2 `CONNECTED` Condition. It is not th
 Logging is handled by `socket.error` of `architecture.md` chapter 9. The counter is also the value read by
 the "keepalive local send error" row of the metric table in chapter 9 of that document.
 
+The option names in this section are the Windows implementation. What has to be honoured is not the
+name but the intent written beside it. What another OS uses to obtain the same intent is not decided by
+this document ([ADR 0010](decisions/0010-platform-porting-seams.md) seam 1).
+
 ---
 
 ## 7. Receive Classification
@@ -651,7 +656,7 @@ Tunnel candidates are checked in the order below. Each step has its own drop cou
 | 4 | `type` is in the Chapter 5 list | `drop_unknown_type` |
 | 5 | `payload_length == len - HEADER_SIZE` | `drop_length` |
 | 6 | Per-type length rule met: `HELLO`/`HELLO_ACK` exactly 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` the `5 + 9 * count` defined by 5.7 | `drop_type_length` |
-| 7 | `peer_id` matches the peer ID of this room's other peer | `drop_unknown_peer` |
+| 7 | `peer_id` matches the ID of a peer that has a session (5.7) | `drop_unknown_peer` |
 | 8 | `session_epoch` is not on the retired list | `drop_retired_epoch` |
 
 ### 8.2 Epoch and Source Checks
@@ -673,7 +678,7 @@ incremented.
 
 | Type | Rule |
 |------|------|
-| `HELLO` | `virtual_ip` must match the peer's virtual IP (5.1). Accepted regardless of whether the epoch is pinned. The source is not required to be in the candidate set (Chapter 7 source hygiene has already passed). The epoch rules of 9.3 apply |
+| `HELLO` | `virtual_ip` must match that session's peer virtual IP (5.1). Accepted regardless of whether the epoch is pinned. The source is not required to be in the candidate set (Chapter 7 source hygiene has already passed). The epoch rules of 9.3 apply |
 | `HELLO_ACK` (attempt nonce echo, epoch unpinned or matching the pinned value) | `echo_nonce` matches **the nonce we sent in this attempt**. Used as handshake evidence (`got_ack`), and if the epoch is unpinned, this packet pins it |
 | `HELLO_ACK` (attempt nonce echo, epoch differs from the pinned value) | Drop, `drop_stale_epoch` |
 | `HELLO_ACK` (probe nonce echo) | `echo_nonce` matches one of the active probe nonces and the source equals the address the probe was sent to. **Validates only that tentative path.** Does not set `got_ack` and does not pin the epoch |
@@ -718,7 +723,7 @@ would catch the restarted peer's first `HELLO` in the previous attempt's window.
 | 11 | Inner IHL is 5~15 and `IHL*4 <= payload_length` | `drop_inner_ihl` |
 | 12 | Inner IPv4 header checksum valid | `drop_inner_checksum` |
 | 13 | Inner `total_length == payload_length` | `drop_inner_length` |
-| 14 | Inner source IP == the peer's virtual IP | `drop_inner_src` |
+| 14 | Inner source IP == that session's peer virtual IP | `drop_inner_src` |
 | 15 | Inner destination IP == our own virtual IP | `drop_inner_dst` |
 
 Checks 14 and 15 are hygiene devices against accidental injection from misdelivery and routing bugs. As stated in Chapter 2, they are **not an attack defense.**
@@ -1394,7 +1399,7 @@ validation.
 | Timer | Value | Start | Reset trigger | Cancel |
 |--------|-----|------|-------------|------|
 | STUN retry | 500ms, 1s, 2s (3 times) | STUN request sent | None | Response received |
-| STUN deadline | 5s. **Per server** | First request sent to that server | None | Response from that server |
+| STUN deadline | 5s. **Per server**. A response that arrives late, after the deadline has passed, is not used | First request sent to that server | None | Response from that server |
 | `get_peers` polling | 500ms interval | **Successful `register_candidate` response** | Each response | Ready response for that pair |
 | `get_peers` deadline | 60s. **Counted per pair** | The moment that peer first appears in a response. For the first peer, the successful `register_candidate` response | None | Ready response for that pair |
 | `host_report` period | 5s while a slot is free, 30s when full. **Host only** | Successful `create_room` response | Each send | Leaving the room |
@@ -1408,12 +1413,19 @@ validation.
 | `PING` | 5s interval. **Nothing is sent on entry. The first send is 5s after entry** | `CONNECTED` entry | Each send | Session end |
 | `pending_pings` cleanup | Every time before insertion | - | - | - |
 
-**Consequence of the STUN deadline being per server.** When one server hits its deadline, the query moves
-to the next server on the list (that server's retry schedule and deadline start afresh), and failure is
-decided only after the list is exhausted. The selection and replacement rules belong to
-[`architecture.md`](architecture.md) 3.5 Startup Inputs, and the failure condition of 9.6 Failure
-Transitions points at that section. **The bound on the whole STUN stage is `5s × ceil(list length / 2)`.**
-Two servers are queried at once. With the default list of 4, that is 10 seconds.
+**The three retry values are intervals.** They are not deadlines. Taking the moment the request was
+sent as 0, the retransmissions go out at 500ms, 1500ms, and 3500ms. Read as absolute times the
+intervals become 500, 500, 1000, which is no longer a doubling, and that is not the retransmission
+sequence of RFC 5389.
+
+**Consequence of the STUN deadline being per server.** When one server finishes, the next server on the
+list takes that slot and that server's retry schedule and deadline start afresh. What frees a slot, and
+the selection and replacement rules, belong to [`architecture.md`](architecture.md) 3.5 Startup Inputs.
+**That section also decides when the STUN stage counts as failed**, and 9.6 Failure Transitions only
+points at that place. **The bound on the whole
+STUN stage is `5s × ceil(list length / 2)`.** Two servers are queried at once. The list length here is
+the length after the deduplication of 3.5. If the default list of four resolves to four different
+addresses, that is 10 seconds.
 
 **The expiry values below are not in the timer table, yet they do expire by time.** They are not one
 timer per session but a lifetime attached to each table entry, so they are not in the table above. An
@@ -1428,8 +1440,15 @@ in the "Where" column.**
 | `pending_pings` entry | 5 seconds | 5.5 |
 | Minimum renegotiation interval | `MIN_RENEG_INTERVAL_MS` (1000ms) | 9.5 |
 
-Deadline comparisons use **strict inequality**. Priority is based on the time dequeued. A receive event
-dequeued in the same iteration is processed before that iteration's timer expiries.
+Deadline comparisons are `deadline <= now`. Not only a deadline already past but **a deadline that is
+exactly now expires too.** Priority is based on the time dequeued. A receive event dequeued in the same
+iteration is processed before that iteration's timer expiries.
+
+> **Why not `<`.** The timeout computation of the next wait returns 0 when `deadline <= now`
+> ([`concurrency.md`](concurrency.md) chapter 2 Waiting). If only the expiry comparison were strict, then
+> on an iteration whose deadline is exactly now the timer would not fire while the wait returns 0
+> immediately, repeating the same iteration until the clock advances by 1ms. The two comparisons must use
+> the same inequality.
 
 The reason it is the dequeue time and not the arrival time is that the receive loop caps the
 number of datagrams processed per iteration ([`concurrency.md`](concurrency.md) chapter 3 One
@@ -1485,6 +1504,25 @@ Of RFC 5389, only the following is implemented.
 - **Transaction ID**: 96 bits from the OS CSPRNG
 - **Response validation**: magic cookie matches, transaction ID matches, message length matches the header's length field, abort on boundary overrun while walking attributes
 - **Address family**: drop if the `XOR-MAPPED-ADDRESS` family is not IPv4 (`0x01`)
+- **A success response carrying the same attribute twice**: if there are two or more
+  `XOR-MAPPED-ADDRESS`, **drop it.** Whether the two hold the same address is not examined. There is no
+  basis for deciding which one is right, so neither is chosen. `ERROR-CODE` is used only for logging and
+  does not enter the decision, so the first one is read and the rest are skipped
+- **A success response with no address**: drop it. A Binding Success Response with no
+  `XOR-MAPPED-ADDRESS` at all has nothing for this stage to gain. This attribute is not parsed on error
+  responses
+- **Drop counter**: counted by `drop_stun_parse` alone. The reason is not split per code. The reason is
+  carried by the log. **What is counted is decided by the table below**
+
+| What came in | Counted | Why |
+|-----------|:---:|-----|
+| The transaction of a pending slot, but it failed the validation above | Yes | The response that slot was waiting for arrived unusable |
+| There is no pending slot at all (before querying, after the stage ends) | Yes | It is a STUN response we never asked for |
+| There are slots, but it is not the transaction of any of them | Yes | Same reason. We never asked for that transaction. A response too short to read the transaction ID from also belongs here |
+| The transaction of a slot already finished (a response was received or the deadline passed) | **No** | Once a retransmission has been sent, receiving several responses is normal. If a normal path raises a drop counter, that counter cannot be read |
+
+What is caught at the classification stage is not this counter. A datagram with a wrong magic cookie is
+not classified as STUN and goes to `drop_unclassified` of chapter 7 Receive Classification.
 - **Retry**: Chapter 11 table
 
 FINGERPRINT, MESSAGE-INTEGRITY, authentication, TURN, and ICE procedures are not implemented.

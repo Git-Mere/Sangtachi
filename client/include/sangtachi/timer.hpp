@@ -2,11 +2,13 @@
 
 // 타이머 (concurrency.md 4장 타이머, 2장 대기).
 //
-// 단조 시계는 GetTickCount64 다. 밀리초 단위 64비트라 실질적으로 랩어라운드가 없다.
-// RTT 측정만 QueryPerformanceCounter 를 쓰고 두 시계의 값을 서로 비교하지 않는다.
+// 단조 시계는 platform::monotonic_ms 다. 밀리초 단위 64비트라 실질적으로 랩어라운드가
+// 없다. RTT 측정만 QueryPerformanceCounter 를 쓰고 두 시계의 값을 서로 비교하지 않는다.
 //
 // 타이머 집합이 작으므로 매 바퀴 선형 주사로 가장 이른 마감을 구한다. 타이머 휠은 쓰지
 // 않는다 (concurrency.md 4장).
+
+#include "sangtachi/platform/wait.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,8 +22,8 @@ namespace sangtachi {
 
 using Millis = std::uint64_t;
 
-// WaitForMultipleObjects 의 INFINITE 와 같은 값. 헤더를 들이지 않으려고 여기 둔다.
-inline constexpr std::uint32_t kInfiniteTimeout = 0xFFFFFFFFu;
+// 무한 대기 타임아웃. 값의 출처는 platform/wait.hpp 의 kInfiniteWaitMs 다.
+inline constexpr std::uint32_t kInfiniteTimeout = platform::kInfiniteWaitMs;
 
 // 다음 대기의 타임아웃을 구한다.
 //

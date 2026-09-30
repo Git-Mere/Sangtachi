@@ -22,7 +22,7 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | `docs/eng` 미러를 한국어에 맞춘다. 대상은 `spec.md`, `architecture.md`, `protocol.md`, `concurrency.md`, `roadmap.md`, `windows-prereq.md` 여섯이다 | 미러가 한국어보다 뒤에 있다. 게이트가 `parity` 로 막히는 것이 그 표시다. 푸시 전에 맞춘다 |
+| 1 | `docs/eng` 미러를 한국어에 맞춘다. 대상은 `spec.md`, `architecture.md`, `protocol.md`, `concurrency.md`, `roadmap.md`, `windows-prereq.md` 여섯과 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md), `commit_history/` 의 최근 항목이다. `tools/` 의 README 는 미러를 두지 않는다 | 미러가 한국어보다 뒤에 있다. 게이트가 `parity` 로 막히는 것이 그 표시다. 푸시 전에 맞춘다 |
 | 2 | Phase 2. STUN 클라이언트 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위, [`architecture.md`](architecture.md) 3.5 기동 입력의 서버 선택) | Phase 1 이 닫혔다. 같은 소켓을 쓰므로 래퍼가 이미 있다 |
 | 3 | Phase 2 를 끝낼 때 전문 대상 감사 | `CLAUDE.md` 가 Phase 를 끝낼 때마다 요구한다 |
 | 4 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
@@ -49,6 +49,7 @@
 | `ROSTER` | 타입 `0x08` 송수신과 전용 카운터 셋 (`protocol.md` 5.7) | Phase 4 |
 | 로비 | 세션 목록이 비면 로비로 간다 ([`concurrency.md`](concurrency.md) 7장 로비). 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
 | 콘솔 `leave` | 로비로 가는 명령. 지금 어휘에 없다 | Phase 3 |
+| `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 91건이 전부 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 | `host_report` | 호스트의 주기 호출 ([`control_plane.md`](control_plane.md) 4.6) | Phase 3 |
 
 ## 문서 부채

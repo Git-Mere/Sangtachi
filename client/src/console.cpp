@@ -1,9 +1,6 @@
 #include "sangtachi/console.hpp"
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
+#include "sangtachi/platform/wait.hpp"
 
 #include <atomic>
 #include <memory>
@@ -48,7 +45,7 @@ std::shared_ptr<ConsoleSession> ConsoleSession::create() {
     // make_shared 를 쓰지 않는다. 생성자가 비공개다.
     std::shared_ptr<ConsoleSession> session(new ConsoleSession());
     // 자동 리셋이라 `[loop]` 가 별도 리셋 호출을 하지 않는다 (concurrency.md 3장).
-    session->event_ = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    session->event_ = platform::create_event(platform::ResetMode::Auto);
     if (session->event_ == nullptr) {
         return nullptr;
     }
@@ -56,9 +53,7 @@ std::shared_ptr<ConsoleSession> ConsoleSession::create() {
 }
 
 ConsoleSession::~ConsoleSession() {
-    if (event_ != nullptr) {
-        ::CloseHandle(event_);
-    }
+    platform::close_event(event_);
 }
 
 }  // namespace sangtachi

@@ -524,6 +524,10 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 로그는 `architecture.md` 9장의 `socket.error`가 맡는다. 카운터는 그 문서 9장의 지표 표
 "keepalive 로컬 송신 오류" 가 읽는 값이기도 하다.
 
+이 절의 옵션 이름은 Windows 구현이다. 지켜야 하는 것은 이름이 아니라 그 옆에 적은 의도다.
+같은 의도를 다른 OS 에서 무엇으로 얻는지는 이 문서가 정하지 않는다
+([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 1).
+
 ---
 
 ## 7. 수신 분류

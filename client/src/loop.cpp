@@ -2,21 +2,15 @@
 
 #include "sangtachi/hash.hpp"
 #include "sangtachi/log.hpp"
+#include "sangtachi/platform/wait.hpp"
 #include "sangtachi/protocol_constants.hpp"
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 
 #include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <memory>
@@ -27,7 +21,7 @@ namespace sangtachi {
 namespace {
 
 Millis now_ms() noexcept {
-    return static_cast<Millis>(::GetTickCount64());
+    return static_cast<Millis>(platform::monotonic_ms());
 }
 
 std::string_view trim(std::string_view text) noexcept {
@@ -71,7 +65,7 @@ EventLoop::EventLoop(network::UdpSocket socket, Counters& counters, ConsoleQueue
       options_(std::move(options)),
       console_event_(console_event) {
     // 종료 이벤트는 수동 리셋이다. 신호되면 기다리는 모든 스레드가 함께 깨어난다.
-    shutdown_event_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    shutdown_event_ = platform::create_event(platform::ResetMode::Manual);
 
     if (options_.probe_timer) {
         timers_.add_periodic(std::string(kProbeTimerName), kProbeTimerIntervalMs, now_ms());
@@ -80,15 +74,11 @@ EventLoop::EventLoop(network::UdpSocket socket, Counters& counters, ConsoleQueue
 
 EventLoop::~EventLoop() {
     // 콘솔 이벤트는 닫지 않는다. ConsoleSession 이 소유한다.
-    if (shutdown_event_ != nullptr) {
-        ::CloseHandle(shutdown_event_);
-    }
+    platform::close_event(shutdown_event_);
 }
 
 void EventLoop::request_shutdown() noexcept {
-    if (shutdown_event_ != nullptr) {
-        ::SetEvent(shutdown_event_);
-    }
+    platform::signal_event(shutdown_event_);
 }
 
 DrainOutcome EventLoop::drain_udp() {
@@ -205,30 +195,31 @@ void EventLoop::drain_console() {
 bool EventLoop::run_once() {
     // 살아 있는 핸들만 모아 조밀한 배열을 만든다. 빈자리에 NULL 을 넣으면 WAIT_FAILED 가
     // 난다 (concurrency.md 2장). 논리적 순위와 배열 인덱스는 다르다.
-    HANDLE handles[3];
-    DWORD count = 0;
-    const DWORD shutdown_index = count;
+    platform::WaitHandle handles[3];
+    std::size_t count = 0;
+    const std::size_t shutdown_index = count;
     handles[count++] = shutdown_event_;
-    const DWORD udp_index = count;
+    const std::size_t udp_index = count;
     handles[count++] = socket_.read_event();
-    const DWORD console_index = count;
+    const std::size_t console_index = count;
     handles[count++] = console_event_;
 
-    const DWORD timeout =
+    const std::uint32_t timeout =
         busy_ ? 0 : next_timeout_ms(now_ms(), timers_.earliest_deadline());
-    const DWORD result = ::WaitForMultipleObjects(count, handles, FALSE, timeout);
+    const platform::WaitResult result =
+        platform::wait_any(std::span<const platform::WaitHandle>(handles, count), timeout);
 
-    if (result == WAIT_FAILED) {
+    if (result.status == platform::WaitStatus::Failed) {
         // 여기서 바로 빠져나가면 정리를 건너뛴다. 비정상 종료야말로 정리가 필요하다.
         const LogField fields[] = {
             field("op", std::string_view("WaitForMultipleObjects")),
-            field("code", static_cast<std::uint64_t>(::GetLastError())),
+            field("code", static_cast<std::uint64_t>(result.error)),
         };
         emit(LogLevel::Error, "socket.error", fields);
         shutting_down_ = true;
         return false;
     }
-    if (result == WAIT_OBJECT_0 + shutdown_index) {
+    if (result.status == platform::WaitStatus::Signaled && result.index == shutdown_index) {
         shutting_down_ = true;
         return false;
     }
@@ -268,7 +259,7 @@ void run_console_reader(std::shared_ptr<ConsoleSession> session) {
     std::string line;
     while (!session->stopped() && std::getline(std::cin, line)) {
         session->queue().try_push(std::move(line));
-        ::SetEvent(session->event());
+        platform::signal_event(session->event());
     }
 }
 

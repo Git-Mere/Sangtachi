@@ -24,6 +24,7 @@ add_executable(sangtachi_tests
     network/endpoint_test.cpp
     network/udp_socket_test.cpp
     network/wsa_test.cpp
+    platform/wait_test.cpp
 )
 
 target_link_libraries(sangtachi_tests

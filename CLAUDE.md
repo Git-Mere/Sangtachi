@@ -365,6 +365,10 @@ Phase 1 구현이 끝났다. 빌드 뼈대(`client/`, `cmake/`, `tests/`, `scrip
 등급은 P2, 구현은 Phase 8 이다. GUI 스레드 모델과 GUI 기동 입력 경로는 아직 미결이고 정하는
 시점은 `roadmap.md` Phase 8 의 착수 전 항목이다.
 
+**플랫폼 의존 코드는 `client/src/platform/` 아래에만 둔다** ([ADR 0010](docs/kor/decisions/0010-플랫폼-이식-이음새.md)).
+`tools/platformgate/` 가 판정한다. 다른 OS 지원은 여전히 `spec.md` 의 제외와 스트레치 목표
+그대로이고, 이 결정은 이식할 때 다시 쓰는 자리를 이름으로 고정한 것이다.
+
 **로컬 기록 파일의 경로와 줄 형식은 아직 정하지 않았다.** 계약 4개만 `architecture.md` 9장에
 있다. 정하기 전에는 M-6을 판정할 수 없다. 언제 정하는지는 `roadmap.md` Phase 4 의 착수 전
 항목에 있다. 코드에서 임의로 정하지 않는다.
@@ -373,11 +377,12 @@ Phase 1 구현이 끝났다. 빌드 뼈대(`client/`, `cmake/`, `tests/`, `scrip
 먼저 고치고 푸시 지시가 있을 때 미러를 만든다.** 그 사이에는 게이트가 `mirror` 와 `parity` 로
 막히는 것이 정상이고, 그때도 `link` 는 0 건이어야 한다.
 
-`decisions/` 에 ADR 9건이 있다. 도구는 셋이고 각각 README 가 있다.
+`decisions/` 에 ADR 10건이 있다. 도구는 넷이고 각각 README 가 있다.
 
 | 도구 | 무엇 | 시험 |
 |------|------|------|
 | `tools/docgate/` | 문서 게이트 | 111건 |
+| `tools/platformgate/` | 플랫폼 이음새 게이트. OS 헤더가 `client/src/platform/` 밖에 있는지 판정 ([ADR 0010](docs/kor/decisions/0010-플랫폼-이식-이음새.md)) | 73건 |
 | `tools/winprereq/` | `windows-prereq.md` 2절·7절 판정 스크립트 | `-SelfTest` 로 225건과 85건 |
 | `tools/nat-probe/` | NAT 매핑과 홀펀칭 실측. 실측 22건을 마쳤다 | 163건 |
 

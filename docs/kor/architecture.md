@@ -87,6 +87,11 @@
 
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 `concurrency.md` 가 갖는다.
 
+위 표의 이름은 책임이다. 그 책임을 어느 OS 의 API 로 채웠는지는 원본이 있는 디렉터리가
+말한다. **OS 헤더를 포함하는 원본은 `client/src/platform/` 아래에만 둔다.** 이식할 때 다시
+쓰는 자리가 그 다섯이고, 규칙과 이음새 목록은 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md)이
+갖는다. `tools/platformgate/` 가 그 규칙을 판정한다.
+
 **`ui/main_window` 가 어느 스레드에서 도는지는 정하지 않았다.** Qt 는 자기 이벤트 루프를
 갖고 `concurrency.md` 1장 스레드는 `[loop]` 를 프로세스 주 스레드로 정했다. 둘의 관계는
 [ADR 0007](decisions/0007-gui-핵심-범위-qt.md)이 미결로 두었고, 정하는 시점은
@@ -757,7 +762,9 @@ Sangtachi/
 |   +-- src/
 |   |   +-- main.cpp
 |   |   +-- args.cpp     기동 인자 파싱 (3.5)
-|   |   +-- network/     wsa, udp_socket, endpoint, stun_client
+|   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
+|   |   |   +-- win32/   wsa, udp_socket, wait, hash
+|   |   +-- network/     endpoint, stun_client
 |   |   +-- peer/        peer, hole_punch, session
 |   |   +-- tunnel/      packet, tunnel, router
 |   |   +-- adapter/     wintun_adapter
@@ -806,6 +813,7 @@ Sangtachi/
 | Wintun | Windows 가상 네트워크 인터페이스 접근만. 어댑터 생성, 패킷 read/inject | **승인됨** |
 | Windows IP Helper / NetIO API | 가상 어댑터의 IP 주소와 라우트 설정. **Wintun은 이 기능을 제공하지 않는다** | OS 기본 제공 |
 | Winsock2 | Windows 기본 소켓 API | OS 기본 제공 |
+| Windows CNG (`BCryptHash`) | 9장 `rx.raw` 가 싣는 SHA-256 | OS 기본 제공 |
 | 공개 STUN 서버 | Binding Response 응답. 서버는 구현하지 않고 이용만 한다 | 외부 공개 서비스 |
 | Python 표준 라이브러리 | `asyncio`, `json` | 표준 라이브러리 |
 | AWS SDK for Python (`boto3`) | 제어 서버와 텔레메트리 서비스의 DynamoDB 접근 | **승인됨** |
@@ -827,3 +835,5 @@ Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, 
 - **6명 이상과 플레이어 간 메시**: 한 방은 최대 5명이고 터널은 호스트와 각 플레이어 사이에만
   맺는다 ([`spec.md`](spec.md) FR-4). 6자 이상은 스트레치 목표다.
 - **macOS / 모바일**: 지원하지 않는다. Linux는 시간이 남으면 상호 운용성만 검토.
+  범위는 넓히지 않되 **이식할 때 다시 쓰는 자리는 이음새 다섯으로 고정했다**
+  ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md)).

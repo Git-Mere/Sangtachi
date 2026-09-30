@@ -90,7 +90,11 @@
 | `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md)와 `concurrency.md` 다 | 없음 |
 | `args` | 기동 인자 파싱 (3.5) | 없음 |
 | `hash` | `rx.raw` 가 싣는 SHA-256 | Windows CNG |
+| `network/stun` | STUN 메시지 구성과 파싱. 순수 함수만 둔다 ([`protocol.md`](protocol.md) 13장) | 없음 |
+| `network/stun_client` | STUN 재시도와 마감, 서버 선택과 교체. 시계·소켓·난수원·이름 해석을 주입받는다 | 없음 |
 | `platform/wait` | 단조 시계, 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
+| `platform/random` | CSPRNG 바이트. 트랜잭션 ID 와 뒤의 epoch·nonce 가 쓴다 | Win32 |
+| `platform/resolve` | 이름을 IPv4 엔드포인트로. 기동 시 한 번 부른다 (3.5) | Win32 |
 | `platform/console_ctrl` | 콘솔 제어 신호를 받아 종료 이벤트를 신호하고 정리 완료를 기다린다 (`concurrency.md` 7장) | Win32 |
 | `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
 
@@ -98,8 +102,9 @@
 
 위 표의 이름은 책임이다. 그 책임을 어느 OS 의 API 로 채웠는지는 원본이 있는 디렉터리가
 말한다. **OS 헤더를 포함하는 원본은 `client/src/platform/` 아래에만 둔다.** 이식할 때 다시
-쓰는 자리가 그 다섯이고, 규칙과 이음새 목록은 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md)이
-갖는다. `tools/platformgate/` 가 그 규칙을 판정한다.
+쓰는 자리가 그 디렉터리이고, 규칙과 그 결정의 근거는
+[ADR 0010](decisions/0010-플랫폼-이식-이음새.md)이 갖는다. `tools/platformgate/` 가 그 규칙을
+판정하고, **현재 그 자리에 무엇이 있는지는 10장 레포 구조의 트리가 갖는다.**
 
 **`ui/main_window` 가 어느 스레드에서 도는지는 정하지 않았다.** Qt 는 자기 이벤트 루프를
 갖고 `concurrency.md` 1장 스레드는 `[loop]` 를 프로세스 주 스레드로 정했다. 둘의 관계는
@@ -196,7 +201,7 @@
 > **왜.** 경고를 기동 시점에 내는 이유는 5초를 기다린 뒤 실패를 보는 것보다 입력이 틀렸다는
 > 것을 먼저 알리는 편이 낫기 때문이다.
 
-**STUN 기본 목록.** 출처는 [`tools/nat-probe/natprobe.py`](../../tools/nat-probe/natprobe.py) 의 `DEFAULT_STUN_SERVERS` 다. 실측 22건이 그 목록으로 돌았다. **두 곳의 값이 같아야 한다.** 한쪽을 바꾸면 다른 쪽도 같이 바꾼다.
+**STUN 기본 목록.** 출처는 [`tools/nat-probe/natprobe.py`](../../tools/nat-probe/natprobe.py) 의 `DEFAULT_STUN_SERVERS` 다. 실측 22건이 그 목록으로 돌았다. **그 값을 옮겨 적은 자리가 둘 더 있다.** 이 절의 아래 블록과 클라이언트의 기본 목록 상수다. 한 곳을 바꾸면 셋을 같이 바꾼다.
 
 ```text
 stun.l.google.com:19302
@@ -207,8 +212,22 @@ stun.nextcloud.com:3478
 
 **서버 선택.** 목록의 앞 두 서버에 같은 소켓으로 **동시에** 질의한다. 트랜잭션 ID 가 응답을
 가른다([`protocol.md`](protocol.md) 13장 STUN 사용 범위). STUN 마감은 서버별이다(`protocol.md`
-11장 타이머). 한 서버가 자기 마감에 걸리면 목록의 다음 서버로 바꿔 다시 질의하고, 그 서버의
-재시도 일정과 마감은 새로 시작한다. 단계 전체의 상한은 그 문서가 계산한다.
+11장 타이머).
+
+**한 자리가 비면 목록의 다음 서버가 그 자리를 받는다.** 자리가 비는 계기는 셋이다.
+
+| 계기 | 그 서버를 어떻게 보나 |
+|------|----------------------|
+| 마감에 걸렸다 | 답이 없다 |
+| 성공 응답을 받았다 | 관측 하나를 얻었다 |
+| 오류 응답(Binding Error Response)을 받았다 | 답을 받았고 그 답이 거절이다. 재시도하지 않는다 |
+
+새로 들어온 서버는 재시도 일정과 마감을 새로 시작한다. 단계 전체의 상한은
+[`protocol.md`](protocol.md) 11장 타이머가 계산하고 **그 계산의 "목록 길이" 는 아래 중복
+제거를 마친 뒤의 길이다.**
+
+> **왜 응답을 받은 자리도 다시 채우나.** 마감에서만 채우면 앞 서버가 일찍 답한 뒤 남은
+> 항목들이 한 자리를 차례로 쓰게 되어 단계가 상한을 넘는다.
 
 **해석 결과가 같은 엔드포인트인 항목은 하나로 친다.** 이름이 다르다고 서버가 다른 것이
 아니다. 한 제공자가 여러 이름을 같은 주소로 두는 일이 흔하다. 해석을 마친 뒤 같은 `IP:포트`가
@@ -234,6 +253,11 @@ stun.nextcloud.com:3478
   `AAAA` 는 쓰지 않는다
 - **해석에 실패한 항목은 목록에서 빼고 `WARN` 한 줄을 남긴다.** 남은 목록이 두 개 미만이면 위
   규칙대로 `STUN_DISCOVERY_FAILED` 다
+- **숫자로만 이루어진 이름은 해석하지 않는다.** 점으로 나눈 라벨이 전부 10진수이거나 `0x`
+  16진 표기이면 IPv4 리터럴을 잘못 적은 것으로 보고 값 없음으로 끝낸다. `1.2.3` 처럼 자리가
+  모자란 것을 이름으로 물으면 검색 접미사를 붙이는 망에서 엉뚱한 주소가 돌아온다.
+  **`1drv.ms` 처럼 숫자로 시작하는 정상 이름은 막지 않는다.** 라벨 하나라도 숫자가 아니면
+  이름이다
 
 제어 서버 주소와 달리 여기서는 해석 실패가 기동 실패가 아니다. 목록이 여럿이라 하나가 죽어도
 진행할 수 있다.
@@ -277,7 +301,9 @@ FAIL <실패 코드> <사람이 읽는 문장>
 | 종료 | 콘솔 명령 `quit` | 종료 이벤트를 신호한다. `concurrency.md` 3장 루프 한 바퀴가 그 경로를 정한다 |
 
 **수신 측은 `rx.raw` 로그 한 줄을 낸다.** 필드는 `from`(출발지 `IPv4:port`), `len`,
-`sha256`(수신 바이트열의 16진 해시 앞 16자)이다. 바이트열 자체를 로그에 싣지 않는다. **송신
+`sha256`(수신 바이트열의 16진 해시 앞 16자)이다. **이 줄은 받은 데이터그램 전부에 나간다.**
+[`protocol.md`](protocol.md) 7장 수신 분류가 버리는 것도 포함하고, Phase 2 부터는 STUN 응답도
+여기 찍힌다. 버려진 것이 진단에 남아야 하고 로그는 회신이 아니므로 분류보다 앞에 둔다. 바이트열 자체를 로그에 싣지 않는다. **송신
 측도 같은 줄을 낸다.** 두 줄의 `len` 과 `sha256` 이 같으면 Phase 1 의 "바이트 단위로 일치" 가
 성립한다.
 
@@ -726,9 +752,10 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 
 여기 없는 이벤트는 자유롭게 늘려도 된다. **이 열 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
 
-**`timer.tick` 은 시험 빌드에만 있는 타이머가 낸다.** 제품 빌드에는 없다. 시험 빌드는 주기
-200ms 짜리 타이머 하나(`name=probe200`)를 `[loop]` 의 타이머 집합에 넣고, 만료할 때마다 이
-줄을 낸다. **`elapsed_ms` 는 로그 줄에 시각이 없어도 간격을 판정할 수 있게 하려는 것이다.**
+**`timer.tick` 은 만료하는 모든 타이머가 낸다.** `name` 이 어느 타이머인지를 가른다. Phase 2
+부터는 STUN 재시도와 마감이 `[loop]` 의 같은 집합에 들어가므로 제품 빌드에서도 이 줄이 나간다
+([`protocol.md`](protocol.md) 11장 타이머). **시험 빌드는 여기에 주기 200ms 짜리 타이머
+하나(`name=probe200`)를 더 넣는다.** 그 타이머는 제품 빌드에 없다. **`elapsed_ms` 는 로그 줄에 시각이 없어도 간격을 판정할 수 있게 하려는 것이다.**
 검증이 보는 값이 그것 하나이므로 줄 자체의 시각 형식을 정할 필요가 없다. 켜는 방법은 에코
 응답기와 같은 CMake 옵션이고(`roadmap.md` Phase 4), 켜진 빌드는 기동 시
 `WARN` 한 줄을 남긴다.
@@ -786,8 +813,8 @@ Sangtachi/
 |   |   +-- log.cpp      로그 줄 형식 (9장)
 |   |   +-- counters.cpp 카운터 표 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash
-|   |   +-- network/     endpoint, stun_client
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve
+|   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session
 |   |   +-- tunnel/      packet, tunnel, router
 |   |   +-- adapter/     wintun_adapter

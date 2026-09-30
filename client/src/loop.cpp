@@ -332,6 +332,10 @@ bool EventLoop::run_once() {
             field("code", static_cast<std::uint64_t>(result.error)),
         };
         emit(LogLevel::Error, "socket.error", fields);
+        // 종료 이벤트를 신호한다. concurrency.md 7장 종료의 (1) 이 이 경로에도 적용된다.
+        // 표시만 세우고 빠져나가면 그 이벤트를 기다리는 다른 스레드가 깨어나지 않는다.
+        // 지금은 기다리는 스레드가 없지만 `[control]` 이 들어오는 Phase 3 에서 결함이 된다.
+        request_shutdown();
         // 종료 바퀴는 drain_console() 앞에서 돌아간다. 여기서 반영하지 않으면 그 뒤의
         // 카운터 전량 출력이 낡은 값을 낸다 (concurrency.md 6장 텔레메트리 격리).
         sync_console_drop_counter();

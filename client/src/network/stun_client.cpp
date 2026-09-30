@@ -201,7 +201,13 @@ bool StunClient::begin_query(Slot& slot, std::size_t server_index, Millis now) {
     TransactionId transaction{};
     if (!random_(std::span<std::byte>(transaction.data(), transaction.size()))) {
         // 예측 가능한 값으로 대신하지 않는다. 단계를 여기서 끝낸다 (헤더의 표).
-        const LogField fields[] = {field("op", std::string_view("random_bytes"))};
+        // architecture.md 9장이 이 이벤트의 필수 필드를 `op` 와 `code` 둘로 고정했다.
+        // 이 실패는 Winsock 오류 코드가 없으므로 0 을 싣는다. 필드를 빼면 그 줄을 찾는
+        // 검증이 필드 이름으로 고르지 못한다.
+        const LogField fields[] = {
+            field("op", std::string_view("random_bytes")),
+            field("code", static_cast<std::uint64_t>(0)),
+        };
         emit(LogLevel::Error, "socket.error", fields);
         return false;
     }

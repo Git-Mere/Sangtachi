@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | **Phase 2 구현 완료.** Phase 1·2 모두 두 머신 실측만 대기다. 다음은 Phase 3 (제어 평면) |
+| 구현 | [`roadmap.md`](roadmap.md) | **Phase 2 구현 완료.** 남은 검증은 아래 대기 표에 있다. 다음은 Phase 3 (제어 평면) |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 8건 |
 
 **토폴로지 후속은 끝났다.** [ADR 0006](decisions/0006-무중계-스타-토폴로지.md),
@@ -41,6 +41,7 @@
 |------|-----------|-------------|
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
 | Phase 1 의 두 머신 실측 | 한 기기의 여러 프로세스로는 돌렸다 | 두 번째 기기. 절차는 `scripts/e2e-check.ps1` 과 같고 `--peer` 만 상대 주소로 바꾼다 |
+| Phase 2 의 공개 STUN 서버 관측 | e2e 는 공개 서버를 일부러 부르지 않는다. 망이 없으면 깨지기 때문이다 | **두 번째 기기가 필요 없다.** 인자 없이 한 번 띄워 `stun.result` 두 줄을 받고 그 관측을 기록한다. 기록 위치는 [`roadmap.md`](roadmap.md) Phase 2 검증이 정한다 |
 | 로비 체류가 NAT 매핑에 무엇을 하는가 | 측정한 적이 없다. [`concurrency.md`](concurrency.md) 7장 로비가 "단정하지 않는다" 로 적었다 | Phase 4 의 `tools/nat-probe` 재측정과 같이 본다 |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | 어댑터가 아직 없다 | Phase 3(EC2), 6(Wintun), 8(시연) |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
@@ -52,12 +53,13 @@
 
 | 자리 | 무엇 | 언제 |
 |------|------|------|
-| `TimerSet` | `add_periodic` 하나뿐이다. 키도 제거도 일회성 타이머도 없다 | **Phase 2.** STUN 이 서버별 재전송(500ms·1s·2s)과 마감을 걸고 응답이 오면 취소해야 한다. 두 서버에 동시에 질의하므로 이름도 갈라야 한다 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위). 세션 수만큼 올릴 때의 이름 충돌은 그 위에 Phase 4 가 얹는다 |
 | 라우팅 표 | 6칸 고정 배열과 두 단계 조회 ([`protocol.md`](protocol.md) 8.5). 코드에 없다 | Phase 4 |
+| STUN 진단 로그의 시험 | 여섯 종(`stun.timeout`, `stun.rejected`, `stun.error`, `stun.unresolved`, `stun.duplicate`, `timer.rejected`)을 아무 시험도 보지 않는다. `emit` 에 주입 지점이 없어 단위 시험이 로그를 볼 수 없다 | 로그 검증이 더 필요해지는 Phase 3 |
+| 목록이 정확히 둘일 때의 STUN 성공 경로 | 단위 시험의 성공 케이스가 둘 다 목록 넷이라 소진 판정과 성공 판정의 순서를 바꿔도 통과한다. 지금 그 자리를 지키는 것은 e2e 하나다 | Phase 3 |
 | `ROSTER` | 타입 `0x08` 송수신과 전용 카운터 셋 (`protocol.md` 5.7) | Phase 4 |
 | 로비 | 세션 목록이 비면 로비로 간다 ([`concurrency.md`](concurrency.md) 7장 로비). 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
 | 콘솔 `leave` | 로비로 가는 명령. 지금 어휘에 없다 | Phase 3 |
-| `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 91건이 전부 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
+| `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 | `host_report` | 호스트의 주기 호출 ([`control_plane.md`](control_plane.md) 4.6) | Phase 3 |
 
 ## 문서 부채

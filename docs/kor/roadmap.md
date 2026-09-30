@@ -153,9 +153,14 @@ Client A <------ UDP ------> Client B
 
 ```text
 INFO socket.bind local=0.0.0.0:51000 rcvbuf_requested=262144 rcvbuf_applied=262144
+WARN stun.duplicate server=stun1.l.google.com:19302 same_as=stun.l.google.com:19302
 INFO stun.result server=stun.l.google.com:19302 mapped=x.x.x.x:51000
-INFO stun.result server=stun1.l.google.com:19302 mapped=x.x.x.x:51000
+INFO stun.result server=stun.cloudflare.com:3478 mapped=x.x.x.x:51000
 ```
+
+**둘째 줄이 목록의 두 번째 항목이 아닌 이유.** 기본 목록의 앞 두 이름이 같은 주소로 풀리면
+뒤엣것이 빠지고 그 자리를 다음 항목이 받는다([`architecture.md`](architecture.md) 3.5 기동
+입력). 어느 이름이 겹치는지는 그때의 DNS 응답이 정하므로 위 줄은 한 가지 예다.
 
 bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 6장). 인터페이스
 주소(`192.168.x.x`)는 10.1 후보 수집과 위생의 **로컬 후보**이고 그 수집은 Phase 4 다.
@@ -171,6 +176,11 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 응답하지 않는 주소를 지정하면 타임아웃 후 `STUN_DISCOVERY_FAILED`가 [`architecture.md`](architecture.md) 9장의 **로그**에 남고 무한 대기가 없다. M-6의 로컬 기록 파일은 Phase 4 산출물이라 이 Phase에는 없다
 - 잘린 응답이나 잘못된 magic cookie를 넣으면 크래시 없이 거부
 - 최소 두 곳 이상의 공개 STUN 서버에 질의해 각각의 server-reflexive 주소를 기록. **동일 결과를 요구하지 않는다.** 서버마다 다르면 목적지 의존 매핑으로 관측값을 남긴다
+  - **기록은 레포 밖에 둔다.** 관측값에 공인 IP 가 들어가고, `tools/nat-probe/` 의 실측 원본을
+    `.gitignore` 로 로컬 보관하는 것과 같은 이유다. 레포에는 관측이 몇 건이고 서버별로 갈렸는지
+    아닌지만 적는다
+  - 이 항목은 `scripts/e2e-check.ps1` 이 판정하지 않는다. 그 스크립트는 망이 없어도 돌아야 해서
+    공개 서버를 부르지 않는다
 - NFR-4 판정. STUN 메시지 구성·파싱과 재시도가 우리 코드인지 **코드를 읽어 확인한다.** 외부 STUN 라이브러리를 부르는 구현은 여기서 걸린다. 동작 시험으로는 구분되지 않는다
 - STUN에 사용한 소켓이 이후 홀펀칭과 터널이 쓸 소켓과 동일함을 로그로 확인. **이것은 참고다.** 자기 보고이므로 소켓을 새로 연 구현도 같은 줄을 남길 수 있다. 와이어에서 보는 판정은 캡처가 가능한 Phase 4 검증이 맡는다
 

@@ -5,6 +5,7 @@
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
+#include "sangtachi/platform/wait.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -16,6 +17,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <span>
 #include <cstddef>
 #include <cstdint>
 #include <thread>
@@ -86,6 +88,44 @@ TEST_CASE("loop: shutdown makes one wheel return false", "[loop]") {
     loop.request_shutdown();
     REQUIRE_FALSE(loop.run_once());
     REQUIRE(loop.shutdown_requested());
+}
+
+TEST_CASE("loop: a failed wait signals the shutdown event", "[loop]") {
+    // concurrency.md 7장 종료의 (1) 은 대기 실패 경로에도 적용된다. 표시만 세우고
+    // 빠져나가면 그 이벤트를 기다리는 다른 스레드가 깨어나지 않는다. 지금은 기다리는
+    // 스레드가 없지만 `[control]` 이 들어오는 Phase 3 에서 결함이 된다.
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+
+    // 대기 집합에 못 쓰는 핸들을 넣어 대기 자체를 실패시킨다. 세션의 이벤트를 쓰지 않고
+    // 이 케이스가 소유하는 이벤트를 따로 만든다. 세션 것을 닫으면 소멸자가 한 번 더 닫는다.
+    //
+    // **닫는 것은 루프를 만든 뒤다.** 먼저 닫으면 그 핸들 값이 비고, 루프 생성자가 만드는
+    // 종료 이벤트가 같은 값을 받아 대기 집합에 같은 핸들이 두 번 들어간다. 그러면 대기가
+    // 실패하지 않고 영원히 기다린다. 실제로 그렇게 걸렸다.
+    void* const doomed = sangtachi::platform::create_event(sangtachi::platform::ResetMode::Auto);
+    REQUIRE(doomed != nullptr);
+
+    EventLoop loop(std::move(*opened.socket), counters, console, doomed, LoopOptions{});
+    REQUIRE(loop.valid());
+    REQUIRE_FALSE(loop.shutdown_requested());
+
+    sangtachi::platform::close_event(doomed);
+
+    REQUIRE_FALSE(loop.run_once());
+    REQUIRE(loop.shutdown_requested());
+
+    // 표시가 아니라 이벤트가 실제로 신호됐는지 본다. 표시만 보면 변이가 통과한다.
+    const sangtachi::platform::WaitHandle handles[] = {loop.shutdown_event()};
+    const auto signaled = sangtachi::platform::wait_any(
+        std::span<const sangtachi::platform::WaitHandle>(handles, 1), 0);
+    REQUIRE(signaled.status == sangtachi::platform::WaitStatus::Signaled);
 }
 
 TEST_CASE("loop: one wheel drains many datagrams", "[loop]") {

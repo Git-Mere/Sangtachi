@@ -15,11 +15,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-if (-not $BuildDir) {
-    # 기본 위치의 근거는 build.ps1 머리에 있다.
-    $BuildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
-}
+. (Join-Path $PSScriptRoot 'buildpath.ps1')
+
+# 기본 위치의 근거는 build.ps1 머리에 있고 판정은 buildpath.ps1 이 한다.
+$BuildDir = Resolve-BuildDir -Config $Config -Explicit $BuildDir
 $exe = Join-Path $BuildDir 'client\sangtachi_client.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "client executable not found: $exe. Run scripts/build.ps1 first."

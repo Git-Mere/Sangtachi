@@ -40,8 +40,7 @@
 | 무엇 | 막힌 이유 | 풀리는 조건 |
 |------|-----------|-------------|
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
-| Phase 1 의 두 머신 실측 | 한 기기의 여러 프로세스로는 돌렸다 | 두 번째 기기. 절차는 `scripts/e2e-check.ps1` 과 같고 `--peer` 만 상대 주소로 바꾼다 |
-| Phase 2 의 공개 STUN 서버 관측 | e2e 는 공개 서버를 일부러 부르지 않는다. 망이 없으면 깨지기 때문이다 | **두 번째 기기가 필요 없다.** 인자 없이 한 번 띄워 `stun.result` 두 줄을 받고 그 관측을 기록한다. 기록 위치는 [`roadmap.md`](roadmap.md) Phase 2 검증이 정한다 |
+| Phase 1 의 두 머신 실측 | 한 기기의 여러 프로세스로는 돌렸다 | 두 번째 기기. 절차는 `scripts/e2e-check.ps1` 과 같고 `--peer` 만 상대 주소로 바꾼다. **그대로는 안 된다.** 로컬 포트를 고정하는 인자가 없어 양쪽이 기동 시점에 상대 포트를 같이 알 수 없고, 요청하지 않은 인바운드는 [`windows-prereq.md`](windows-prereq.md) 2절대로 막힌다. 3프로세스 사슬과 임시 인바운드 허용 규칙이 함께 필요하다 |
 | 로비 체류가 NAT 매핑에 무엇을 하는가 | 측정한 적이 없다. [`concurrency.md`](concurrency.md) 7장 로비가 "단정하지 않는다" 로 적었다 | Phase 4 의 `tools/nat-probe` 재측정과 같이 본다 |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | 어댑터가 아직 없다 | Phase 3(EC2), 6(Wintun), 8(시연) |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
@@ -55,6 +54,7 @@
 |------|------|------|
 | 라우팅 표 | 6칸 고정 배열과 두 단계 조회 ([`protocol.md`](protocol.md) 8.5). 코드에 없다 | Phase 4 |
 | STUN 진단 로그의 시험 | 여섯 종(`stun.timeout`, `stun.rejected`, `stun.error`, `stun.unresolved`, `stun.duplicate`, `timer.rejected`)을 아무 시험도 보지 않는다. `emit` 에 주입 지점이 없어 단위 시험이 로그를 볼 수 없다 | 로그 검증이 더 필요해지는 Phase 3 |
+| 단계를 마친 뒤 도착한 STUN 응답 | 공개 서버 관측에서 세 번째 서버의 늦은 응답이 `rx.raw` 에만 남고 `stun.result` 도 `drop_*` 카운터도 없었다. 두 번 재현했다. [`protocol.md`](protocol.md) 7장 수신 분류가 그 구간을 정하는지 코드와 대조한다 | Phase 3 |
 | 목록이 정확히 둘일 때의 STUN 성공 경로 | 단위 시험의 성공 케이스가 둘 다 목록 넷이라 소진 판정과 성공 판정의 순서를 바꿔도 통과한다. 지금 그 자리를 지키는 것은 e2e 하나다 | Phase 3 |
 | `ROSTER` | 타입 `0x08` 송수신과 전용 카운터 셋 (`protocol.md` 5.7) | Phase 4 |
 | 로비 | 세션 목록이 비면 로비로 간다 ([`concurrency.md`](concurrency.md) 7장 로비). 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |

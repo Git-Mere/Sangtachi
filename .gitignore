@@ -9,6 +9,9 @@ build/
 out/
 *.log
 
+# 이 기계의 빌드 루트. 경로는 기계마다 다르므로 레포에 박지 않는다.
+scripts/build-root.local
+
 # 의존성 (스택 확정 시 해당 항목만 남기고 정리)
 node_modules/
 __pycache__/

@@ -24,8 +24,17 @@ CSP400 Project
 powershell -ExecutionPolicy Bypass -File scripts/build.ps1
 ```
 
-산출물은 기본으로 `%LOCALAPPDATA%\Sangtachi\build\Debug` 에 생깁니다. 레포 안에 두려면
-`-BuildDir` 로 경로를 줍니다. 이유는 `scripts/build.ps1` 첫머리에 있습니다.
+산출물은 **레포 밖**에 생깁니다. 위치는 세 단계로 정해집니다.
+
+| 순위 | 무엇 | 예 |
+|:--:|------|-----|
+| 1 | `-BuildDir` 로 준 값 | 한 번만 다른 곳에 두고 싶을 때 |
+| 2 | `scripts/build-root.local` 의 첫 유효 줄 + `\<Config>` | `C:\me\build` 라고 적으면 `C:\me\build\Debug` |
+| — | 그 줄은 **드라이브 문자로 시작하는 경로나 UNC** 여야 합니다. UNC 는 서버와 공유 이름을 모두 적습니다 | `..\build`, `\build`, `\\server` 는 거부됩니다 |
+| 3 | 없으면 `%LOCALAPPDATA%\Sangtachi\build\<Config>` | 기본 |
+
+`build-root.local` 은 기계마다 경로가 달라서 커밋하지 않습니다 (`.gitignore`).
+레포 밖에 두는 이유는 `scripts/build.ps1` 첫머리에 있습니다.
 
 ### 시험
 
@@ -36,7 +45,7 @@ powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 ### 실행
 
 ```powershell
-%LOCALAPPDATA%\Sangtachi\build\Debug\client\sangtachi_client.exe
+<빌드 경로>\Debug\client\sangtachi_client.exe
 ```
 
 ### 환경 변수

@@ -16,13 +16,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-if ($BuildDir) {
-    $buildDir = $BuildDir
-} else {
-    # 기본 위치의 근거는 build.ps1 머리에 있다.
-    $buildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
-}
+. (Join-Path $PSScriptRoot 'buildpath.ps1')
+
+# 기본 위치의 근거는 build.ps1 머리에 있고 판정은 buildpath.ps1 이 한다.
+$buildDir = Resolve-BuildDir -Config $Config -Explicit $BuildDir
 
 & (Join-Path $PSScriptRoot 'build.ps1') -Config $Config -BuildDir $buildDir
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }

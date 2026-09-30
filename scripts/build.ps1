@@ -1,10 +1,12 @@
 ﻿# 클라이언트와 시험 실행 파일을 빌드한다.
 #
-# 빌드 산출물은 기본으로 레포 밖(%LOCALAPPDATA%\Sangtachi\build)에 둔다.
+# 빌드 산출물은 기본으로 레포 밖에 둔다. 어디인지는 buildpath.ps1 이 정한다.
 # 레포가 파일 동기화 폴더 안에 있으면 갓 만든 .exe 와 .pdb 가 잠겨 링크가 실패한다
 # (LNK1168, LNK1201, C1041). 같은 빌드를 두 위치에서 18회씩 돌려 레포 안 4건 실패,
-# 레포 밖 0건을 봤다. 잠그는 프로세스가 무엇인지는 확인하지 않았다.
-# 레포 안에 두려면 -BuildDir 로 경로를 준다.
+# 레포 밖(%LOCALAPPDATA%) 0건을 봤다. 잠그는 프로세스가 무엇인지는 확인하지 않았다.
+# 그래서 이 기계의 빌드 루트는 scripts/build-root.local 에 적고 그 파일은 커밋하지
+# 않는다. 그 파일이 없으면 %LOCALAPPDATA%\Sangtachi\build 로 떨어진다.
+# 한 번만 다른 곳에 두려면 -BuildDir 로 경로를 준다.
 # 이 스크립트가 출력하는 문자열은 ASCII 로만 적는다.
 # 콘솔 코드 페이지가 UTF-8 이 아니면 한글이 깨져서 오류 메시지를 읽을 수 없다.
 # 주석은 파일 안에만 머물므로 한국어로 적어도 된다.
@@ -23,6 +25,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'buildpath.ps1')
 
 # -Fresh 의 판정. 이것이 참일 때만 재귀 삭제한다.
 #
@@ -71,7 +75,54 @@ if ($SelfTest) {
                 Write-Host ("ok    {0}" -f $c.name)
             }
         }
-        Write-Host ("{0} passed, {1} failed of {2}" -f ($cases.Count - $failed), $failed, $cases.Count)
+
+        # 케이스 표 둘. buildpath.ps1 의 경로 판정을 돈다.
+        $noFile = Join-Path $tmp 'no_such.local'
+        $blankFile = Join-Path $tmp 'blank.local'
+        Set-Content -LiteralPath $blankFile -Value @('', '   ', '# comment only') -Encoding UTF8
+        $goodFile = Join-Path $tmp 'good.local'
+        Set-Content -LiteralPath $goodFile -Value @('# root', 'C:\x\y') -Encoding UTF8
+        $quotedFile = Join-Path $tmp 'quoted.local'
+        Set-Content -LiteralPath $quotedFile -Value @('  "C:\q\r"  ') -Encoding UTF8
+        $relFile = Join-Path $tmp 'relative.local'
+        Set-Content -LiteralPath $relFile -Value @('..\somewhere') -Encoding UTF8
+        $bareFile = Join-Path $tmp 'bare.local'
+        Set-Content -LiteralPath $bareFile -Value @('\noroot') -Encoding UTF8
+        $uncFile = Join-Path $tmp 'unc.local'
+        Set-Content -LiteralPath $uncFile -Value @('\\server\share') -Encoding UTF8
+        $uncBareFile = Join-Path $tmp 'unc_bare.local'
+        Set-Content -LiteralPath $uncBareFile -Value @('\\server') -Encoding UTF8
+        $fallback = Join-Path $env:LOCALAPPDATA "Sangtachi\build\Debug"
+
+        $pathCases = @(
+            @{ name = 'explicit wins over everything'; explicit = 'C:\e\f'; file = $goodFile;   expect = 'C:\e\f' }
+            @{ name = 'no root file falls back';       explicit = '';         file = $noFile;     expect = $fallback }
+            @{ name = 'blank root file falls back';    explicit = '';         file = $blankFile;  expect = $fallback }
+            @{ name = 'root file plus config';         explicit = '';         file = $goodFile;   expect = 'C:\x\y\Debug' }
+            @{ name = 'quotes and spaces are trimmed'; explicit = '';         file = $quotedFile; expect = 'C:\q\r\Debug' }
+            @{ name = 'whitespace explicit is ignored'; explicit = '   ';     file = $goodFile;   expect = 'C:\x\y\Debug' }
+            @{ name = 'relative root is rejected';      explicit = '';         file = $relFile;    expect = 'THROW' }
+            @{ name = 'drive-less root is rejected';    explicit = '';         file = $bareFile;   expect = 'THROW' }
+            @{ name = 'a UNC root is accepted';         explicit = '';         file = $uncFile;    expect = '\\server\share\Debug' }
+            @{ name = 'a share-less UNC is rejected';   explicit = '';         file = $uncBareFile; expect = 'THROW' }
+        )
+
+        foreach ($c in $pathCases) {
+            try {
+                $got = Resolve-BuildDir -Config 'Debug' -Explicit $c.explicit -RootFile $c.file
+            } catch {
+                $got = 'THROW'
+            }
+            if ($got -ne $c.expect) {
+                Write-Host ("FAIL  {0}: expected '{1}', got '{2}'" -f $c.name, $c.expect, $got)
+                $failed++
+            } else {
+                Write-Host ("ok    {0}" -f $c.name)
+            }
+        }
+
+        $total = $cases.Count + $pathCases.Count
+        Write-Host ("{0} passed, {1} failed of {2}" -f ($total - $failed), $failed, $total)
         if ($failed -gt 0) { exit 1 }
         exit 0
     } finally {
@@ -80,11 +131,7 @@ if ($SelfTest) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-if ($BuildDir) {
-    $buildDir = $BuildDir
-} else {
-    $buildDir = Join-Path $env:LOCALAPPDATA "Sangtachi\build\$Config"
-}
+$buildDir = Resolve-BuildDir -Config $Config -Explicit $BuildDir
 
 . (Join-Path $PSScriptRoot 'vsdevshell.ps1')
 

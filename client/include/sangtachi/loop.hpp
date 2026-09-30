@@ -37,7 +37,42 @@ enum class DrainOutcome {
     Budget,  // 예산을 다 썼다. 아직 남았을 수 있다
 };
 
-// 수신한 데이터그램 하나를 넘겨받는 자리. protocol.md 7장 수신 분류가 들어올 곳이다.
+// 수신 분류의 결과 (protocol.md 7장 수신 분류).
+enum class RxClass {
+    BadSource,        // 출발지 위생에 걸렸다. drop_bad_source
+    Stun,             // STUN 메시지. 트랜잭션 ID 로 대기 중인 요청과 매칭 (13장)
+    TunnelCandidate,  // 터널 후보. 8장 검증 파이프라인으로
+    Unclassified,     // 그 외. drop_unclassified
+};
+
+// 데이터그램 하나를 분류한다. **출발지 위생이 분류보다 먼저다** (protocol.md 7장).
+//
+// 순수 함수다. 카운터도 로그도 여기 없다. 부르는 쪽이 결과로 카운터를 가른다.
+//
+// ## 출발지 위생 (7장의 표)
+//
+// | 출발지 | 판정 |
+// |--------|------|
+// | 멀티캐스트 `224.0.0.0/4` | 폐기 |
+// | 제한 브로드캐스트 `255.255.255.255` | 폐기 |
+// | 미지정 `0.0.0.0` | 폐기 |
+// | 포트 0 | 폐기 |
+// | 루프백 `127.0.0.0/8` | **통과** |
+// | 그 외 | 통과 |
+//
+// **자기 인터페이스의 서브넷 브로드캐스트는 아직 넣지 않았다.** 7장의 두 번째 표가 그것을
+// 폐기로 정했지만, 판정하려면 각 인터페이스의 주소와 넷마스크가 있어야 하고 그 수집은
+// 10.1 후보 수집과 위생의 로컬 후보이며 Phase 4 다 (roadmap.md). 값을 지어내지 않고 그
+// 자리를 비워 둔다. 원격 서브넷의 브로드캐스트는 그 표가 "막지 못한다" 로 적은 남는
+// 위험이고 여기서도 통과한다.
+//
+// **루프백을 통과시키는 것은 10.1 후보 수집과 위생의 표와 다르다.** 그 절은 우리가 먼저
+// 보낼 목적지 목록을 판정하고 여기는 받은 데이터그램의 출발지를 판정한다. 7장이 두 표를
+// 합치지 말라고 적었다.
+[[nodiscard]] RxClass classify_datagram(const network::Endpoint& from,
+                                        std::span<const std::byte> payload) noexcept;
+
+// 분류를 지난 데이터그램 하나를 넘겨받는 자리.
 using DatagramHandler =
     std::function<void(const network::Endpoint& from, std::span<const std::byte> payload)>;
 
@@ -70,8 +105,26 @@ public:
                socket_.read_event() != nullptr;
     }
 
-    // 수신 데이터그램을 넘길 곳. 비워 두면 아무것도 하지 않는다.
-    void set_datagram_handler(DatagramHandler handler) { on_datagram_ = std::move(handler); }
+    // 터널 후보로 분류된 데이터그램을 넘길 곳 (protocol.md 8장 검증 파이프라인이 들어올
+    // 자리다). 비워 두면 아무것도 하지 않는다.
+    void set_tunnel_handler(DatagramHandler handler) { on_tunnel_ = std::move(handler); }
+
+    // STUN 으로 분류된 데이터그램을 넘길 곳 (protocol.md 7장 수신 분류).
+    //
+    // 루프가 소켓을 배타적으로 소유하므로 STUN 클라이언트는 recvfrom 을 부르지 않는다
+    // (protocol.md 6장 소켓 소유권). 받는 쪽은 network/stun_client.hpp 다.
+    void set_stun_handler(DatagramHandler handler) { on_stun_ = std::move(handler); }
+
+    // 이 루프의 소켓으로 데이터그램 하나를 보낸다. 보냈으면 참이다.
+    //
+    // **송신은 `[loop]` 하나가 한다** (concurrency.md 1장 스레드, 3장 루프 한 바퀴).
+    // STUN 이 같은 소켓으로 보내야 하는데 (protocol.md 6장 소켓 소유권) 소켓의 소유는
+    // 이 객체가 하므로, 소켓을 빌려주는 대신 이 자리를 연다. 실패는 여기서 세고 (그
+    // 문서의 tx_err_send) 로그도 여기서 낸다. 부르는 쪽은 그 둘을 다시 하지 않는다.
+    //
+    // 재전송하지 않는다. 다음 주기의 재전송이 그 자리를 대신한다 (protocol.md 6장).
+    [[nodiscard]] bool send_datagram(const network::Endpoint& to,
+                                     std::span<const std::byte> payload);
 
     // 타이머 만료를 함께 보는 곳. 로그 줄은 그대로 나가고 이것이 더 불린다.
     //
@@ -117,7 +170,8 @@ private:
     ConsoleQueue& console_;
     LoopOptions options_;
     TimerSet timers_;
-    DatagramHandler on_datagram_;
+    DatagramHandler on_tunnel_;
+    DatagramHandler on_stun_;
     std::function<void(const TimerTick&)> on_tick_;
 
     void* shutdown_event_ = nullptr;  // 수동 리셋. 이 객체가 소유한다

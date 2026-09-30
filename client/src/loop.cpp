@@ -2,6 +2,7 @@
 
 #include "sangtachi/hash.hpp"
 #include "sangtachi/log.hpp"
+#include "sangtachi/network/stun.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
@@ -59,6 +60,23 @@ std::vector<std::byte> raw_pattern(std::size_t length) {
     return out;
 }
 
+// protocol.md 7장 수신 분류가 보는 값들. 주소는 호스트 바이트 순서다.
+constexpr std::uint32_t kMulticastNetwork = 0xE0000000u;  // 224.0.0.0
+constexpr std::uint32_t kMulticastMask = 0xF0000000u;     // /4
+constexpr std::uint32_t kLimitedBroadcast = 0xFFFFFFFFu;  // 255.255.255.255
+constexpr std::uint32_t kUnspecified = 0x00000000u;       // 0.0.0.0
+
+// 첫 바이트의 상위 2비트로만 분류한다. magic 과 version 은 분류 기준이 아니라 검증
+// 항목이다 (protocol.md 7장).
+constexpr std::uint8_t kClassMask = 0xC0;
+constexpr std::uint8_t kClassStun = 0x00;
+constexpr std::uint8_t kClassTunnel = 0x40;
+
+[[nodiscard]] constexpr std::uint8_t byte_at(std::span<const std::byte> bytes,
+                                             std::size_t offset) noexcept {
+    return std::to_integer<std::uint8_t>(bytes[offset]);
+}
+
 void emit_rx_raw(const network::Endpoint& from, std::span<const std::byte> payload) {
     const auto digest = sha256_short(payload);
     const LogField fields[] = {
@@ -71,6 +89,45 @@ void emit_rx_raw(const network::Endpoint& from, std::span<const std::byte> paylo
 
 }  // namespace
 
+RxClass classify_datagram(const network::Endpoint& from,
+                          std::span<const std::byte> payload) noexcept {
+    // 1. 출발지 위생. 분류보다 먼저다 (protocol.md 7장). 수신 데이터그램의 출발지는
+    //    우리가 되돌려 보내는 목적지가 되므로, 분류 전에 걸러야 STUN 경로와 터널 경로가
+    //    같은 보호를 받는다.
+    const std::uint32_t address = from.address();
+    if (from.port() == 0) {
+        return RxClass::BadSource;  // 회신할 곳이 없다
+    }
+    if (address == kUnspecified || address == kLimitedBroadcast) {
+        return RxClass::BadSource;
+    }
+    if ((address & kMulticastMask) == kMulticastNetwork) {
+        return RxClass::BadSource;  // 회신 1개가 그룹 구독자 수만큼 증폭된다
+    }
+    // 루프백은 통과다. 회신이 자신에게만 가므로 증폭이 없고, 같은 기기에서 두 프로세스를
+    // 띄우는 시험이 이 경로를 쓴다 (protocol.md 7장의 표).
+
+    // 2. 분류. 첫 바이트가 없으면 볼 것이 없다.
+    if (payload.empty()) {
+        return RxClass::Unclassified;
+    }
+    const std::uint8_t leading = static_cast<std::uint8_t>(byte_at(payload, 0) & kClassMask);
+    if (leading == kClassStun && payload.size() >= network::kStunHeaderSize) {
+        // buf[4..8) 는 반열린 구간이다. 오프셋 4,5,6,7 의 4바이트다 (protocol.md 7장).
+        const std::uint32_t cookie = (static_cast<std::uint32_t>(byte_at(payload, 4)) << 24) |
+                                     (static_cast<std::uint32_t>(byte_at(payload, 5)) << 16) |
+                                     (static_cast<std::uint32_t>(byte_at(payload, 6)) << 8) |
+                                     static_cast<std::uint32_t>(byte_at(payload, 7));
+        if (cookie == protocol::kStunCookie) {
+            return RxClass::Stun;
+        }
+    }
+    if (leading == kClassTunnel) {
+        return RxClass::TunnelCandidate;
+    }
+    return RxClass::Unclassified;
+}
+
 EventLoop::EventLoop(network::UdpSocket socket, Counters& counters, ConsoleQueue& console,
                      void* console_event, LoopOptions options)
     : socket_(std::move(socket)),
@@ -82,7 +139,12 @@ EventLoop::EventLoop(network::UdpSocket socket, Counters& counters, ConsoleQueue
     shutdown_event_ = platform::create_event(platform::ResetMode::Manual);
 
     if (options_.probe_timer) {
-        timers_.add_periodic(std::string(kProbeTimerName), kProbeTimerIntervalMs, now_ms());
+        if (!timers_.add_periodic(std::string(kProbeTimerName), kProbeTimerIntervalMs, now_ms())) {
+            // 빈 집합에 처음 더하는 자리라 실패할 수 없다. 그래도 조용히 넘기지 않는다.
+            // 못 걸린 타이머는 만료가 없고, timer.tick 을 기다리는 검증이 영영 멈춘다.
+            const LogField fields[] = {field("name", kProbeTimerName)};
+            emit(LogLevel::Warn, "timer.rejected", fields);
+        }
     }
 }
 
@@ -121,16 +183,54 @@ DrainOutcome EventLoop::drain_udp() {
                 emit(LogLevel::Warn, "socket.error", fields);
                 return DrainOutcome::Empty;
             }
-            case network::RecvStatus::Received:
-                emit_rx_raw(result.from, std::span<const std::byte>(buffer.data(), result.length));
-                if (on_datagram_) {
-                    on_datagram_(result.from,
-                                 std::span<const std::byte>(buffer.data(), result.length));
+            case network::RecvStatus::Received: {
+                const std::span<const std::byte> payload(buffer.data(), result.length);
+                // Phase 1 의 대조 수단이다 (architecture.md 3.5 기동 입력). 분류 앞에
+                // 둔다. 로그 한 줄은 회신이 아니라 진단이므로 출발지 위생이 막는 반사·
+                // 증폭 경로에 들지 않고, 버려진 데이터그램도 진단에 남아야 한다.
+                // `[console]` 스캐폴딩과 함께 Phase 6 에서 사라진다.
+                emit_rx_raw(result.from, payload);
+
+                switch (classify_datagram(result.from, payload)) {
+                    case RxClass::BadSource:
+                        counters_.increment(Counter::DropBadSource);
+                        break;
+                    case RxClass::Stun:
+                        if (on_stun_) {
+                            on_stun_(result.from, payload);
+                        }
+                        break;
+                    case RxClass::TunnelCandidate:
+                        // 8장 검증 파이프라인은 Phase 4 다. 지금은 넘기기만 한다.
+                        if (on_tunnel_) {
+                            on_tunnel_(result.from, payload);
+                        }
+                        break;
+                    case RxClass::Unclassified:
+                        counters_.increment(Counter::DropUnclassified);
+                        break;
                 }
                 break;
+            }
         }
     }
     return DrainOutcome::Budget;
+}
+
+bool EventLoop::send_datagram(const network::Endpoint& to, std::span<const std::byte> payload) {
+    const auto sent = socket_.send_to(to, payload);
+    if (!sent.ok) {
+        // 타입과 무관하게 tx_err_send 를 올리고 버린다. 재전송하지 않는다
+        // (protocol.md 6장 소켓 소유권).
+        counters_.increment(Counter::TxErrSend);
+        const LogField fields[] = {
+            field("op", std::string_view("sendto")),
+            field("code", static_cast<std::uint64_t>(sent.error)),
+        };
+        emit(LogLevel::Warn, "socket.error", fields);
+        return false;
+    }
+    return true;
 }
 
 void EventLoop::send_raw(std::size_t length) {
@@ -149,14 +249,7 @@ void EventLoop::send_raw(std::size_t length) {
     }
 
     const auto payload = raw_pattern(length);
-    const auto sent = socket_.send_to(*options_.peer, payload);
-    if (!sent.ok) {
-        counters_.increment(Counter::TxErrSend);
-        const LogField fields[] = {
-            field("op", std::string_view("sendto")),
-            field("code", static_cast<std::uint64_t>(sent.error)),
-        };
-        emit(LogLevel::Warn, "socket.error", fields);
+    if (!send_datagram(*options_.peer, payload)) {
         return;
     }
     // 송신 측도 같은 줄을 낸다. from 은 자신의 로컬 엔드포인트다 (architecture.md 3.5).

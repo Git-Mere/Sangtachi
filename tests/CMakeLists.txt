@@ -15,6 +15,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(sangtachi_tests
     args_test.cpp
+    crt_report_guard.cpp
     console_test.cpp
     counters_test.cpp
     hash_test.cpp
@@ -22,9 +23,13 @@ add_executable(sangtachi_tests
     loop_test.cpp
     timer_test.cpp
     network/endpoint_test.cpp
+    network/stun_test.cpp
+    network/stun_client_test.cpp
     network/udp_socket_test.cpp
     network/wsa_test.cpp
     platform/console_ctrl_test.cpp
+    platform/random_test.cpp
+    platform/resolve_test.cpp
     platform/wait_test.cpp
 )
 

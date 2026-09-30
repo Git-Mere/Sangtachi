@@ -11,6 +11,8 @@ target_sources(sangtachi_core PRIVATE
     loop.cpp
     timer.cpp
     network/endpoint.cpp
+    network/stun.cpp
+    network/stun_client.cpp
 )
 
 # 플랫폼 원본. OS 헤더(windows.h, winsock2.h, bcrypt.h ...)를 포함하는 원본은 전부
@@ -19,6 +21,8 @@ if(WIN32)
     target_sources(sangtachi_core PRIVATE
         platform/win32/console_ctrl.cpp
         platform/win32/hash.cpp
+        platform/win32/random.cpp
+        platform/win32/resolve.cpp
         platform/win32/udp_socket.cpp
         platform/win32/wait.cpp
         platform/win32/wsa.cpp

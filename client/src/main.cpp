@@ -3,20 +3,49 @@
 #include "sangtachi/counters.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/loop.hpp"
+#include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
 #include "sangtachi/platform/console_ctrl.hpp"
+#include "sangtachi/platform/resolve.hpp"
+#include "sangtachi/platform/wait.hpp"
+#include "sangtachi/timer.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
 
 // 기동 실패의 종료 코드. architecture.md 3.5 기동 입력이 정했다.
 constexpr int kStartupFailure = 2;
+
+sangtachi::Millis now_ms() noexcept {
+    return static_cast<sangtachi::Millis>(sangtachi::platform::monotonic_ms());
+}
+
+// architecture.md 3.5 기동 입력. `--stun` 을 주지 않았으면 기본 목록을 쓴다.
+//
+// 돌려주는 것은 인자 문자열을 가리키는 뷰다. 부르는 쪽의 args 가 살아 있는 동안만 쓴다.
+std::vector<sangtachi::network::StunServerName> stun_list(const sangtachi::Args& args) {
+    std::vector<sangtachi::network::StunServerName> list;
+    if (args.stun.empty()) {
+        list.assign(sangtachi::network::kDefaultStunServers.begin(),
+                    sangtachi::network::kDefaultStunServers.end());
+        return list;
+    }
+    list.reserve(args.stun.size());
+    for (const auto& entry : args.stun) {
+        list.push_back(sangtachi::network::StunServerName{entry.host, entry.port});
+    }
+    return list;
+}
 
 // architecture.md 9장의 socket.error. op 는 실패한 호출 이름이다. 소켓 밖의 호출도
 // 같은 줄로 낸다. 기동 실패를 읽는 쪽이 이벤트 키를 하나만 알면 되게 하려는 것이다.
@@ -53,6 +82,16 @@ int main(int argc, char** argv) {
 
     sangtachi::Counters counters;
 
+    // **`--stun` 목록이 한 개면 기동 시 WARN 한 줄을 남긴다** (architecture.md 3.5 기동
+    // 입력). 그 목록으로는 서로 다른 두 서버의 응답을 얻을 수 없어 5초를 기다린 뒤
+    // STUN_DISCOVERY_FAILED 로 끝난다. 기다리기 전에 알린다.
+    if (parsed.args->stun.size() == 1) {
+        const sangtachi::LogField fields[] = {
+            sangtachi::field("reason", std::string_view("single_server")),
+        };
+        sangtachi::emit(sangtachi::LogLevel::Warn, "stun.config", fields);
+    }
+
     try {
         const sangtachi::network::WsaContext wsa;
         {
@@ -61,6 +100,17 @@ int main(int argc, char** argv) {
             };
             sangtachi::emit(sangtachi::LogLevel::Info, "wsa.init", fields);
         }
+
+        // **이름 해석은 `[loop]` 시작 전에 목록 전체를 한 번 한다** (architecture.md 3.5
+        // 기동 입력). getaddrinfo 는 동기 호출이라 `[loop]` 안에 두면 응답이 올 때까지 한
+        // 바퀴가 멈춘다. Phase 1~2 에는 그 일을 맡길 `[control]` 스레드가 없다
+        // (concurrency.md 1장). 해석 실패와 중복 엔드포인트를 거르는 규칙은 그 절에 있고
+        // 판정은 network/stun_client.hpp 의 resolve_stun_servers 가 한다.
+        const auto stun_names = stun_list(*parsed.args);
+        auto stun_servers = sangtachi::network::resolve_stun_servers(
+            stun_names, [](std::string_view host, std::uint16_t port) {
+                return sangtachi::platform::resolve_ipv4(host, port);
+            });
 
         auto opened = sangtachi::network::open_udp_socket();
         if (!opened.ok()) {
@@ -116,6 +166,30 @@ int main(int argc, char** argv) {
             return kStartupFailure;
         }
 
+        // STUN 은 루프의 소켓으로 보내고 루프에서 응답을 전달받는다 (protocol.md 6장
+        // 소켓 소유권). 타이머 집합도 루프의 것을 빌린다 (concurrency.md 3장, 4장).
+        sangtachi::network::StunClient stun(
+            std::move(stun_servers),
+            [&loop](const sangtachi::network::Endpoint& to, std::span<const std::byte> payload) {
+                return loop.send_datagram(to, payload);
+            },
+            loop.timers(), counters);
+
+        loop.set_stun_handler([&stun](const sangtachi::network::Endpoint& from,
+                                      std::span<const std::byte> payload) {
+            stun.on_datagram(from, payload, now_ms());
+        });
+        loop.set_tick_handler([&stun](const sangtachi::TimerTick& tick) {
+            if (sangtachi::network::StunClient::owns_timer(tick.name)) {
+                stun.on_timer(tick.name, now_ms());
+            }
+        });
+
+        // 목록이 두 개 미만이면 start 가 그 자리에서 STUN_DISCOVERY_FAILED 를 낸다
+        // (architecture.md 3.5 기동 입력). 어느 쪽이든 기동 실패가 아니다. 루프는 계속
+        // 돌고 종료는 concurrency.md 7장 종료가 맡는다.
+        (void)stun.start(now_ms());
+
         // `[console]` 은 join 하지 않는다 (concurrency.md 7장 종료). 표준 입력 읽기를
         // 밖에서 취소하는 수단을 쓰지 않으므로 join 하면 사용자가 한 줄을 더 칠 때까지
         // 종료가 멈춘다.
@@ -126,6 +200,13 @@ int main(int argc, char** argv) {
 
         loop.run();
         session->request_stop();
+
+        // 루프가 든 핸들러를 먼저 끊는다. `stun` 은 `loop` 뒤에 선언되어 **먼저** 소멸하는데,
+        // 그 핸들러들은 `stun` 을 참조로 붙든다. 지금은 이 뒤에 루프를 도는 코드가 없어
+        // 실제로 불리지 않지만, 수명이 길어지는 Phase 3 에서 그 순서가 그대로 함정이 된다.
+        // 끊는 비용이 없으므로 여기서 끊는다.
+        loop.set_stun_handler(nullptr);
+        loop.set_tick_handler(nullptr);
 
         // concurrency.md 7장 종료의 (4). 카운터 전량을 낸다.
         sangtachi::emit_all(counters);

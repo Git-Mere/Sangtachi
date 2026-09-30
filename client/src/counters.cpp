@@ -49,6 +49,7 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropRosterStale: return "drop_roster_stale";
         case Counter::DropShort: return "drop_short";
         case Counter::DropStaleEpoch: return "drop_stale_epoch";
+        case Counter::DropStunParse: return "drop_stun_parse";
         case Counter::DropTerminalState: return "drop_terminal_state";
         case Counter::DropTooOld: return "drop_too_old";
         case Counter::DropTypeLength: return "drop_type_length";

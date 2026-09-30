@@ -84,6 +84,11 @@ public:
     // `[console]` 이 큐에 넣은 뒤 신호하는 핸들. 소유하지 않는다.
     [[nodiscard]] void* console_event() const noexcept { return console_event_; }
 
+    // 콘솔 제어 핸들러가 신호할 핸들 (concurrency.md 7장 종료). 소유는 이 객체가 한다.
+    // 그 핸들러는 이것을 복제해 들고 가므로 이 객체가 먼저 사라져도 안전하다. 근거는
+    // platform/console_ctrl.hpp 가 갖는다.
+    [[nodiscard]] void* shutdown_event() const noexcept { return shutdown_event_; }
+
     // 다른 스레드에서 종료를 건다. concurrency.md 7장 종료의 (1) 이다.
     void request_shutdown() noexcept;
     [[nodiscard]] bool shutdown_requested() const noexcept { return shutting_down_; }
@@ -99,6 +104,10 @@ public:
 
 private:
     DrainOutcome drain_udp();
+    // `[console]` 이 올린 원자 변수를 표에 넣는다 (concurrency.md 6장 텔레메트리 격리).
+    // 비우는 바퀴와 종료 바퀴가 같이 쓴다. 종료 바퀴는 drain_console() 앞에서 돌아가므로
+    // 여기를 거치지 않으면 카운터 전량 출력이 낡은 값을 낸다.
+    void sync_console_drop_counter() noexcept;
     void drain_console();
     void handle_command(std::string_view line);
     void send_raw(std::size_t length);

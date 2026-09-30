@@ -17,6 +17,7 @@ target_sources(sangtachi_core PRIVATE
 # 이 아래에 있다. 근거는 decisions/0010 이다.
 if(WIN32)
     target_sources(sangtachi_core PRIVATE
+        platform/win32/console_ctrl.cpp
         platform/win32/hash.cpp
         platform/win32/udp_socket.cpp
         platform/win32/wait.cpp

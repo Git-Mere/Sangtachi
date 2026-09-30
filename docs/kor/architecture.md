@@ -83,6 +83,15 @@
 | `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
+| `loop` | 이벤트 루프 한 바퀴, 대기 집합, 소스별 비우기 예산, 콘솔 명령 처리. 구조는 `concurrency.md` 2·3장 | 없음 |
+| `timer` | 주기 타이머 집합과 다음 대기 타임아웃 계산 (`concurrency.md` 4장) | 없음 |
+| `console` | `[console]` 스레드의 줄 큐와 그 수명 (`concurrency.md` 6장). Phase 6 에서 사라지는 스캐폴딩이다 | 없음 |
+| `log` | 9장 로그 출력의 줄 형식과 필드 인코딩 | 없음 |
+| `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md)와 `concurrency.md` 다 | 없음 |
+| `args` | 기동 인자 파싱 (3.5) | 없음 |
+| `hash` | `rx.raw` 가 싣는 SHA-256 | Windows CNG |
+| `platform/wait` | 단조 시계, 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
+| `platform/console_ctrl` | 콘솔 제어 신호를 받아 종료 이벤트를 신호하고 정리 완료를 기다린다 (`concurrency.md` 7장) | Win32 |
 | `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
 
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 `concurrency.md` 가 갖는다.
@@ -762,8 +771,13 @@ Sangtachi/
 |   +-- src/
 |   |   +-- main.cpp
 |   |   +-- args.cpp     기동 인자 파싱 (3.5)
+|   |   +-- loop.cpp     이벤트 루프와 콘솔 명령 (concurrency.md 2·3장)
+|   |   +-- timer.cpp    타이머 집합 (concurrency.md 4장)
+|   |   +-- console.cpp  [console] 줄 큐 (concurrency.md 6장)
+|   |   +-- log.cpp      로그 줄 형식 (9장)
+|   |   +-- counters.cpp 카운터 표 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, hash
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash
 |   |   +-- network/     endpoint, stun_client
 |   |   +-- peer/        peer, hole_punch, session
 |   |   +-- tunnel/      packet, tunnel, router

@@ -5,6 +5,7 @@
 #include "sangtachi/loop.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
+#include "sangtachi/platform/console_ctrl.hpp"
 
 #include <cstdint>
 #include <span>
@@ -17,12 +18,18 @@ namespace {
 // 기동 실패의 종료 코드. architecture.md 3.5 기동 입력이 정했다.
 constexpr int kStartupFailure = 2;
 
-void emit_socket_error(std::string_view op, int code) {
+// architecture.md 9장의 socket.error. op 는 실패한 호출 이름이다. 소켓 밖의 호출도
+// 같은 줄로 낸다. 기동 실패를 읽는 쪽이 이벤트 키를 하나만 알면 되게 하려는 것이다.
+void emit_op_error(std::string_view op, std::uint64_t code) {
     const sangtachi::LogField fields[] = {
         sangtachi::field("op", op),
-        sangtachi::field("code", static_cast<std::uint64_t>(code)),
+        sangtachi::field("code", code),
     };
     sangtachi::emit(sangtachi::LogLevel::Error, "socket.error", fields);
+}
+
+void emit_socket_error(std::string_view op, int code) {
+    emit_op_error(op, static_cast<std::uint64_t>(code));
 }
 
 }  // namespace
@@ -98,6 +105,17 @@ int main(int argc, char** argv) {
             return kStartupFailure;
         }
 
+        // Ctrl+C 와 창 닫기에서도 종료 절차가 돌아야 한다 (concurrency.md 7장 종료).
+        // 핸들러는 `[loop]` 소유 상태를 건드리지 않고 이벤트 핸들 둘만 만진다.
+        const auto installed =
+            sangtachi::platform::install_console_ctrl_handler(loop.shutdown_event());
+        if (!installed.ok) {
+            // 설치에 실패하면 창 닫기가 정리 없이 프로세스를 끝낸다. 그 상태로 기동하면
+            // 종료 계약을 지키지 못하므로 기동 실패로 다룬다.
+            emit_op_error(installed.failed_op, installed.error);
+            return kStartupFailure;
+        }
+
         // `[console]` 은 join 하지 않는다 (concurrency.md 7장 종료). 표준 입력 읽기를
         // 밖에서 취소하는 수단을 쓰지 않으므로 join 하면 사용자가 한 줄을 더 칠 때까지
         // 종료가 멈춘다.
@@ -111,10 +129,20 @@ int main(int argc, char** argv) {
 
         // concurrency.md 7장 종료의 (4). 카운터 전량을 낸다.
         sangtachi::emit_all(counters);
+
     } catch (const sangtachi::network::WsaStartupError& e) {
         emit_socket_error("WSAStartup", e.code());
         return kStartupFailure;
     }
+
+    // concurrency.md 7장 종료의 (7). 정리가 끝났음을 콘솔 제어 핸들러에게 알린다. 창
+    // 닫기로 들어온 경우 그 핸들러가 이것을 보고 반환하고, 그 순간 OS 가 프로세스를 끝낸다.
+    //
+    // **try 블록 밖이다.** 그 블록이 닫힐 때 루프와 소켓과 콘솔 세션과 Winsock 이 소멸하고,
+    // 그것이 끝난 뒤에 신호해야 한다. 안에서 신호하면 핸들러가 먼저 반환해 OS 가 소멸자를
+    // 돌기 전에 프로세스를 끝낼 수 있다. Phase 1 에는 소켓과 Winsock 해제뿐이지만 Phase 6
+    // 의 어댑터 정리가 같은 자리에 들어온다. 기동 실패 경로는 이 줄에 닿지 않는다.
+    (void)sangtachi::platform::signal_cleanup_done();
 
     return 0;
 }

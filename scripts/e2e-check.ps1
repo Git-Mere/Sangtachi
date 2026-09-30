@@ -174,6 +174,12 @@ try {
     $m = Wait-ForLine $p1.err 'console\.rejected reason=unknown_command'
     Check 'an unknown command is rejected without exiting' (($null -ne $m) -and (-not $p1.proc.HasExited))
 
+    # raw 로 시작할 뿐인 낱말은 어휘 밖이다 (architecture.md 3.5 기동 입력).
+    # 접두만 보는 구현에서는 이것이 500바이트를 실제로 보낸다.
+    Send-Command $p2 'raw500'
+    $m = Wait-ForLine $p2.err 'console\.rejected reason=unknown_command command=raw500'
+    Check 'raw500 is rejected instead of sending' ($null -ne $m)
+
     # 소켓 오류가 나도 프로세스가 죽지 않고 오류 코드를 로그에 남긴다
     # (roadmap.md Phase 1 검증).
     #

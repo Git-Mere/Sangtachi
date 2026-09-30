@@ -59,6 +59,7 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropUnverifiedTx: return "drop_unverified_tx";
         case Counter::DropVersion: return "drop_version";
         case Counter::DropVipMismatch: return "drop_vip_mismatch";
+        case Counter::RxErrRecv: return "rx_err_recv";
         case Counter::TelemetryQueueDropped: return "telemetry_queue_dropped";
         case Counter::TxDropBadSrc: return "tx_drop_bad_src";
         case Counter::TxDropNoRoute: return "tx_drop_no_route";

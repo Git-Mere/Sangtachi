@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | **Phase 1 구현 완료.** 두 머신 실측만 대기다. 다음은 Phase 2 (STUN) |
+| 구현 | [`roadmap.md`](roadmap.md) | **Phase 1 구현 완료.** 바뀐 문서와의 대조도 끝났다. 두 머신 실측만 대기다. 다음은 Phase 2 (STUN) |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 8건 |
 
 **토폴로지 후속은 끝났다.** [ADR 0006](decisions/0006-무중계-스타-토폴로지.md),
@@ -23,7 +23,16 @@
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
 | 1 | `docs/eng` 미러를 한국어에 맞춘다. 대상은 `spec.md`, `architecture.md`, `protocol.md`, `concurrency.md`, `roadmap.md`, `windows-prereq.md` 여섯과 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md), `commit_history/` 의 최근 항목이다. `tools/` 의 README 는 미러를 두지 않는다 | 미러가 한국어보다 뒤에 있다. 게이트가 `parity` 로 막히는 것이 그 표시다. 푸시 전에 맞춘다 |
-| 2 | Phase 2. STUN 클라이언트 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위, [`architecture.md`](architecture.md) 3.5 기동 입력의 서버 선택) | Phase 1 이 닫혔다. 같은 소켓을 쓰므로 래퍼가 이미 있다 |
+| 2 | Phase 2. STUN 클라이언트 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위, [`architecture.md`](architecture.md) 3.5 기동 입력의 서버 선택) | Phase 1 이 닫혔다. 같은 소켓을 쓰므로 래퍼가 이미 있다. **먼저 만들 것 넷은 아래에 있다** |
+
+**Phase 2 가 먼저 부르는 자리 넷.** Phase 1 코드에 없고, STUN 을 붙이기 전에 있어야 한다.
+
+| 무엇 | 왜 |
+|------|-----|
+| `TimerSet` 의 키·제거·일회성 | 서버별 재전송(500ms·1s·2s)과 마감을 걸고 응답이 오면 취소한다. 두 서버에 동시에 질의하므로 이름도 갈라야 한다 |
+| `EventLoop` 의 송신 이음새 | 지금 송신은 `--peer` 에 묶인 비공개 `send_raw` 하나뿐이다. [`protocol.md`](protocol.md) 6장은 STUN 이 같은 소켓을 루프를 거쳐 쓰라고 못박는다 |
+| `drain_udp` 의 출발지 위생과 분류 | 지금은 모든 데이터그램이 `rx.raw` 를 내고 핸들러로 간다 (`protocol.md` 7장 수신 분류) |
+| 기동 시 STUN 이름 해석과 목록 1개 경고 | `architecture.md` 3.5 가 정했고 코드에 없다 |
 | 3 | Phase 2 를 끝낼 때 전문 대상 감사 | `CLAUDE.md` 가 Phase 를 끝낼 때마다 요구한다 |
 | 4 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘 | 계정과 인스턴스가 필요한 일이라 문서로 끝나지 않는다 |
 
@@ -44,7 +53,7 @@
 
 | 자리 | 무엇 | 언제 |
 |------|------|------|
-| `TimerSet` | 세션 키도 제거 함수도 없다. `HELLO` 재전송과 keepalive 를 세션 수만큼 올리면 이름이 충돌한다 | Phase 4 |
+| `TimerSet` | `add_periodic` 하나뿐이다. 키도 제거도 일회성 타이머도 없다 | **Phase 2.** STUN 이 서버별 재전송(500ms·1s·2s)과 마감을 걸고 응답이 오면 취소해야 한다. 두 서버에 동시에 질의하므로 이름도 갈라야 한다 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위). 세션 수만큼 올릴 때의 이름 충돌은 그 위에 Phase 4 가 얹는다 |
 | 라우팅 표 | 6칸 고정 배열과 두 단계 조회 ([`protocol.md`](protocol.md) 8.5). 코드에 없다 | Phase 4 |
 | `ROSTER` | 타입 `0x08` 송수신과 전용 카운터 셋 (`protocol.md` 5.7) | Phase 4 |
 | 로비 | 세션 목록이 비면 로비로 간다 ([`concurrency.md`](concurrency.md) 7장 로비). 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
@@ -63,7 +72,7 @@
 | 중복 주장 링크화 미완 | 살아 있는 문서 여덟에서 같은 주장이 두 곳에 있는 자리를 링크로 바꾸는 작업이 중간에 멈춰 있다 (규칙 5). `git stash list` 로 확인하고 `git stash pop` 으로 잇는다. **스타 토폴로지 반영이 같은 문서를 크게 고쳤으므로 그대로 적용되지 않는다.** 충돌을 풀면서 잇는다 |
 | `IDLE` 정의의 긴장 | [`protocol.md`](protocol.md) 9.4.1 종료 상태 폐기는 `IDLE` 이면 상대 `peer_id` 도 모른다고 전제하는데, 9.1 상태는 `IDLE` 을 "아직 상대 후보를 받지 못함" 으로 정의한다. `get_peers` 가 `peer_id` 는 주고 후보는 아직 비어 있는 구간에서 둘이 갈린다. 어느 문서도 그 구간에서 세션이 `peer_id` 를 기억하는지 정하지 않았다. 9.1 이나 9.4.1 에 한 줄이 필요하다 |
 | Phase 8 제목 | `## Phase 8: Minecraft 검증` 인데 목표가 GUI 시연을 포함한다. 제목 문자열에 기대는 자리는 `roadmap.md` 의 한국어와 영어 제목 줄 둘뿐이고 `#phase-8` 앵커는 없다. 바꿀지는 정하지 않았다 |
-| 카운터 이름의 문서-코드 대조 | 이름이 48개다. `protocol.md` 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. `docgate.py` 개수 검사와 같이 붙인다 |
+| 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md) 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 둘 많다.** `endpoint_learned` 는 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
 
 ## GUI 후속
 

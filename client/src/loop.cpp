@@ -24,16 +24,30 @@ Millis now_ms() noexcept {
     return static_cast<Millis>(platform::monotonic_ms());
 }
 
+constexpr bool is_space(char ch) noexcept {
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
 std::string_view trim(std::string_view text) noexcept {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t' ||
-                             text.front() == '\r' || text.front() == '\n')) {
+    while (!text.empty() && is_space(text.front())) {
         text.remove_prefix(1);
     }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' ||
-                             text.back() == '\r' || text.back() == '\n')) {
+    while (!text.empty() && is_space(text.back())) {
         text.remove_suffix(1);
     }
     return text;
+}
+
+// architecture.md 3.5 기동 입력의 어휘는 `raw <바이트 수>` 하나다. 어휘 밖 낱말은
+// unknown_command 여야 하므로 접두만 보지 않는다. `raw` 다음이 줄 끝이거나 공백일 때만
+// 이 명령이다. `raw500` 과 `rawx` 는 다른 낱말이다.
+constexpr std::string_view kRawCommand = "raw";
+
+constexpr bool is_raw_command(std::string_view command) noexcept {
+    if (command.substr(0, kRawCommand.size()) != kRawCommand) {
+        return false;
+    }
+    return command.size() == kRawCommand.size() || is_space(command[kRawCommand.size()]);
 }
 
 // architecture.md 3.5 의 `raw` 가 정한 내용. 0x00 부터 1씩 증가한다.
@@ -95,6 +109,11 @@ DrainOutcome EventLoop::drain_udp() {
                 continue;
             case network::RecvStatus::Error: {
                 // 원인을 모르므로 그 바퀴를 끝낸다. 소켓은 계속 쓴다.
+                //
+                // 로그만 내면 그 바퀴가 왜 짧게 끝났는지가 카운터 전량 출력에 남지 않는다
+                // (concurrency.md 3장 루프 한 바퀴). 오류 코드별로 나누지 않는다. 코드는
+                // 로그가 싣는다.
+                counters_.increment(Counter::RxErrRecv);
                 const LogField fields[] = {
                     field("op", std::string_view("recvfrom")),
                     field("code", static_cast<std::uint64_t>(result.error)),
@@ -160,8 +179,8 @@ void EventLoop::handle_command(std::string_view line) {
         emit_all(counters_);
         return;
     }
-    if (command.rfind("raw", 0) == 0) {
-        const std::string_view rest = trim(command.substr(3));
+    if (is_raw_command(command)) {
+        const std::string_view rest = trim(command.substr(kRawCommand.size()));
         std::size_t length = 0;
         const auto* begin = rest.data();
         const auto* end = begin + rest.size();
@@ -182,10 +201,14 @@ void EventLoop::handle_command(std::string_view line) {
     emit(LogLevel::Warn, "console.rejected", fields);
 }
 
-void EventLoop::drain_console() {
-    // 콘솔이 버린 수를 여기서 표에 반영한다. 그 카운터만 생산자가 올린다
-    // (concurrency.md 6장).
+void EventLoop::sync_console_drop_counter() noexcept {
+    // 콘솔이 버린 수를 표에 반영하는 자리다. 그 카운터만 생산자가 올리고 `[loop]` 는
+    // 읽어서 넣는다 (concurrency.md 6장 텔레메트리 격리).
     counters_.set(Counter::ConsoleQueueDropped, console_.dropped());
+}
+
+void EventLoop::drain_console() {
+    sync_console_drop_counter();
 
     while (auto line = console_.try_pop()) {
         handle_command(*line);
@@ -216,10 +239,14 @@ bool EventLoop::run_once() {
             field("code", static_cast<std::uint64_t>(result.error)),
         };
         emit(LogLevel::Error, "socket.error", fields);
+        // 종료 바퀴는 drain_console() 앞에서 돌아간다. 여기서 반영하지 않으면 그 뒤의
+        // 카운터 전량 출력이 낡은 값을 낸다 (concurrency.md 6장 텔레메트리 격리).
+        sync_console_drop_counter();
         shutting_down_ = true;
         return false;
     }
     if (result.status == platform::WaitStatus::Signaled && result.index == shutdown_index) {
+        sync_console_drop_counter();
         shutting_down_ = true;
         return false;
     }

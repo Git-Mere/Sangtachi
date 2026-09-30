@@ -17,6 +17,7 @@ inline constexpr std::size_t kMaxInner = 1452;
 inline constexpr std::size_t kMaxDatagram = kHeaderSize + kMaxInner;  // 1472
 inline constexpr std::uint32_t kStunCookie = 0x2112A442;  // RFC 5389
 inline constexpr std::size_t kMaxCandidates = 8;
+inline constexpr std::size_t kMaxPeers = 5;  // 한 방의 인원. 5.7 ROSTER 의 상한이기도 하다
 inline constexpr std::size_t kReplayWindow = 64;
 inline constexpr std::size_t kMaxPendingPings = 16;
 inline constexpr std::size_t kMaxProbePaths = 4;

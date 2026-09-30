@@ -58,8 +58,10 @@ public:
     [[nodiscard]] std::optional<Millis> earliest_deadline() const noexcept;
     [[nodiscard]] std::size_t size() const noexcept { return timers_.size(); }
 
-    // 마감이 지난 타이머를 돌린다. 마감 비교는 엄격 부등호가 아니라 `deadline <= now` 다
-    // (protocol.md 11장 타이머).
+    // 마감이 지난 타이머를 돌린다. 마감 비교는 `deadline <= now` 다. 지난 마감뿐 아니라
+    // 정확히 지금인 마감도 만료한다 (protocol.md 11장 타이머). next_timeout_ms 의 비교도
+    // 같은 부등호다. 둘이 어긋나면 마감이 정확히 지금인 바퀴에서 타이머는 돌지 않는데
+    // 대기는 0 으로 즉시 반환해 같은 바퀴를 반복한다.
     //
     // **밀린 주기를 따라잡지 않는다.** 다음 마감은 `직전 마감 + 간격` 이 아니라
     // `now + 간격` 이다. 따라잡으면 부하가 걷힌 뒤 한 바퀴에 여러 번 만료해 그 사이

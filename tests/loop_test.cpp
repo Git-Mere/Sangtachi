@@ -10,6 +10,7 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#include <winsock2.h>
 #include <windows.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -362,4 +363,91 @@ TEST_CASE("loop: an idle wheel waits instead of spinning", "[loop]") {
     INFO("the wheel returned without anything to do");
     REQUIRE_FALSE(returned_early);
     REQUIRE(returned.load(std::memory_order_acquire));  // 종료 신호로는 돌아온다
+}
+
+TEST_CASE("loop: a word that only starts with raw is not the raw command", "[loop]") {
+    // architecture.md 3.5 기동 입력의 어휘는 `raw <바이트 수>` 하나다. 접두만 보면
+    // raw500 이 500바이트를 보낸다. 그 낱말은 unknown_command 여야 한다.
+    const WsaContext wsa;
+    auto sender = open_udp_socket();
+    auto receiver = open_udp_socket();
+    REQUIRE(sender.ok());
+    REQUIRE(receiver.ok());
+
+    LoopOptions options;
+    options.peer = Endpoint(kLoopback, receiver.socket->local().port());
+
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    EventLoop loop(std::move(*sender.socket), counters, console, session->event(), options);
+    REQUIRE(console.try_push("raw500"));
+    REQUIRE(console.try_push("rawx"));
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());
+
+    // 어느 쪽도 보내지 않았다.
+    REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 200) == WAIT_TIMEOUT);
+
+    // 어휘 안의 낱말은 그대로 보낸다.
+    REQUIRE(console.try_push("raw 500"));
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());
+
+    std::array<std::byte, sangtachi::network::kRecvBufferSize> buffer{};
+    REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 2000) == WAIT_OBJECT_0);
+    REQUIRE(receiver.socket->enumerate_events());
+    const auto got = receiver.socket->recv_from(buffer);
+    REQUIRE(got.status == sangtachi::network::RecvStatus::Received);
+    REQUIRE(got.length == 500);
+}
+
+TEST_CASE("loop: a receive error raises rx_err_recv", "[loop]") {
+    // concurrency.md 3장 루프 한 바퀴: 그 밖의 수신 오류는 카운터를 올리고 그 바퀴를
+    // 끝낸다. 로그만 내면 바퀴가 왜 짧게 끝났는지가 카운터 전량 출력에 남지 않는다.
+    //
+    // 오류를 결정적으로 만든다. 수신 방향을 닫으면 recvfrom 이 WSAESHUTDOWN 으로
+    // 실패하고, 그것은 WSAEWOULDBLOCK 도 WSAEMSGSIZE 도 아니라 "그 외 오류" 다.
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
+    REQUIRE(::shutdown(static_cast<SOCKET>(loop.socket().native_handle()), SD_RECEIVE) == 0);
+
+    // 콘솔 이벤트로 대기를 깨운다. 비우기는 반환값으로 분기하지 않으므로 그 바퀴도
+    // drain_udp 를 돈다.
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());
+
+    // 한 번만 오른다. 오류에서 그 바퀴를 끝내지 않으면 예산만큼 오른다.
+    REQUIRE(counters.value(Counter::RxErrRecv) == 1);
+}
+
+TEST_CASE("loop: the shutdown wheel refreshes the console drop counter", "[loop]") {
+    // 종료 바퀴는 drain_console() 앞에서 돌아간다. 그 자리에서 반영하지 않으면 뒤따르는
+    // 카운터 전량 출력이 낡은 값을 낸다 (concurrency.md 6장 텔레메트리 격리).
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    for (std::size_t i = 0; i < sangtachi::kConsoleQueueCapacity; ++i) {
+        REQUIRE(console.try_push("x"));
+    }
+    REQUIRE_FALSE(console.try_push("dropped"));
+
+    EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
+    loop.request_shutdown();
+    // 이 바퀴는 명령을 비우지 않고 돌아간다.
+    REQUIRE_FALSE(loop.run_once());
+    REQUIRE(counters.value(Counter::ConsoleQueueDropped) == 1);
 }

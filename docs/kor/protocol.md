@@ -17,7 +17,7 @@
 | 외부 전송 | IPv4 UDP만 |
 | 내부 페이로드 | IPv4 패킷만. 내부 IPv6는 폐기하고 카운터 증가 |
 | 바이트 오더 | 모든 다중 바이트 정수는 **빅엔디안** |
-| 피어 수 | 한 방에 2 피어 |
+| 피어 수 | 한 방에 최대 5 피어. 호스트 하나와 플레이어 넷이고 터널은 호스트와 각 플레이어의 쌍이다 |
 | 암호화 | 없음 (2장) |
 
 IPv6 지원은 v2 이후다. v1은 `AF_INET`으로만 소켓을 열고 STUN 서버도 IPv4로만 해석한다.
@@ -38,7 +38,7 @@ IPv6 지원은 v2 이후다. v1은 `AF_INET`으로만 소켓을 열고 STUN 서�
 **위조 `HELLO`로 세션 재협상을 유도하는 것은 전제가 더 약하다. `peer_id`만 있으면 된다.**
 재협상의 계기는 "고정된 epoch와 다른 `HELLO`"이므로(9.3) 공격자는 epoch를 알 필요가 없고
 아무 값이나 넣으면 된다. `HELLO`가 통과해야 하는 나머지는 `virtual_ip` 일치(5.1)뿐인데 그
-값은 `10.100.0.1`과 `10.100.0.2`로 예측 가능하다.
+값은 `10.100.0.1`부터 `10.100.0.5`까지 다섯 중 하나라 예측 가능하다.
 
 **한 발로 양쪽 세션이 끝난다. 확정이다.** 경로는 넷이다.
 
@@ -302,7 +302,7 @@ expected = position - baseline
 
 `nonce`는 **OS CSPRNG**에서 뽑는다(`BCryptGenRandom`). 세션 시도당 하나이며 재전송에서는 같은 값을 쓴다. 재전송마다 바꾸면 도착한 `HELLO_ACK`이 어느 nonce에 대한 응답인지 맞출 수 없다. 이전 시도의 nonce는 폐기 목록에 2분간 보관하고 재사용하지 않는다.
 
-`virtual_ip`의 소비자: 수신 측은 제어 평면이 알려준 상대의 가상 IP와 비교한다. 다르면 폐기하고 `drop_vip_mismatch`를 올린다.
+`virtual_ip`의 소비자: 수신 측은 제어 평면이 알려준 그 세션의 상대 가상 IP와 비교한다. 다르면 폐기하고 `drop_vip_mismatch`를 올린다.
 
 **probe nonce.** 10.4 (c)의 경로 검증용 `HELLO`는 시도 nonce가 아니라 별도의 **probe nonce**를 쓴다. 잠정 경로마다 하나씩 뽑아 5초간 별도 표에 보관한다. "시도당 하나"라는 위 규칙은 시도 nonce에만 적용된다. 두 종류를 같은 표에 섞으면 경로 검증 응답과 핸드셰이크 응답을 구분할 수 없다.
 
@@ -596,7 +596,7 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 | 4 | `type`이 5장 목록에 있음 | `drop_unknown_type` |
 | 5 | `payload_length == len - HEADER_SIZE` | `drop_length` |
 | 6 | 타입별 길이 규정 충족: `HELLO`/`HELLO_ACK` 정확히 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` 는 5.7 이 정한 `5 + 9 * count` | `drop_type_length` |
-| 7 | `peer_id`가 이 방의 상대 피어 ID와 일치 | `drop_unknown_peer` |
+| 7 | `peer_id`가 세션이 있는 피어의 ID와 일치 (5.7) | `drop_unknown_peer` |
 | 8 | `session_epoch`가 폐기 목록에 없음 | `drop_retired_epoch` |
 
 ### 8.2 epoch 및 출발지 검사
@@ -617,7 +617,7 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 
 | 타입 | 규칙 |
 |------|------|
-| `HELLO` | `virtual_ip`가 상대의 가상 IP와 일치할 것(5.1). epoch 고정 여부와 무관하게 수용. 출발지가 후보 집합에 있을 것을 요구하지 않는다(7장 출발지 위생은 이미 통과했다). 9.3 epoch 규칙 적용 |
+| `HELLO` | `virtual_ip`가 그 세션의 상대 가상 IP와 일치할 것(5.1). epoch 고정 여부와 무관하게 수용. 출발지가 후보 집합에 있을 것을 요구하지 않는다(7장 출발지 위생은 이미 통과했다). 9.3 epoch 규칙 적용 |
 | `HELLO_ACK` (시도 nonce echo, epoch 미고정 또는 고정값과 일치) | `echo_nonce`가 **우리가 이번 시도에서 보낸 nonce**와 일치. 핸드셰이크 증거로 쓰고(`got_ack`), epoch가 미고정이면 이 패킷으로 고정한다 |
 | `HELLO_ACK` (시도 nonce echo, epoch가 고정값과 다름) | 폐기, `drop_stale_epoch` |
 | `HELLO_ACK` (probe nonce echo) | `echo_nonce`가 활성 probe nonce 중 하나와 일치하고 출발지가 그 probe를 보낸 주소와 같을 것. **해당 잠정 경로만 검증한다.** `got_ack`를 세우지 않고 epoch도 고정하지 않는다 |
@@ -660,7 +660,7 @@ epoch별로 상태를 유지한다"고 한 것이 이 뜻이다. 상대가 재�
 | 11 | 내부 IHL이 5~15이고 `IHL*4 <= payload_length` | `drop_inner_ihl` |
 | 12 | 내부 IPv4 헤더 체크섬 유효 | `drop_inner_checksum` |
 | 13 | 내부 `total_length == payload_length` | `drop_inner_length` |
-| 14 | 내부 출발지 IP == 상대 피어의 가상 IP | `drop_inner_src` |
+| 14 | 내부 출발지 IP == 그 세션의 상대 가상 IP | `drop_inner_src` |
 | 15 | 내부 목적지 IP == 자신의 가상 IP | `drop_inner_dst` |
 
 14번과 15번은 오배달과 라우팅 버그로 인한 우발적 주입을 막는 위생 장치다. 2장에서 밝힌 대로 **공격 방어 수단이 아니다.**

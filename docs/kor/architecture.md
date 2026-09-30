@@ -36,21 +36,25 @@
                  |                                |
                  +----------------+---------------+
                                   |
-              +-------------------+-------------------+
-              |                                       |
-      +-------v---------+                    +--------v--------+
-      | Windows Client A|                    | Windows Client B|
-      |  Wintun Adapter |                    |  Wintun Adapter |
-      |  Router         |                    |  Router         |
-      |  Tunnel         |<==================>|  Tunnel         |
-      |  Hole Punch     |   Direct P2P UDP   |  Hole Punch     |
-      |  STUN Client    |   (게임 트래픽)      |  STUN Client    |
-      |  Telemetry      |                    |  Telemetry      |
-      +-------+---------+                    +--------+--------+
-              |                                       |
-      Minecraft Server                         Minecraft Client
-        10.100.0.1:25565                          10.100.0.2
+            +---------------------+---------------------+-- ...
+    +-------v---------+   +-------v---------+   +-------v---------+
+    | Windows Host    |   | Windows Player 1|   | Windows Player 2|
+    |  Wintun Adapter |   |  Wintun Adapter |   |  Wintun Adapter |
+    |  Router         |   |  Router         |   |  Router         |
+    |  Tunnel         |   |  Tunnel         |   |  Tunnel         |
+    |  Hole Punch     |   |  Hole Punch     |   |  Hole Punch     |
+    |  STUN Client    |   |  STUN Client    |   |  STUN Client    |
+    |  Telemetry      |   |  Telemetry      |   |  Telemetry      |
+    +-+-+-+-----------+   +--------+--------+   +--------+--------+
+      | | |                        |                     |
+      | | +==== Direct P2P UDP ====+                     |
+      | +================ Direct P2P UDP ================+
+      |
+    Minecraft Server      Minecraft Client      Minecraft Client
+      10.100.0.1:25565      10.100.0.2            10.100.0.3
 ```
+
+**플레이어는 둘만 그렸다.** 인원 상한과 터널을 맺는 범위는 [`spec.md`](spec.md) FR-4 가 갖는다.
 
 제어 평면이 죽어도 **이미 수립된 P2P 터널은 계속 동작**해야 한다. 제어 평면은 세션
 수립에만 필요하다.
@@ -218,8 +222,8 @@ stun.nextcloud.com:3478
 > **왜.** 재참가가 없으므로(`control_plane.md` 4.3 `join_room`) 그 값을 사람이 나를 이유가
 > 없다. 쓰는 데가 없는 비밀을 화면과 셸 기록에 남기지 않는다.
 
-**방 코드도 표준 출력이다.** 호스트는 `create_room` 응답의 `room_id` 를 상대에게 전해야 한다.
-표준 오류의 로그(9장)에는 싣지 않는다.
+**방 코드도 표준 출력이다.** 호스트는 `create_room` 응답의 `room_id` 를 함께 할 플레이어들에게
+전해야 한다. 표준 오류의 로그(9장)에는 싣지 않는다.
 
 > **왜.** 로그 파일이 곧 방 코드 목록이 되면 로그 열람이 방 탈취다. 표준 출력은 사람이 보는
 > 화면이고 리다이렉트하지 않는 것이 기본이다.
@@ -509,7 +513,7 @@ Host                 AWS (조율 / 텔레메트리)            Player
 
 - 대역: `10.100.0.0/24`
 - `10.100.0.1`: 방 생성자(호스트). 게임 서버가 여기서 돈다.
-- `10.100.0.2` 이상: 참가자. 제어 평면이 순차 할당한다.
+- `10.100.0.2` 부터 `10.100.0.5` 까지: 참가자 넷. 제어 평면이 순차 할당한다.
 - 가상 IP는 방 단위로 유효하다. 방이 사라지면 전부 회수하고, 방이 살아 있는 동안에도 호스트가
   세션이 끝난 피어를 알리면 그 자리를 회수해 다음 참가자가 쓴다. 회수 규칙과 방이 언제
   사라지는지는 [`control_plane.md`](control_plane.md) 2.5 절(가상 IP 풀)과 5.1 절(방)이
@@ -519,6 +523,11 @@ Host                 AWS (조율 / 텔레메트리)            Player
 플레이어는 Minecraft 서버 주소란에 `10.100.0.1:25565`를 입력한다. 공인 IP나 포트를 알 필요가 없다.
 
 Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리한다. 클라이언트가 어댑터 생성 시 Windows IP Helper API로 이 경로를 직접 설정하고, 종료 시 제거한다. Wintun은 주소나 라우트를 설정해 주지 않는다.
+
+**플레이어끼리는 가상 IP 로도 통신하지 않는다** ([`spec.md`](spec.md) FR-4). 위 경로 설정이
+`10.100.0.0/24` 전체를 가상 어댑터로 보내므로 플레이어가 다른 플레이어의 주소로 보낸 패킷도
+어댑터까지는 들어온다. 그 패킷을 버리는 것은 운영체제가 아니라 클라이언트의 라우팅 표이고,
+판정은 [`protocol.md`](protocol.md) 8.5 송신 측 검증이 갖는다.
 
 ---
 
@@ -753,6 +762,7 @@ Sangtachi/
 |   |   +-- tunnel/      packet, tunnel, router
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
+|   |   +-- ui/          main_window
 |   |   +-- control/     control_client
 |   +-- CMakeLists.txt
 +-- control-server/      모듈 책임은 control_plane.md 7.1
@@ -814,5 +824,6 @@ Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, 
 - **암호화 및 피어 인증**: 터널 페이로드는 평문이다. 스트레치 목표.
 - **릴레이 폴백 (TURN 유사)**: 직접 연결 실패 시 대안 경로 없음. 스트레치 목표.
 - **완전한 ICE**: 초기에는 최소 연결 수립 절차만. Phase 9에서 ICE 개념과 비교 분석만 수행.
-- **3자 이상 메시**: 초기는 2 피어. 라우팅 테이블 구조는 확장 가능하게 두되 구현하지 않는다.
+- **6명 이상과 플레이어 간 메시**: 한 방은 최대 5명이고 터널은 호스트와 각 플레이어 사이에만
+  맺는다 ([`spec.md`](spec.md) FR-4). 6자 이상은 스트레치 목표다.
 - **macOS / 모바일**: 지원하지 않는다. Linux는 시간이 남으면 상호 운용성만 검토.

@@ -34,5 +34,5 @@ python tools/docgate/docgate.py --root .   # 루트 지정
 cd tools/docgate && python -m unittest test_docgate
 ```
 
-109건이다. **판정을 고치기 전에 케이스를 먼저 쓴다.** 무엇을 일부러 지원하지 않는지도
+111건이다. **판정을 고치기 전에 케이스를 먼저 쓴다.** 무엇을 일부러 지원하지 않는지도
 같은 이름의 케이스로 고정해 두었다. 자세한 것은 `docgate.py` 첫머리에 있다.

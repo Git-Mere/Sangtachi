@@ -740,7 +740,8 @@ Connection: close\r\n
 | 2 | 호스트인가 | 호스트면 남는다 |
 | 3 | `candidates` | 속성이 없으면 빈 것이다(6.3 의 조건과 같다). 리스트가 아니면 건너뛴다. `reason=candidates_unreadable`. 비어 있지 않으면 남는다 |
 | 4 | `joined_at_ms` 가 정수인가 | 아니면 건너뛴다. `reason=joined_at_unreadable` |
-| 5 | 유예가 지났는가 | 위 셋째 조건. 지났으면 지운다 |
+| 5 | 유예가 지났는가 | 위 셋째 조건. 지나지 않았으면 남는다 |
+| 6 | 지울 키를 만들 수 있는가 | `virtual_ip` 와 `client_nonce` 가 문자열이 아니면 건너뛴다. `reason=keys_unreadable`. 문자열이면 지운다 |
 
 > **왜 건너뛰나.** 판정 불가를 회수로 바꾸면 손상된 항목 하나가 살아 있는 피어를 지운다. 요청
 > 전체를 `internal` 로 끝내면 그 방의 임대 갱신까지 막힌다.
@@ -1013,9 +1014,9 @@ Connection: close\r\n
 
 | `sk` | 속성 | 뜻 |
 |------|------|-----|
-| `ROOM` | `created_at_ms`, `expires_at_ms`, `host_peer_id`, `ttl` | 방. `expires_at_ms` 는 `host_report` 가 민다(4.6) |
+| `ROOM` | `created_at_ms`, `expires_at_ms`, `host_peer_id`, `ttl` | 방. 처음 `expires_at_ms` 는 `create_room` 의 `now + ROOM_LEASE_S * 1000` 이고 `host_report` 가 민다(4.6) |
 | `PAIR#<lo>-<hi>` | `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms`, `ttl` | 쌍의 준비 완료. `lo` 와 `hi` 는 두 `peer_id` 를 수의 오름차순으로 놓고 10진수로 적는다. `9` 가 `10` 보다 앞이다. 7.4 시계가 세 값을 쓴다 |
-| `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `candidates`(리스트), `client_nonce`, `joined_at_ms`, `ttl` | 피어. `peer_id` 는 `sk` 에서 10진수로 적는다. `peer_token` 은 원문이다(2.3) |
+| `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `candidates`(리스트), `client_nonce`, `joined_at_ms`, `ttl` | 피어. `peer_id` 는 `sk` 에서 10진수로 적는다. `peer_token` 은 원문이다(2.3). `candidates` 는 첫 `register_candidate` 전에는 쓰지 않는다 |
 | `VIP#<virtual_ip>` | `peer_id`, `ttl` | 가상 IP 선점 표식. `<virtual_ip>` 는 점 십진 |
 | (pk = `NONCE#<client_nonce>`, sk = `NONCE`) | `room_id`, `peer_id`, `ttl` | 멱등성 키 → 방과 피어 대응. **pk 가 방이 아니라 nonce 다** |
 
@@ -1055,6 +1056,12 @@ Connection: close\r\n
 
 `NONCE#` 를 1번에 둔 근거는 아래 "왜 이렇게 정했나" 에 있다.
 
+- **`create_room` 은 1번 다음에 5번을 본다.** `room_id` 가 살아 있는 방과 부딪히면 `ROOM` put 과
+  함께 `VIP#10.100.0.1` 과 `PEER#` 도 실패하는데, `create_room` 에는 다음 주소가 없다. `ROOM` put 이
+  성공했는데 `PEER#` 나 `VIP#` 만 실패하면 위 쓰기 표대로 `internal` 이다
+- 조건 실패와 조건 실패가 아닌 사유가 섞이면, `NONCE#` 조건 실패가 있을 때만 1번이다. 그 밖에는
+  조건 실패가 아닌 사유나 모르는 사유가 하나라도 있으면 `internal` 이다
+
 **단일 항목 update(`register_candidate`, `host_report` 의 확인)는 방 생존을 조건에 넣지
 않는다.** `host_report` 의 갱신은 예외다. 그 쓰기의 목적이 방의 만료 시각이므로 조건에
 방 생존이 들어간다(위 표). 7.3 연산 처리 순서대로 만료를 먼저 판정한 뒤 쓰므로, 걸리는 것은 읽기와 쓰기 사이
@@ -1092,6 +1099,8 @@ Connection: close\r\n
   `joined`)다. 4.6 서버 회수의 삭제 조건이 `attribute_not_exists(candidates)` 를 빈 것으로 보는
   것과 같다
 - 4.6 서버 회수의 판정은 요청을 끝내지 않고 그 피어만 건너뛴다
+
+방 파티션에서 위 항목 표에 없는 `sk` 가 나오면 판정 불가이고 `internal` 이다.
 
 전부 `ConsistentRead=true` 다(저장 1). **토큰만으로 피어를 찾는 형식을 두지 않는다.** 모든
 인증 연산이 `peer_id` 를 함께 받으므로 그 키로 바로 읽는다. 토큰으로 찾으려면 피어 전부를
@@ -1158,11 +1167,15 @@ Connection: close\r\n
 
 | 항목 | `ttl` 값 |
 |------|----------|
-| 방의 모든 항목 (`ROOM`, `PEER#`, `VIP#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S` |
+| 방의 모든 항목 (`ROOM`, `PEER#`, `VIP#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S`. `expires_at_ms` 는 그 항목을 쓰는 시점의 값이다 |
 
-같은 방의 항목은 같은 `ttl` 을 갖는다. 방이 만료된 뒤 하루가 지나면 DynamoDB 가 지운다.
+갱신이 끝난 뒤 방 파티션의 항목은 같은 `ttl` 을 갖는다. 방이 만료된 뒤 하루가 지나면 DynamoDB 가
+지운다.
 
-**임대를 갱신하면 그 방의 모든 항목의 `ttl` 을 같이 민다.** `ROOM` 만 밀면 오래 산 방의
+**임대를 갱신하면 방 파티션의 모든 항목(`ROOM`, `PEER#`, `VIP#`, `PAIR#`)의 `ttl` 을 같이 민다.**
+`NONCE#` 는 밀지 않는다. 파티션이 달라 갱신의 `Query` 에 나오지 않고, 그 일은 응답을 잃은 요청의
+재시도가 끝나면 끝난다. 그래서 오래 산 방의 `NONCE#` 는 그 피어가 들어온 때로부터 하루 남짓 뒤에
+먼저 지워진다. 그 뒤 같은 nonce 로 온 요청은 새 참가다. `ROOM` 만 밀면 오래 산 방의
 `PEER#`·`VIP#`·`PAIR#` 가 먼저 지워지고, 방은 살아 있는데 피어가 사라진다. 쓰기는 4.6
 `host_report` 의 갱신 쓰기가 한다(6.3).
 
@@ -1262,6 +1275,10 @@ on_connection(reader, writer):
 
 **`ops.dispatch` 의 계약.** 성공이면 연산별 필드의 dict 를 돌려주고 서버가 `ok: true` 를 붙인다.
 오류이면 4.1 공통 봉투의 오류 코드를 담은 예외를 던진다. 성공의 HTTP 상태는 200 이다.
+
+**저장소 오류는 두 길로 `internal` 이 된다.** 트랜잭션 취소는 `store.py` 가 6.3 취소 사유 표대로
+판정해 오류 코드로 바꾼다. 그 밖의 `boto3` 오류(스로틀, 연결 실패, 시간 초과)는 예외로 올라와 포괄
+처리가 답하고 `internal_error` 를 올린다. 응답은 같고 카운터만 다르다.
 
 **`boto3` 호출은 블로킹으로 취급한다.** `asyncio.to_thread` 로 보낸다.
 
@@ -1394,7 +1411,7 @@ elapsed_since_ready_ms(room):
 로컬 시험은 다르다. DynamoDB local 은 자격 증명을 검사하지 않지만 `boto3` 는 자격 증명을 찾지
 못하면 요청을 보내지 않는다(`NoCredentialsError`). 그래서 시험 하네스가 `boto3` 표준 변수에 실제
 키가 아닌 값을 넣는다. 이 값이 실제 AWS 로 가지 않도록 하네스는 엔드포인트가 루프백일 때만
-저장소 시험을 돈다.
+저장소 시험을 돈다. 사용자의 AWS 프로파일과 설정 파일도 읽지 않게 막는다.
 
 > **왜.** 액세스 키를 받는 변수를 두면 누군가 그것을 쓴다.
 
@@ -1603,4 +1620,5 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 그 항�
 | 두 서비스가 같은 테이블을 쓰는가, IAM 을 나누는가 | [ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 가 Phase 9 로 미뤘다 |
 | 자동 재시도와 살아남은 쪽의 재폴링 | [`protocol.md`](protocol.md) 10.4 미정 항목. 재참가가 없으므로(4.3) 그 절차는 새 참가 위에 서야 한다 |
 | TLS, 호출자 인증 | 스트레치. 1.2 |
+| 서버가 DynamoDB 를 부를 때의 시간 제한과 재시도 횟수 | 지금은 `boto3` 기본값이다. 클라이언트는 요청 한 건을 8.2 시간 제한 안에 끝내지 못하면 포기하므로 그보다 오래 걸리는 저장소 호출은 자리(`MAX_INFLIGHT`)만 차지한다. 배포한 테이블의 지연을 잰 뒤 정한다. [`roadmap.md`](roadmap.md) Phase 3 배포 |
 | `ROOM_LEASE_S`(120)와 신호 간격 두 값의 적정성 | Phase 8 시연 뒤. 호스트가 죽은 뒤 방이 사라지기까지와, 늦게 온 참가자가 기다리는 시간으로 판단한다 |

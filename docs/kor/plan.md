@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 2 까지 끝났다. **Phase 3 진행 중이다.** 케이스 표 이동과 변이 시험이 끝났고 다음은 저장소다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 2 까지 끝났다. **Phase 3 진행 중이다.** 케이스 표 이동과 변이 시험, 저장소 계층과 하네스가 끝났고 다음은 `ops.dispatch` 와 수락 루프다 |
 | 대기 | 이 파일 "대기 중인 것" | 두 번째 기기나 측정이 있어야 풀린다 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 11건 |
@@ -16,7 +16,7 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 제어 서버를 DynamoDB local 로 구현한다. `store.py`, `ops.dispatch`, 수락 루프. 저장소 시험의 하네스(자격 증명 대체값, 루프백 엔드포인트 확인)도 같이 | 연산 다섯과 저장 계약은 [`control_plane.md`](control_plane.md) 가 정했다. DynamoDB local 을 띄우는 명령은 `control-server/README.md` 에 있다. 아래 "구현 때 같이 볼 자리" 의 제어 서버 줄을 같이 본다 |
+| 1 | 제어 서버의 `ops.dispatch`(연산 다섯과 7.3 처리 순서)와 수락 루프(`MAX_INFLIGHT`, 7.5 로그와 카운터, 7.6 설정). `store.py` 와 저장소 시험 하네스는 있다 | 연산 다섯과 저장 계약은 [`control_plane.md`](control_plane.md) 가 정했다. `store.py` 는 한 번만 시도하므로 주소 순회와 재추첨은 `ops` 가 한다. 시험 명령은 `control-server/README.md` 에 있다. 아래 "구현 때 같이 볼 자리" 의 제어 서버 줄을 같이 본다 |
 | 2 | EC2 에 배포하고 `roadmap.md` Phase 3 검증의 "배포" 묶음을 돌린다 | 권한(`ConditionCheckItem`)과 용량 계산이 재지 않은 값이다 |
 | 3 | 클라이언트의 `[control]` 스레드, 로비 명령, `FAIL` 줄 | `roadmap.md` Phase 3 작업의 클라이언트 쪽이다 |
 

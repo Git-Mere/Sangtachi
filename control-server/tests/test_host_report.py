@@ -151,7 +151,8 @@ def test_reclaim(case):
 # ---------------------------------------------------------------------------
 # 표 밖 행. 출처는 control_plane.md 4.6 서버 회수의 판정 순서 표다.
 #   판정 순서: peer_id 판독 -> 호스트면 KEEP -> 후보 판독 -> 후보 있으면 KEEP -> joined_at_ms 판독
-#   -> 경계. 읽을 수 없으면 SKIP 이고 회수하지 않는다 (위 표 마지막 행과 같은 원칙).
+#   -> 경계 -> 지울 키(virtual_ip, client_nonce) 판독. 읽을 수 없으면 SKIP 이고 회수하지 않는다
+#   (위 표 마지막 행과 같은 원칙).
 #   candidates 속성이 없으면 빈 것이다. 6.3 서버 회수 조건의 attribute_not_exists(candidates) 와 같다.
 # 모든 행이 now > J + G 다. 판독 규칙이 없으면 회수로 떨어지는 시각이다.
 # ---------------------------------------------------------------------------
@@ -182,6 +183,17 @@ RECLAIM_READ = [
      "reason": None, "note": "후보가 있으면 joined_at_ms 를 볼 필요가 없다. 로그를 내지 않는다"},
     {"id": "joined-at-absent-host", "peer": peer(peer_id=HOST_ID, joined_at_ms=...), "expect": KEEP,
      "reason": None, "note": "호스트는 joined_at_ms 를 볼 필요가 없다"},
+    # 판정 순서 6번. 유예가 지났을 때 지울 키(VIP#, NONCE#)를 만들 수 있는가.
+    {"id": "keys-vip-absent", "peer": peer(virtual_ip=...), "expect": SKIP, "reason": "keys_unreadable",
+     "note": "virtual_ip 가 없으면 VIP# 키를 만들 수 없다. 지우지 않는다"},
+    {"id": "keys-vip-not-str", "peer": peer(virtual_ip=167772162), "expect": SKIP, "reason": "keys_unreadable",
+     "note": "문자열이 아니면 없는 것과 같다"},
+    {"id": "keys-nonce-absent", "peer": peer(client_nonce=...), "expect": SKIP, "reason": "keys_unreadable",
+     "note": "client_nonce 가 없으면 NONCE# 키를 만들 수 없다"},
+    {"id": "keys-nonce-not-str", "peer": peer(client_nonce=7), "expect": SKIP, "reason": "keys_unreadable",
+     "note": "문자열이 아니면 없는 것과 같다"},
+    {"id": "keys-absent-before-grace", "peer": peer(virtual_ip=..., joined_at_ms=J + 2), "expect": KEEP,
+     "reason": None, "note": "5번이 6번보다 먼저다. 유예가 남았으면 키를 볼 필요 없이 남고 로그를 내지 않는다"},
 ]
 
 

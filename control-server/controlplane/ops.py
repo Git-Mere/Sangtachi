@@ -89,7 +89,8 @@ def reclaim_verdict(peer: dict, host_peer_id: int, now_ms: int) -> tuple[str, st
 
     SKIP 은 판정 불가라 남기는 것이다. 부르는 쪽이 7.5 peer.reclaim_skipped 를 남긴다.
     판정 순서: peer_id 판독 -> 호스트면 KEEP -> 후보 판독 -> 후보 있으면 KEEP -> joined_at_ms 판독
-    -> 경계. candidates 속성이 없으면 빈 것이다 (6.3 서버 회수 조건과 같다).
+    -> 경계(지나지 않았으면 KEEP) -> 지울 키(virtual_ip, client_nonce) 판독. candidates 속성이 없으면
+    빈 것이다 (6.3 서버 회수 조건과 같다).
     """
     peer_id = peer.get("peer_id")
     if not _is_int(peer_id):
@@ -104,6 +105,8 @@ def reclaim_verdict(peer: dict, host_peer_id: int, now_ms: int) -> tuple[str, st
     joined_at_ms = peer.get("joined_at_ms")
     if not _is_int(joined_at_ms):
         return SKIP, "joined_at_unreadable"
-    if joined_at_ms + JOIN_REGISTER_GRACE_S * 1000 <= now_ms:
-        return RECLAIM, None
-    return KEEP, None
+    if joined_at_ms + JOIN_REGISTER_GRACE_S * 1000 > now_ms:
+        return KEEP, None
+    if not isinstance(peer.get("virtual_ip"), str) or not isinstance(peer.get("client_nonce"), str):
+        return SKIP, "keys_unreadable"
+    return RECLAIM, None

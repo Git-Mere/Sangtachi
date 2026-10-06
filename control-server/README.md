@@ -5,9 +5,9 @@ Sangtachi 제어 서버. 설계의 출처는 [`docs/kor/control_plane.md`](../do
 
 ## 지금 있는 것
 
-`controlplane/` 에는 케이스 표가 판정하는 순수한 부분만 있다. 수락 루프, `ops.dispatch`,
-`store.py` 는 아직 없다. 그래서 저장소가 있어야 도는 표의 행은 `needs="store"` 로 표시되어 있고
-건너뛴다.
+`controlplane/` 에는 케이스 표가 판정하는 순수한 부분과 저장소 계층(`store.py`)이 있다. 수락
+루프와 `ops.dispatch` 는 아직 없다. 그래서 `test_host_report.py` 의 `needs="store"` 8행은
+`--store` 를 줘도 건너뛴다.
 
 | 파일 | 무엇 |
 |------|------|
@@ -26,14 +26,23 @@ Windows 의 개발 기기에서 돌린 명령이다. `control-server/` 에서 �
 py -3.14 -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt
 .venv/Scripts/python -m pytest -q
-.venv/Scripts/python tests/mutate.py
+.venv/Scripts/python -m pytest -q --store
+.venv/Scripts/python tests/mutate.py --store
 ```
 
-- `pytest` 는 건너뛴 행의 수를 함께 낸다. 그 수가 `needs="store"` 행의 수와 다르면 무언가 다른
-  이유로 건너뛴 것이다
+- `--store` 가 없으면 저장소 시험(`store` 표시)을 건너뛴다. 있으면 아래 DynamoDB local 이 떠
+  있어야 하고, 닿지 않으면 건너뛰지 않고 실패한다. 엔드포인트는 `--store-endpoint` 로 바꾸며
+  루프백 주소만 받는다
+- `pytest` 는 건너뛴 행의 수를 함께 낸다. `store` 표시 없이 건너뛰는 시험은 수집 단계에서 멈춘다
 - `mutate.py` 의 마지막 줄이 `VERDICT: pass` 여야 한다. 표 하나만 돌리려면 이름을 준다
   (`tests/mutate.py room_id`). 이름은 `tests/mutants/` 의 파일 이름이다
-- 변이마다 pytest 를 새 프로세스로 띄운다. 변이 하나에 상한 120초가 걸려 있다
+- `mutate.py` 를 `--store` 없이 돌리면 저장소 변이의 행이 원본에서 건너뛰어지므로 판정하지 않고
+  멈춘다(종료 코드 2). 저장소 변이가 없는 표만 줄 때는 `--store` 없이 돈다
+- 변이마다 pytest 를 새 프로세스로 띄우고, 그 변이의 `kills` 행만 원본과 변이로 한 번씩 돌린다.
+  pytest 실행 한 번에 상한 120초가 걸려 있다
+- `-j N` 으로 N 개씩 동시에 돈다. 기본값 8. 전체(323건)가 `--store -j 8` 로 약 3분 걸렸다
+- DynamoDB local 은 테이블 생성이 동시에 몰리면 `InternalFailure` 를 낸다. 시험 하네스의 관리용
+  클라이언트가 재시도로 받는다
 
 ## 시험이 잘못된 코드를 읽지 않게 하는 장치
 
@@ -62,4 +71,4 @@ docker stop sangtachi-ddb
 - `boto3` 는 자격 증명이 없으면 요청을 보내지 않는다. 실제 키가 아닌 값을 넣는 이유는
   `control_plane.md` 7.6 설정과 배포에 있다
 
-저장소 시험을 돌리는 방법은 그 시험이 생길 때 여기에 넣는다.
+저장소 시험을 돌리는 방법은 위 "시험" 절에 있다.

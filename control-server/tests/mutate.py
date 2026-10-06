@@ -8,6 +8,16 @@ control_plane.md 9장 검증이 정한 것을 기계로 돈다. 규칙 한 줄�
 
     .venv/Scripts/python tests/mutate.py              # 전부
     .venv/Scripts/python tests/mutate.py room_id      # tests/mutants/room_id.py 만
+    .venv/Scripts/python tests/mutate.py --store store # 저장소 시험. pytest 에 --store 를 넘긴다
+
+옵션은 둘이다. 모르는 옵션은 ERROR 다.
+
+    --store   원본 시험과 모든 변이의 pytest 에 그대로 넘긴다
+    -j N      변이를 N 개씩 동시에 돌린다. 기본값은 DEFAULT_JOBS 다. -j 1 은 차례로 돈다
+
+변이마다 pytest 는 그 변이의 kills 행만 돌린다. 판정이 kills 행만 보기 때문이다. 그래서 행이
+단독으로 돌 때와 파일째 돌 때 결과가 다르면 판정이 틀어진다. 이를 막으려고 변이마다 같은 행을
+원본으로도 단독으로 돌려, 원본이 그 행들을 통과하지 못하면 그 변이는 ERROR 다.
 
 변이 목록은 tests/mutants/<표>.py 의 MUTANTS 다. 원소는 dict 이고 키는 MUTANT_KEYS 다.
 
@@ -27,7 +37,9 @@ control_plane.md 9장 검증이 정한 것을 기계로 돈다. 규칙 한 줄�
     ERROR     위 셋으로 읽을 수 없다. 수집 실패, 시간 초과, 원본에서 old 를 찾지 못함 등
 
 변이를 넣기 전에 원본으로 같은 시험을 한 번 돌린다. 원본이 떨어지면 변이 판정이 뜻이 없으므로
-멈춘다. 종료 코드는 전부 KILLED 일 때만 0 이다.
+멈춘다. kills 의 행이 원본에서 PASSED 로 나오지 않아도 멈춘다. 건너뛴 행(--store 없이 돌린 저장소
+시험)이나 없는 노드 id 는 변이가 무엇이든 떨어질 수 없어 SURVIVED 로 잘못 읽히기 때문이다.
+종료 코드는 전부 KILLED 일 때만 0 이다.
 """
 
 from __future__ import annotations
@@ -39,6 +51,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +62,9 @@ MUTANT_KEYS = frozenset({"id", "path", "old", "new", "kills", "why"})
 TIMEOUT_S = 120
 _ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _REPORT = re.compile(r"^(FAILED|ERROR) (\S+?)(?: - .*)?$")
+_PASSED = re.compile(r"^PASSED (\S+)$")
+PYTEST_FLAGS = frozenset({"--store"})
+DEFAULT_JOBS = 8
 
 
 @dataclass(frozen=True)
@@ -143,6 +159,45 @@ def report_nodes(output: str) -> tuple[set[str], set[str]]:
     return failed, errored
 
 
+def passed_nodes(output: str) -> set[str]:
+    """pytest -rA 요약 줄에서 PASSED 노드를 모은다."""
+    out: set[str] = set()
+    for line in output.splitlines():
+        hit = _PASSED.match(line.strip())
+        if hit:
+            out.add(hit.group(1))
+    return out
+
+
+def unrun_kills(output: str, mutants: list[Mutant]) -> list[str]:
+    """원본 시험에서 PASSED 로 나오지 않은 kills 행. 비어 있어야 변이 판정이 뜻이 있다."""
+    passed = passed_nodes(output)
+    return sorted({k for m in mutants for k in m.kills if k not in passed})
+
+
+def parse_args(argv: list[str]) -> tuple[list[str], list[str], int]:
+    """(변이 파일 이름, pytest 에 넘길 옵션, 동시 실행 수). 모르는 옵션은 ValueError."""
+    names: list[str] = []
+    flags: list[str] = []
+    jobs = DEFAULT_JOBS
+    args = list(argv)
+    while args:
+        arg = args.pop(0)
+        if arg == "-j" or arg.startswith("-j"):
+            value = arg[2:] if arg != "-j" else (args.pop(0) if args else "")
+            if not re.fullmatch(r"[0-9]+", value) or not 1 <= int(value) <= 64:
+                raise ValueError(f"-j 는 1~64 의 정수다: {value!r}")
+            jobs = int(value)
+        elif arg.startswith("-"):
+            if arg not in PYTEST_FLAGS:
+                raise ValueError(f"모르는 옵션 {arg!r}")
+            if arg not in flags:
+                flags.append(arg)
+        else:
+            names.append(arg)
+    return names, flags, jobs
+
+
 def judge(exit_code: int | None, output: str, kills: tuple[str, ...]) -> Outcome:
     """pytest 한 번의 결과를 판정한다. exit_code None 은 시간 초과다."""
     if exit_code is None:
@@ -167,9 +222,11 @@ def judge(exit_code: int | None, output: str, kills: tuple[str, ...]) -> Outcome
     return Outcome("SURVIVED", f"다른 행만 떨어졌다: {sorted(failed)[:5]}")
 
 
-def run_pytest(src: Path, targets: list[str]) -> tuple[int | None, str]:
+def run_pytest(src: Path, targets: list[str], flags: list[str] | tuple[str, ...] = (),
+               report: str = "-rfE") -> tuple[int | None, str]:
     env = dict(os.environ, CP_SRC=str(src), PYTHONDONTWRITEBYTECODE="1")
-    cmd = [sys.executable, "-m", "pytest", "-q", "-rfE", "--no-header", "-p", "no:cacheprovider", *targets]
+    cmd = [sys.executable, "-m", "pytest", "-q", report, "--no-header", "-p", "no:cacheprovider", *flags,
+           *targets]
     try:
         proc = subprocess.run(cmd, cwd=CP_ROOT, env=env, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=TIMEOUT_S)
@@ -182,8 +239,12 @@ def copy_package(dest: Path) -> None:
     shutil.copytree(CP_ROOT / PACKAGE, dest / PACKAGE, ignore=shutil.ignore_patterns("__pycache__"))
 
 
-def run_one(m: Mutant) -> Outcome:
-    files = sorted({k.split("::", 1)[0] for k in m.kills})
+def run_one(m: Mutant, original: Path, flags: list[str] | tuple[str, ...] = ()) -> Outcome:
+    """kills 행만 원본과 변이로 한 번씩 돌린다. original 은 원본 패키지를 복사해 둔 폴더다."""
+    nodes = sorted(set(m.kills))
+    code, out = run_pytest(original, nodes, flags)
+    if code != 0:
+        return Outcome("ERROR", f"원본이 이 행들을 단독으로 통과하지 못한다 (종료 코드 {code})")
     with tempfile.TemporaryDirectory(prefix="cp-mutant-") as tmp:
         tmp_path = Path(tmp)
         copy_package(tmp_path)
@@ -194,32 +255,41 @@ def run_one(m: Mutant) -> Outcome:
             target.write_text(apply(target.read_text(encoding="utf-8"), m), encoding="utf-8")
         except ValueError as exc:
             return Outcome("ERROR", str(exc))
-        code, out = run_pytest(tmp_path, files)
+        code, out = run_pytest(tmp_path, nodes, flags)
     return judge(code, out, m.kills)
 
 
-def baseline(mutants: list[Mutant]) -> tuple[bool, str]:
+def baseline(mutants: list[Mutant], flags: list[str] | tuple[str, ...] = ()) -> tuple[bool, str]:
     files = sorted({k.split("::", 1)[0] for m in mutants for k in m.kills})
     with tempfile.TemporaryDirectory(prefix="cp-baseline-") as tmp:
         copy_package(Path(tmp))
-        code, out = run_pytest(Path(tmp), files)
+        code, out = run_pytest(Path(tmp), files, flags, report="-rA")
     return code == 0, out
 
 
 def main(argv: list[str]) -> int:
     try:
-        mutants = load_mutants(argv or None)
+        names, flags, jobs = parse_args(argv)
+        mutants = load_mutants(names or None)
     except ValueError as exc:
         print(f"ERROR 변이 목록: {exc}")
         return 2
-    ok, out = baseline(mutants)
+    ok, out = baseline(mutants, flags)
     if not ok:
         print(out)
         print("ERROR 원본이 시험을 통과하지 못한다. 변이 판정을 하지 않는다")
         return 2
+    unrun = unrun_kills(out, mutants)
+    if unrun:
+        print(out)
+        print(f"ERROR 원본에서 PASSED 로 나오지 않은 kills 행이 있다 (건너뜀이나 없는 노드): {unrun}")
+        return 2
+    with tempfile.TemporaryDirectory(prefix="cp-original-") as orig:
+        copy_package(Path(orig))
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(lambda mu: run_one(mu, Path(orig), flags), mutants))
     counts: dict[str, int] = {}
-    for m in mutants:
-        res = run_one(m)
+    for m, res in zip(mutants, results):
         counts[res.verdict] = counts.get(res.verdict, 0) + 1
         print(f"{res.verdict:8} {m.id}  {res.detail}")
     total = len(mutants)

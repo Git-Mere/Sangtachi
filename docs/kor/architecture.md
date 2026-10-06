@@ -890,6 +890,8 @@ Sangtachi/
 | Python 표준 라이브러리 | `asyncio`, `json` | 표준 라이브러리 |
 | AWS SDK for Python (`boto3`) | 제어 서버와 텔레메트리 서비스의 DynamoDB 접근 | **승인됨** |
 | Catch2 v3 | 시험 케이스 등록, 실행, 실패 보고. 시험 실행 파일에만 링크한다 | **승인됨.** 승인 주체는 [`spec.md`](spec.md) NFR-5 |
+| pytest | 제어 서버의 시험 실행과 실패 보고. 배포하는 서버 프로세스는 import 하지 않는다 | **승인됨.** 시험 전용 ([ADR 0014](decisions/0014-제어-서버-시험-pytest와-docker.md)) |
+| DynamoDB local | 제어 서버 로컬 시험의 저장소. Docker 컨테이너로 띄운다 | **승인됨.** 시험 전용 (ADR 0014) |
 | Qt | 최소 GUI의 창, 위젯, 이벤트 루프. 범위는 `spec.md` FR-15 | **승인됨.** 제품 의존성이라 승인 주체는 교수다 |
 | Amazon DynamoDB | 방·피어 상태와 지표의 영속 저장 | 외부 관리형 서비스 |
 

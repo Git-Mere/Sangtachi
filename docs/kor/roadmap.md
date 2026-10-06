@@ -200,10 +200,12 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 문서에 빠진 값을 만나면 코드에서 정하지 않고 그 문서를 먼저 고친다
   - 저장소를 SQLite에서 바꾼 결정과 그 대가는
     [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)에 있다
-- 로컬 시험은 DynamoDB local 로 돌린다. **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
-- **착수 시 `control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4)를
-  `control-server/tests/` 로 옮기고 문서는 그 파일을 가리키게 고친다.** 표 한 벌이 두 곳에
-  있으면 한쪽만 고쳐져 어긋난다. 옮긴 표마다 변이 시험을 붙인다
+- 로컬 시험은 DynamoDB local 로 돌린다. Docker 컨테이너로 띄운다 ([ADR 0014](decisions/0014-제어-서버-시험-pytest와-docker.md)). **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
+- **`control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4)는
+  `control-server/tests/` 에 두고 문서는 그 파일을 가리킨다.** 표 한 벌이 두 곳에 있으면 한쪽만
+  고쳐져 어긋난다. 표마다 변이 시험을 붙인다(`control-server/tests/mutants/`)
+  - 저장소가 있어야 도는 행(`needs="store"`)은 store 계층을 만들 때 풀고, 그때 store 쪽 변이를
+    붙인다
 - Python 제어 서버를 AWS EC2에 배포. systemd 서비스, 보안 그룹 TCP 8000. **배포 절차를 실제로
   한 번 돌린 뒤 도구로 넣고 문서는 가리킨다** (`control_plane.md` 7.6). 배포 환경과 계정 쪽
   확인 결과도 그 절에 있다
@@ -293,8 +295,8 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 늦은 참가. 이미 한 쌍이 `CONNECTED` 인 방에 새 플레이어가 들어와도 기존 쌍의
   `punch_delay_ms` 기준점이 바뀌지 않고, 새 쌍만 따로 준비 완료가 된다
 
-**케이스 표 전 행 통과.** 아래가 가리키는 `control_plane.md` 의 절은 그 표가 **어디서 왔는지**를
-말한다. 위 작업 절이 표를 `control-server/tests/` 로 옮긴 뒤에는 그 파일이 돌리는 대상이다.
+**케이스 표 전 행 통과.** 아래가 가리키는 `control_plane.md` 의 절은 그 표의 **규칙**을 갖는다.
+표 자체는 그 절이 가리키는 `control-server/tests/` 의 파일에 있다.
 
 - HTTP 파싱 케이스 표(`control_plane.md` 3.3 HTTP 부분집합) 전 행 통과. 특히 `Content-Length` 두 번, `Transfer-Encoding`, 본문 4097 바이트, `HTTP/1.0` 이 거부된다. 행마다 규칙을 지운 변이가 그 행에서 `FAIL` 한다
 - `room_id` 정규화 케이스 표(`control_plane.md` 2.1 room_id) 전 행 통과. `0` 을 `O` 로 고쳐 받는 구현이 걸린다
@@ -327,7 +329,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - Windows 로컬에서는 이 항목을 돌리지 않는다. 돌리면 정상 구현도 떨어진다
 
   > **왜.** `boot_id` 가 없어 프로세스 재시작마다 벽시계 대체로 내려가는 것이 `control_plane.md`
-  > 7.4 케이스 표가 정한 동작이고, 그때 카운터가 1 인 것이 규정이다.
+  > 7.4 시계의 계산 경로가 정한 동작이고, 그때 카운터가 1 인 것이 규정이다.
 
 **로비.** 판정은 표준 출력의 `FAIL` 줄과 요청 로그로 한다. 종료 코드로 하지 않는다
 (`architecture.md` 3.5 기동 입력).

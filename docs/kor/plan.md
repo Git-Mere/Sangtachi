@@ -7,17 +7,17 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 2 까지 끝났다. **Phase 3 착수 전 항목이 전부 닫혔고 다음은 Phase 3 구현이다** |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 2 까지 끝났다. **Phase 3 진행 중이다.** 케이스 표 이동과 변이 시험이 끝났고 다음은 저장소다 |
 | 대기 | 이 파일 "대기 중인 것" | 두 번째 기기나 측정이 있어야 풀린다 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
-| 문서 부채 | 이 파일 "문서 부채" 절 | 8건 |
+| 문서 부채 | 이 파일 "문서 부채" 절 | 11건 |
 
 ## 다음에 할 일
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | `control_plane.md` 의 케이스 표를 `control-server/tests/` 로 옮기고 표마다 변이 시험을 붙인다 | `roadmap.md` Phase 3 작업의 첫 항목이다. 서버 코드보다 먼저다 |
-| 2 | 제어 서버를 DynamoDB local 로 구현한다 | 연산 다섯과 저장 계약은 [`control_plane.md`](control_plane.md) 가 정했다 |
+| 1 | Docker Desktop 을 띄우고 DynamoDB local 컨테이너를 한 번 실제로 돌린 뒤, 그 명령을 `control-server/README.md` "아직 없는 것" 절에 넣는다 | ADR 0014. 이 기기는 Docker 클라이언트만 있고 데몬이 떠 있지 않았다 |
+| 2 | 제어 서버를 DynamoDB local 로 구현한다. `store.py`, `ops.dispatch`, 수락 루프 | 연산 다섯과 저장 계약은 [`control_plane.md`](control_plane.md) 가 정했다. 아래 "구현 때 같이 볼 자리" 의 제어 서버 줄을 같이 본다 |
 | 3 | EC2 에 배포하고 `roadmap.md` Phase 3 검증의 "배포" 묶음을 돌린다 | 권한(`ConditionCheckItem`)과 용량 계산이 재지 않은 값이다 |
 | 4 | 클라이언트의 `[control]` 스레드, 로비 명령, `FAIL` 줄 | `roadmap.md` Phase 3 작업의 클라이언트 쪽이다 |
 
@@ -47,6 +47,8 @@
 | 단계를 마친 뒤 도착한 STUN 응답 | 공개 서버 관측에서 세 번째 서버의 늦은 응답이 `rx.raw` 에만 남고 `stun.result` 도 `drop_*` 카운터도 없었다. 두 번 재현했다. [`protocol.md`](protocol.md) 7장 수신 분류가 그 구간을 정하는지 코드와 대조한다 | Phase 3 |
 | 목록이 정확히 둘일 때의 STUN 성공 경로 | 단위 시험의 성공 케이스가 둘 다 목록 넷이라 소진 판정과 성공 판정의 순서를 바꿔도 통과한다. 지금 그 자리를 지키는 것은 e2e 하나다 | Phase 3 |
 | `main.cpp` 의 `StunClient` 수명 순서 | 루프가 든 핸들러를 `loop.run()` 뒤에 끊어 막았다. 루프 수명이 길어지면 다시 본다 | Phase 3 |
+| 제어 서버의 건너뛴 행 8건 | `test_host_report.py` 의 `CONFIRM_RACE` 6행과 `RECLAIM_CASES` 의 `needs="store"` 2행. 지금은 `pytest.skip` 이다. 풀 때 `store.py` 의 조건식을 지우는 변이를 붙인다. 특히 `unconditional-write-impl` 과 `registers-between-read-and-delete` | 2번 |
+| `ops.dispatch` 의 계약 | `server.py` 의 `handle_request` 는 `dispatch(Request) -> dict` 와 `OpError` 를 전제한다(`control_plane.md` 7.2). `ops.py` 는 아직 `dispatch` 가 없다. 두 쪽을 이 계약으로 맞춘다 | 2번 |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 
 ## 문서 부채
@@ -60,6 +62,9 @@
 | `IDLE` 정의의 긴장 | [`protocol.md`](protocol.md) 9.4.1 종료 상태 폐기는 `IDLE` 이면 상대 `peer_id` 도 모른다고 전제하는데, 9.1 상태는 `IDLE` 을 "아직 상대 후보를 받지 못함" 으로 정의한다. `get_peers` 가 `peer_id` 는 주고 후보는 아직 비어 있는 구간에서 둘이 갈린다. 어느 문서도 그 구간에서 세션이 `peer_id` 를 기억하는지 정하지 않았다. 9.1 이나 9.4.1 에 한 줄이 필요하다 |
 | 종료 세션 객체의 수명 | [`protocol.md`](protocol.md) 5.6 `CLOSE` 는 받은 쪽 세션을 `CLOSED` 로 남겨 늦은 패킷을 `drop_terminal_state` 로 세게 한다. [`concurrency.md`](concurrency.md) 7장 종료는 끝난 세션을 목록에서 지운다. 같은 장 로비 표의 `drop_unknown_peer` 는 뒤쪽을 전제한다. Phase 4 의 세션 구현 전에 정한다 |
 | Phase 8 제목 | `## Phase 8: Minecraft 검증` 인데 목표가 GUI 시연을 포함한다. 제목 문자열에 기대는 자리는 `roadmap.md` 의 한국어와 영어 제목 줄 둘뿐이고 `#phase-8` 앵커는 없다. 바꿀지는 정하지 않았다 |
+| 영어 미러 | 이번 Phase 3 작업이 고친 `spec.md`, `architecture.md`, `roadmap.md`, `control_plane.md` 와 ADR 0014 의 미러가 없다. 게이트가 `mirror` 와 `parity` 로 막힌다. `link` 는 0 건이다 |
+| 후보 위생의 대역 | 서버는 [`protocol.md`](protocol.md) 10.1 목록 그대로 거부한다. `0.0.0.0/8` 의 나머지와 `240.0.0.0/4` 는 저장한다(`control_plane.md` 4.4). 그 목록을 허용 목록으로 바꿀지, 두 대역을 더할지는 정하지 않았다. 바꾸면 10.1 이 먼저이고 클라이언트 쪽 위생도 같이 바뀐다 |
+| 헤더 이름 가운데 공백 | `control_plane.md` 3.3 의 헤더 줄 문법은 이름과 콜론 사이의 공백만 거부한다. `X Foo: bar` 처럼 이름 가운데 공백이 있는 줄은 표 밖 헤더로 무시된다. 거부할지는 정하지 않았다 |
 | 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md) 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 둘 많다.** `endpoint_learned` 는 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
 
 ## 세션을 시작할 때

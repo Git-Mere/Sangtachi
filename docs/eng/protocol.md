@@ -1332,7 +1332,7 @@ it means **filtering delayed packets**, not reconnecting a restarted session.
 
 There is a method where the surviving side re-polls the control plane and receives the peer's new candidates. v1 does not
 adopt it. There is no rejoin (`control_plane.md` 4.3 `join_room`), so the restarted side comes in with a new `peer_id` and
-a new virtual IP, and to the surviving side that is **a different peer**. Adding this procedure would first require a rule
+a newly assigned virtual IP, and to the surviving side that is **a different peer**. Adding this procedure would first require a rule
 that attaches a new peer to an old session, and that rule is undecided, just like the automatic retry above.
 
 (c) is not removed. There are two reasons.
@@ -1400,9 +1400,9 @@ validation.
 |--------|-----|------|-------------|------|
 | STUN retry | 500ms, 1s, 2s (3 times) | STUN request sent | None | Response received |
 | STUN deadline | 5s. **Per server**. A response that arrives late, after the deadline has passed, is not used | First request sent to that server | None | Response from that server |
-| `get_peers` polling | 500ms interval | **Successful `register_candidate` response** | Each response | Ready response for that pair |
-| `get_peers` deadline | 60s. **Counted per pair** | The moment that peer first appears in a response. For the first peer, the successful `register_candidate` response | None | Ready response for that pair |
-| `host_report` period | 5s while a slot is free, 30s when full. **Host only** | Successful `create_room` response | Each send | Leaving the room |
+| `get_peers` polling | 500ms interval. **Player only** | **Successful `register_candidate` response** | Each response | Ready response for that pair |
+| `get_peers` deadline | 60s. Player only. **Counted per pair** | The moment that peer first appears in a response. For the first peer, the successful `register_candidate` response | None | Ready response for that pair |
+| `host_report` period | 5s while a slot is free, 30s when full. **Host only** | Successful `create_room` response | Each send. When a session ends, it sends immediately without waiting for the period (`control_plane.md` 4.6) | Leaving the room, the first row of the 4.6 error table (the room has ended on the server) |
 | Punch delay | Value computed in 10.2 Rendezvous | Ready response for that pair | None | Punch starts on expiry |
 | `HELLO` retransmission | 200ms interval | Punch start, **9.5 renegotiation (step 10)** | Each send | `CONNECTED` reached, 9.6 failure transition |
 | Punch deadline | 10s | **Actual local punch start** | 9.5 renegotiation | `CONNECTED` reached |
@@ -1412,6 +1412,18 @@ validation.
 | Idle timeout | 50s | `CONNECTED` entry | Packet received that passed every validation for its type (9.4) | Session end |
 | `PING` | 5s interval. **Nothing is sent on entry. The first send is 5s after entry** | `CONNECTED` entry | Each send | Session end |
 | `pending_pings` cleanup | Every time before insertion | - | - | - |
+
+**When an attempt ends, all timers of that attempt are cleared.** The triggers are a `FAIL` that
+ends the attempt and `leave` ([`concurrency.md`](concurrency.md) chapter 7 Lobby). They are
+triggers not in the cancel column of the table above. A STUN transaction in progress also ends
+on the spot. For the host there are two `FAIL`s that do not end the attempt.
+
+- The failure of one pair clears only that pair's timers
+- A `host_report` response saying the room has ended on the server (the first row of the
+  `control_plane.md` 4.6 error table) clears only the `host_report` timer if sessions remain. The
+  timers of the remaining sessions keep running. If there is no session and it goes straight to
+  the lobby, the attempt has ended, so everything is cleared per the rule above. Before the room
+  is set up, for example during STUN, that transaction ends too
 
 **The three retry values are intervals.** They are not deadlines. Taking the moment the request was
 sent as 0, the retransmissions go out at 500ms, 1500ms, and 3500ms. Read as absolute times the
@@ -1445,13 +1457,13 @@ exactly now expires too.** Priority is based on the time dequeued. A receive eve
 iteration is processed before that iteration's timer expiries.
 
 > **Why not `<`.** The timeout computation of the next wait returns 0 when `deadline <= now`
-> ([`concurrency.md`](concurrency.md) chapter 2 Waiting). If only the expiry comparison were strict, then
+> (`concurrency.md` chapter 2 Waiting). If only the expiry comparison were strict, then
 > on an iteration whose deadline is exactly now the timer would not fire while the wait returns 0
 > immediately, repeating the same iteration until the clock advances by 1ms. The two comparisons must use
 > the same inequality.
 
 The reason it is the dequeue time and not the arrival time is that the receive loop caps the
-number of datagrams processed per iteration ([`concurrency.md`](concurrency.md) chapter 3 One
+number of datagrams processed per iteration (`concurrency.md` chapter 3 One
 Loop Iteration). Draining without a cap would starve the timers entirely.
 
 In exchange, a datagram that arrived just before a deadline can be pushed to the next iteration and lose

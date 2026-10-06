@@ -86,7 +86,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
 | `loop` | One loop iteration, the wait set, the per-source drain budget, console command handling. `concurrency.md` chapters 2 and 3 own the structure | None |
 | `timer` | The periodic timer set and the next wait timeout calculation (`concurrency.md` chapter 4) | None |
-| `console` | The line queue of the `[console]` thread and its lifetime (`concurrency.md` chapter 6 Telemetry Isolation also owns that queue policy). Scaffolding that disappears in Phase 6 | None |
+| `console` | The line queue of the `[console]` thread and its lifetime (`concurrency.md` chapter 6 Telemetry Isolation also owns that queue policy). Present only in the console build | None |
 | `log` | Line format and field encoding of the chapter 9 log output | None |
 | `counters` | The table of the chapter 9 `counter` event. The names come from [`protocol.md`](protocol.md) and `concurrency.md` | None |
 | `args` | Startup argument parsing (3.5) | None |
@@ -203,9 +203,9 @@ becomes necessary is decided by [`roadmap.md`](roadmap.md).
 
 | Input | Argument | Required | Value |
 |------|------|:---:|-----|
-| Role | First positional argument `host` or `player` | Yes from Phase 3. Phase 1~2 only accepts and stores it, and starts without it | `host` calls `create_room`, `player` calls `join_room` |
+| Role | First positional argument `host` or `player` | No. Without it the process starts in the lobby | The same as typing one lobby command right after startup. `host` is `host`, and `player` is `join <--room value>`. Phase 1~2 only accepts and stores it |
 | Control server address | `--server <name or IPv4>[:<port>]` | Yes from Phase 3. Phase 1~2 only accepts and stores it, and starts without it | DNS name or IPv4 literal. If the port is omitted, `CONTROL_PORT` from [`control_plane.md`](control_plane.md) 2.6 Constants. No real address is hard-coded in documents |
-| Room code | `--room <6 chars>` | `player` always. **Giving it to `host` is a startup failure.** Phase 3 onward | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
+| Room code | `--room <6 chars>` | `player` always. Phase 3 onward. **Giving it to `host` is a startup failure.** Giving it without a role is also a startup failure from Phase 3 | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
 | STUN servers | `--stun <name or IPv4>:<port>`, repeatable | No | If given, it **replaces the default list below entirely**. The behavior when the list has one entry is below the table |
 
 **A `--stun` list with one entry leaves one `WARN` line at startup.** That list cannot produce
@@ -319,6 +319,32 @@ the end of the line is one sentence and contains spaces.** It is a different lin
 > knowing what to do next, and emitting the sentence alone makes it impossible to match what the
 > user reported against the classification in chapter 8.
 
+**The process does not end after emitting a `FAIL` line.** Whether it then goes to the lobby is
+decided by `concurrency.md` chapter 7 Lobby. The exit code does not carry the result of the
+attempt, so scripts decide by the `FAIL` line.
+
+**Lobby commands.** The lobby is the state in which the process belongs to no room
+(`concurrency.md` chapter 7 Lobby). In the lobby, console commands create a room or join a room.
+The order is from step 4 of `control_plane.md` 8.4 From Launch to Punch.
+
+| Command | What it does | When it is accepted |
+|------|---------|---------|
+| `host` | Creates a room with `create_room` | In the lobby, with no outstanding control request |
+| `join <room code>` | Joins that room with `join_room`. The format check of the room code is the same as `--room` | In the lobby, with no outstanding control request |
+| `leave` | Goes to the lobby. What it does is decided by `concurrency.md` chapter 7 Lobby | When not in the lobby |
+
+A command that arrives when it is not accepted, and a `join` with no room code or a malformed
+one, send no request and leave one `WARN` line. The process stays in the state it was in. Unlike a
+format violation of `--room`, this is not a startup failure. The reason `host` and `join` are not
+accepted while a request is outstanding is in `concurrency.md` chapter 8 The `[control]` Thread.
+
+**The CLI role is a lobby command right after startup.** It is converted per the role row of
+the table above and run once. After an attempt ends, the path to the next room is a lobby
+command regardless of the role.
+
+> **Why.** If the CLI and the console entered a room by different paths, the same failure would
+> end differently depending on the path it came in by. The rules are kept as one set.
+
 **Two test-only arguments in Phase 1~2.** The table above is the product path input. Phase 1
 confirms send and receive with "two known endpoints", without the control plane and without
 STUN (`roadmap.md` Phase 1), so it needs a place to take the remote address.
@@ -345,8 +371,7 @@ The decision reads `len` and `sha256`; `from` is what lets a person tell the two
 > **Why.** A procedure that compares bytes by eye is not used, because it becomes a decision
 > that differs per person.
 
-**Both go away in Phase 6.** They have the same lifetime as the `[console]` scaffolding
-(`concurrency.md` chapter 1).
+**Both go away in Phase 6.** The `[console]` thread stays in the console build, because it has to accept the lobby commands above (`concurrency.md` chapter 1 Threads).
 
 **What is not a startup input.** The local record file path is decided together with the
 chapter 9 contract when that is settled. The telemetry service address is Phase 9. That both
@@ -365,9 +390,8 @@ and corrected.
 > and in between the record cannot tell which format the tests ran with.
 
 **The "required" column of the table above decides what counts as missing.** Missing is the
-absence of a value in a span that column requires. The role may be absent in Phase 1~2 and the
-process still starts. But a value that is neither `host` nor `player` is a format violation in
-every span.
+absence of a value in a span that column requires. The role may be absent in every span and the
+process still starts. But a value that is neither `host` nor `player` is a format violation.
 
 **The source of each format differs per value.** The rules are not copied here.
 
@@ -634,8 +658,7 @@ attempt.
   the room is alive a slot is also reclaimed when the host reports that a peer's session is over,
   so the next participant uses it. The reclamation rules and when a room disappears are owned by
   [`control_plane.md`](control_plane.md) 2.5 Virtual IP Pool and 5.1 Room.
-- **A departed peer does not come back at the same address.** Coming back in is a new join and
-  gets a new address.
+- **The seat of a departed peer is not kept for that peer.** Address assignment on coming back in is decided by `control_plane.md` 4.3 `join_room`.
 
 Players enter `10.100.0.1:25565` in the Minecraft server address field. They need not know any
 public IP or port.
@@ -787,7 +810,7 @@ before establishment; two lines mean it connected and then ended.
 
 How the two lines are tied to one attempt is decided together with the line format. **One
 process records several attempts.** Leaving a room returns to the lobby and allows joining again
-([`concurrency.md`](concurrency.md) chapter 7 Shutdown), so the line needs an attempt identifier
+([`concurrency.md`](concurrency.md) chapter 7 Lobby), so the line needs an attempt identifier
 to be able to pick out the lines of one attempt. The file is append-only and is not reopened per
 attempt.
 

@@ -228,37 +228,14 @@ is Phase 4.
   - If a value is missing from the document, fix the document first instead of deciding it in code
   - The decision to switch the store from SQLite and its cost are in
     [ADR 0004](decisions/0004-state-store-dynamodb.md)
-- **Before starting, obtain an Elastic IP and a DNS name.** The client receives the DNS name and that
-  name points to the Elastic IP (`control_plane.md` 3.2 Address,
-  [`windows-prereq.md`](windows-prereq.md) 10). Actual values are not written in documents
-- **Before starting, set the table name, region, and capacity values as deployment configuration.**
-  Not hard-coded (`control_plane.md` 7.6)
-- **Before starting, confirm two clock assumptions on the deployment instance.** `control_plane.md`
-  7.4 states both as unverified assumptions. If they do not hold, fix that section
-  - Whether the implementation of `time.get_clock_info('monotonic')` is
-    `clock_gettime(CLOCK_MONOTONIC)`
-  - Whether `/proc/sys/kernel/random/boot_id` changes across a reboot
-- **Before starting, write the input the lobby takes into [`architecture.md`](architecture.md) 3.5
-  Startup Inputs.** [ADR 0008](decisions/0008-star-topology-followup-decisions.md) decision 8 makes
-  the console build go back to the lobby too and delegated "the relation between the console
-  vocabulary and the CLI arguments" to 3.5, but that text is not there yet
-  - 3.5 states only the CLI taken once at startup, and the five words of the minimum console
-    vocabulary have no command to create a room or to enter a room code. No document has a path for
-    entering a new room after going to the lobby
-  - Without it, `leave` becomes a command that makes the process unusable
-  - **In the same place, fix the `FAIL <code> <sentence>` standard output line and the behavior of
-    the process after a failed attempt.** `architecture.md` 3.5 fixed that line, but Phase 2 only
-    emits the log (`session.failed`). Where to emit that line is decided only once it is settled
-    whether a failed attempt goes back to the lobby or ends
-- **Before starting, fix the EC2 credential method.** Access keys are not written in source or documents. The document recommends an IAM role (ADR 0004)
-- **Before starting, check the free tier coverage directly in the account.** Documents alone did not confirm whether 25 WCU / 25 RCU / 25 GB is permanent (ADR 0004 "Not confirmed")
 - Local tests run on DynamoDB local. **The consistency path is not judged there, though.** Local reads usually look up to date, so a missing `ConsistentRead` does not show (ADR 0004)
 - **At start, move the case tables of `control_plane.md` (2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4) into
   `control-server/tests/` and change the document to point at those files.** A table kept in two
   places gets fixed in one and drifts. Attach a mutation test to each moved table
 - Deploy the Python control server to AWS EC2. systemd service, security group TCP 8000. **Run the
   deployment procedure once for real, then put it in a tool and have the document point at it**
-  (`control_plane.md` 7.6)
+  (`control_plane.md` 7.6). The results of the deployment environment and account-side checks are
+  also in that section
 - Implement room creation (`create_room`, idempotency nonce)
 - Implement room join (`join_room`. There is one form. There is no rejoin)
 - Virtual IP allocation (`VIP#` conditional-write claim)
@@ -271,7 +248,15 @@ is Phase 4.
   ([`concurrency.md`](concurrency.md) chapter 8 The `[control]` Thread), a minimal HTTP/1.1 client,
   error classification and retry (`control_plane.md` 8)
 - Complete startup input handling. `--server` and `--room` are actually used
-  (`architecture.md` 3.5)
+  ([`architecture.md`](architecture.md) 3.5)
+  - Make `--room` given without a role a startup failure. It passes today because this is the
+    Phase 1-2 path
+- The lobby commands `host`, `join`, `leave` and the `FAIL` line (`architecture.md` 3.5 Startup
+  Inputs, `concurrency.md` chapter 7 Lobby)
+  - When an attempt fails, emit the `FAIL` line. Today only the `session.failed` log is emitted.
+    Whether it then goes to the lobby follows the triggers of `concurrency.md` chapter 7 Lobby
+  - Discard the late response of an attempt that `leave` aborted (`concurrency.md` chapter 8 The
+    `[control]` Thread)
 
 ### Deliverable
 
@@ -308,6 +293,18 @@ Two clients on different networks obtain each other's endpoints through AWS.
   - A call from a peer that is not the host yields `unauthorized`
   - A wrong token yields `unauthorized`
   - Reporting a `peer_id` that is already gone gives an empty `released` array and is not an error
+- Server reclaim (`control_plane.md` 4.6 host_report, server reclaim). Run every row of the server
+  reclaim case table
+  - Build the times by injecting the server clock. Do not actually wait out the grace
+  - Fill the pool with four players that only did `join_room` and never registered candidates. A
+    `host_report` after the grace puts the four into `released`, and a later `join_room` is not
+    `room_full`
+  - `peer.released` in the log has `by=server`
+  - Build the row that registers after the read and before the delete with a delay injection point
+    in the store layer
+  - Run the opposite order too. If the reclaim commits first after `register_candidate` passes the
+    token check and before it writes, the result is `unauthorized`, and the deleted `PEER#` does not
+    come back
 - Lease renewal (`control_plane.md` 5.1 Room). If `host_report` stops, the room expires within
   `ROOM_LEASE_S` and a later `join_room` yields `room_expired`
   - **An already established tunnel is unaffected** (`spec.md` NFR-3). Lease expiry does not tear
@@ -316,7 +313,8 @@ Two clients on different networks obtain each other's endpoints through AWS.
 - Idempotency (`control_plane.md` 4.2 create_room, 4.3)
   - Calling `join_room` twice with the same `client_nonce` returns the same response the second time
     and **creates only one `VIP#` item**
-  - A different `client_nonce` is a new join. It gets a new `peer_id` and a new virtual IP
+  - A different `client_nonce` is a new join. It gets a new `peer_id` and a different virtual IP,
+    because the first join still holds its slot
   - Only a join after every address in the pool is taken yields `room_full`
     (`control_plane.md` 4.3 join_room)
   - `create_room` with the same nonce is also the same room
@@ -358,6 +356,20 @@ what gets run.
   - This is a necessary condition, not a sufficient one. That no path emits them is confirmed by
     reading the code
 
+**Deployment.**
+
+- The deployed server runs all five operations against the real table. In particular, the
+  `join_room` and `host_report` confirmation do not become `internal` from a permission error
+  (`AccessDeniedException`). If `ConditionCheckItem` is missing from the IAM action list
+  (`control_plane.md` 7.6 Configuration and Deployment), it is caught here
+- While one room is created and players are added up to four and removed again, watch the table
+  metrics in CloudWatch at 1-minute granularity. For `ConsumedReadCapacityUnits` and
+  `ConsumedWriteCapacityUnits`, the 1-minute `Sum` divided by 60 is 25 or less, and the `Sum` of
+  `ThrottledRequests` over the same period is 0. This is because the capacity calculation of 7.6 is
+  an unmeasured worst case
+  - The raw metric values are sums over the period, so they are not compared directly with the
+    per-second capacity of 25
+
 **Clock and logs.**
 
 - `elapsed_since_ready_ms` comes from a monotonic clock. **Run this on the same Linux as the
@@ -370,6 +382,46 @@ what gets run.
   > **Why.** With no `boot_id`, falling back to the wall clock on every process restart is the
   > behavior set by the `control_plane.md` 7.4 case table, and a counter of 1 is the rule there.
 
+**Lobby.** The verdict uses the `FAIL` line on standard output and the request log. Not the exit
+code (`architecture.md` 3.5 Startup Inputs).
+
+- Starting with no role sends no control request at all and waits in the lobby. Giving only
+  `--room` is a startup failure with exit code 2
+- A `join` with a non-existent room code prints one line starting with
+  `FAIL CONTROL_PLANE_EXCHANGE_FAILED` on standard output, and the process stays. A following `join`
+  with the correct room code joins
+- After `leave` from a joined room, a `join` to the same room again receives a new `peer_id`
+  - This item checks that `client_nonce` is drawn fresh for every join (`control_plane.md` 2.4
+    client_nonce)
+  - An implementation that reuses the value gets the old join's response back as is, so it is
+    caught here
+  - On joining again, a new STUN request goes out (`control_plane.md` 8.4). An implementation that
+    reuses the result of the previous attempt is caught here
+- `host` and `join` typed while in a room give one `WARN` line and send no request. `leave` typed in
+  the lobby also gives one `WARN` line
+- `leave` while a response is outstanding ([`concurrency.md`](concurrency.md) chapter 8 The
+  `[control]` Thread)
+  - With an injection point that delays the control server's response, leave `host` outstanding and
+    `leave`
+  - Even when the response arrives, no `ROOM` line appears, and after that neither a STUN request
+    nor `register_candidate` goes out. An implementation that only hides the output and applies the
+    response is caught here
+  - `host` typed before the response arrives is a `WARN`, and `host` typed after it arrives is
+    accepted
+- `host_report` errors received by the host (`control_plane.md` 4.6 host_report, error table)
+  - Run each of the four responses of the first row (`room_expired`, `room_not_found`,
+    `unauthorized`, `bad_request`). Build `room_expired` by injecting the server clock, and the
+    other three with the server's response injection point
+  - For all four, the host emits one line starting with `FAIL CONTROL_PLANE_EXCHANGE_FAILED`, after
+    that no more `host_report` goes out, and since there is no session it goes to the lobby
+  - Build `rate_limited` by stopping the server's rate-limit refill clock and sending 10
+    `join_room`s for a non-existent room from the same source. Since the refill is stopped, the
+    next `host_report` is always `rate_limited`
+  - Then no `FAIL` line appears and the next cycle's call goes out. Once the refill clock is
+    released and the budget refills, the call succeeds
+  - An implementation that stops on `rate_limited` and an implementation that keeps calling on a
+    first-row response are each caught here
+
 **Client-side contracts.**
 
 - The client's `[loop]` does not stall while the control server is down
@@ -379,11 +431,11 @@ what gets run.
     control request is outstanding
   - Watch console command responses too, but do not judge on them alone. At human typing speed even a
     stall of tens of seconds looks like "it responded"
-  - An implementation with `connect` on `[loop]` is caught here
-    ([`concurrency.md`](concurrency.md) chapter 8)
+  - An implementation with `connect` on `[loop]` is caught here (`concurrency.md` chapter 8)
 - Control plane retry on the client (`control_plane.md` 8.3 Error Classification and Retry)
   - On `rate_limited`, `room_full`, or `unauthorized` the client reports
-    `CONTROL_PLANE_EXCHANGE_FAILED` immediately without retry
+    `CONTROL_PLANE_EXCHANGE_FAILED` immediately without retry. `host_report` is the exception, and
+    the host item of "Lobby" above covers it
   - `internal`, `unavailable`, and connect timeout are attempted **3 times in total including the
     first attempt, with the same `client_nonce`**
   - The judging axis differs per operation. For `create_room`, check that only one room is created
@@ -409,7 +461,7 @@ what gets run.
 
 ### Tasks
 
-**To be decided before starting.** Four items. Implementation of those places does not begin before
+**To be decided before starting.** Five items. Implementation of those places does not begin before
 they are decided
 
 - **Before starting, redesign the keepalive mapping-lifetime measurement procedure**
@@ -461,6 +513,14 @@ they are decided
 - **Before starting, fix the path and line format of the local record file.**
   [`architecture.md`](architecture.md) 9 has only 4 contracts and no format. **M-6 cannot be judged
   until it is fixed.** Do not decide it in code; fix that document first
+  - Also decide how an attempt aborted by `leave` is written to the record. The establishment line
+    of chapter 9 requires a result code for every attempt, but a user's abort is not a failure code
+    of FR-13
+- **Before starting, decide whether the `FAIL` line of a pair failure on the host side carries which
+  player it belongs to.** [`concurrency.md`](concurrency.md) chapter 7 Lobby left it undecided. The
+  host emits that line and stays in the room, so with several pairs the line alone does not tell
+  which pair. If it is decided to carry it, add that field to the line format of `architecture.md`
+  3.5 Startup Inputs
 
 **Implementation.** Follow the `protocol.md` 15 implementation checklist as written. This Phase is
 implementation, not design.
@@ -522,11 +582,13 @@ Established without router port forwarding in supported environments. The packet
 
 Contracts of the tools the verification procedures use. These are equipment, not pass criteria.
 
-- **Pin the console commands used by the verification procedures.** The minimum vocabulary accepted by
-  the `[console]` scaffolding of Phases 1-5 ([`concurrency.md`](concurrency.md)) is five commands
+- **Pin the console commands used by the verification procedures.** Among the commands that
+  `[console]` ([`concurrency.md`](concurrency.md)) accepts, the verification procedures use the five
+  below. `host` and `join`, which create and join a room, are lobby commands, and their contract is
+  in `architecture.md` 3.5 Startup Inputs
   - `quit` signals the shutdown event and starts the normal shutdown procedure (`concurrency.md`
     chapter 3 One Loop Iteration). **It ends the process whether in the lobby or in a session**
-  - `leave` closes every session and goes to the lobby. The process stays (`concurrency.md` chapter 7
+  - `leave` leaves the room and goes to the lobby. The process stays (`concurrency.md` chapter 7
     Lobby)
   - `counters` dumps all counters to the log immediately (`architecture.md` 9). Verification items
     that read counters take their snapshot with this command
@@ -740,6 +802,39 @@ The round-trip test and the failure-code test below are started and ended with t
     `quit` during establishment gives `0x01`, and failing at the punch deadline gives `0x03`. An
     implementation that sends one value for all three is caught here
 - No transition to `CONNECTED` when only one side has received `HELLO` (a one-directional opening is not misjudged as success)
+- The host stays in the room even after the last player's session ends ([`concurrency.md`](concurrency.md) chapter 7 Lobby)
+  - The host's `host_report` keeps going out even after the player does `leave`
+  - When that player does `join` again with the same room code, it connects
+  - An implementation that goes to the lobby because the session list is empty is caught here
+- Connected sessions are kept even when the room ends on the server (`control_plane.md` 4.6
+  host_report, error table)
+  - In a room with two players `CONNECTED`, expire the lease by injecting the server clock. The host
+    emits one `FAIL` line, but the `KEEPALIVE` and `DATA` round trips of both sessions continue
+  - When one player does `leave`, only that session ends and no `host_report` goes out. An
+    implementation in which the immediate report rule is still alive is caught here. The host still
+    stays in the room
+  - Meanwhile a new player's `join` is a `FAIL` with `room_expired`
+  - When the remaining player also does `leave`, the host goes to the lobby
+  - Separately, once more, if the host does `leave` while two sessions remain, it closes the sessions
+    and goes straight to the lobby
+- When a session ends, the host's `host_report` goes out without waiting for the next cycle
+  (`control_plane.md` 4.6 host_report)
+  - In a full room, when one player does `leave` and, after that `host_report` response arrives, a
+    new player does `join`, the result is not `room_full`
+  - The verdict is that the time difference between that session's `session.state to=CLOSED` in the
+    host log and `peer.released by=host` in the server log is within 20 seconds. The bound is the
+    time to wait for the response of one outstanding request and then send one new request (9
+    seconds per request)
+  - This bound assumes that requests finish as in the `control_plane.md` 8.2 timeout table. As that
+    table states, the send and receive limits are per operation and can be longer, so this item is
+    run without any injection that slows the control server
+  - Do not measure from the `leave` time. `CLOSE` is sent only once (`protocol.md` 5.6), so if it is
+    lost the host does not know until the idle timeout, and that is not the gap this rule shrinks
+  - Type `leave` right after the response of a periodic call arrives. Then the next cycle is 30
+    seconds away, so an implementation that waits for the cycle does not pass by chance
+- A `departed` the host could not report is carried again in the next call
+  - Make one `host_report` fail with an injection point that loses the response, and let another
+    session end in the meantime. The `departed` of the next successful call has both peers
 - Keepalive period: in the capture, `KEEPALIVE` goes out once immediately on entering `CONNECTED`
   and then every 15 seconds. **What is measured here is our send period, not the NAT mapping
   lifetime.** Mapping lifetime measurement is the before-start item in the Tasks section above
@@ -751,7 +846,7 @@ The round-trip test and the failure-code test below are started and ended with t
   - Compare, byte for byte including length, the payload byte string the sender held just before
     encapsulation with the payload byte string the payload hook received after passing 8.4 validation
   - That hook is where a `DATA` that passed 8.4 goes in a build without an adapter, and its
-    contract is in [`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration. The echo
+    contract is in `concurrency.md` chapter 3 One Loop Iteration. The echo
     responder attaches at the same place
   - Do not compare log strings or a reconstructed header
   - In the product build, also confirm that such a `DATA` is dropped as `drop_no_sink`. The hook must
@@ -770,8 +865,9 @@ The round-trip test and the failure-code test below are started and ended with t
   - RTT is normally empty when there is no sample. The establishment line is usually empty because
     `PING` has not run yet, and the termination line carries the last sample. An empty value is not
     judged as failure
-- On hole punching failure, `HOLE_PUNCH_TIMEOUT` is recorded and the process exits normally.
-  **Reaching `FAILED` is itself the shutdown trigger** (`concurrency.md` chapter 7 Shutdown)
+- On hole punching failure, `HOLE_PUNCH_TIMEOUT` is recorded and the `FAIL` line appears. **The
+  process does not end.** The player goes to the lobby and the host stays in the room
+  (`concurrency.md` chapter 7 Lobby)
   - Also confirm by capture that `HELLO` retransmission stops at that transition. In an implementation
     that does not stop, a finished session keeps firing at every candidate (`protocol.md` 9.6)
 - The RTT baseline comparison uses **a round trip on the same socket and the same endpoint pair,** not

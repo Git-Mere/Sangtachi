@@ -51,7 +51,7 @@ There are two reasons.
 |--------|------|-----------|
 | `[loop]` | UDP receive, Wintun receive, console commands, timers, session state, routing, all sending | **No tunnel state.** Shares only one end of four queues (telemetry, console, control request, control response) and the shutdown/cleanup events |
 | `[telemetry]` | Consume the metric queue, upload to the telemetry service. Phase 9 onward | One queue |
-| `[console]` | Read standard input. Scaffolding for Phase 1~5 | One command queue |
+| `[console]` | Read standard input. Present only in the console build | One command queue |
 | `[control]` | Control plane TCP calls, DNS resolution. Phase 3 onward | One request queue and one response queue (chapter 8 The `[control]` Thread) |
 
 **`[loop]` is the process main thread.** The rest exist only when that phase has their work.
@@ -60,11 +60,14 @@ There are two reasons.
 |------|---------|
 | Phase 1~2 | `[loop]`, `[console]` |
 | Phase 3~5 | `[loop]`, `[console]`, `[control]` |
-| Phase 6~8 | `[loop]`, `[control]` |
-| Phase 9 onward | `[loop]`, `[control]`, `[telemetry]` |
+| Phase 6~8 | `[loop]`, `[console]`, `[control]` |
+| Phase 9 onward | `[loop]`, `[console]`, `[control]`, `[telemetry]` |
 
-- `[console]` exists only in Phase 1~5. `[loop]` cannot block on standard input, so a
-  separate thread reads it and pushes to a queue
+- `[console]` exists only in the console build. `[loop]` cannot block on standard input, so a
+  separate thread reads it and pushes to a queue. The table above is the console build's composition
+  - It stays after Phase 6 because it has to accept the lobby commands ([`architecture.md`](architecture.md) 3.5 Startup Inputs).
+    Only the test-only `--peer` and `raw` go away
+  - The thread composition of the GUI build is not decided yet. It is an open item left by ADR 0007
 - `[telemetry]` comes late because the place to upload to appears then. The telemetry service
   and the upload thread are deliverables of the same phase ([`roadmap.md`](roadmap.md))
 - When the adapter arrives in Phase 6, the Wintun read event joins the `[loop]` wait set
@@ -83,7 +86,7 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 | 0 | Shutdown event | `CreateEvent` (manual reset) | Always |
 | 1 | UDP socket event | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | Always |
 | 2 | Wintun read event | `WintunGetReadWaitEvent(session)` | Phase 6 onward |
-| 3 | Console command event | `CreateEvent` (auto reset). Signaled by `[console]` | Phase 1~5 |
+| 3 | Console command event | `CreateEvent` (auto reset). Signaled by `[console]` | Console build |
 | 4 | Control response event | `CreateEvent` (auto reset). Signaled by `[control]` after pushing to the response queue | Phase 3 onward |
 
 **The numbers above are logical ranks, not array indices.** `WaitForMultipleObjects`
@@ -95,7 +98,7 @@ array and keep a separate mapping from logical source to actual index.
 |------|:---:|-----|
 | Phase 1~2 | 3 | |
 | Phase 3~5 | 4 | the control response event joins |
-| Phase 6 onward | 4 | the console event leaves and the Wintun event joins |
+| Phase 6 onward | 5 | the Wintun event joins. This counts the console build. The GUI build is the open item in chapter 1, Threads |
 
 `timeout_ms` is computed as below. **Do not subtract first.**
 
@@ -509,9 +512,9 @@ so before that (8) is `[telemetry]` only.
 
 - **A session ending does not end the process.** When a session becomes `FAILED` or
   `CLOSED` (`protocol.md` 9.6 Failure Transitions, 5.6 `CLOSE`), `[loop]` leaves that session's
-  record line and counters and removes it from the session list. When the list is empty it goes
-  to the **lobby**. "Lobby" below defines that state. The process ends only when the shutdown
-  event is signaled.
+  record line and counters and removes it from the session list. Whether it then goes to the lobby
+  is decided not by whether the list is empty but by the triggers in "Lobby" below. The process
+  ends only when the shutdown event is signaled.
 - **No shutdown marker goes into the queue.** The queue drops new items when full, so if the
   marker is dropped at exactly that moment, `[telemetry]` never sees the shutdown. Shutdown is
   delivered only through the event outside the queue.
@@ -533,28 +536,57 @@ so before that (8) is `[telemetry]` only.
 
 ### Lobby
 
-**The session list is empty.** The process is alive and is in no room. Creating a room or
-joining with a room code creates sessions again.
+**The state in which the process belongs to no room.** The process is alive. It leaves the
+lobby the moment it accepts a lobby command (`host`, `join`). While that attempt is in progress it
+is not in the lobby, even before the room is set up or the join completes. The commands and when
+they are accepted are owned by [`architecture.md`](architecture.md) 3.5 Startup Inputs.
+
+There are five triggers for going to the lobby.
+
+| Trigger | Who |
+|------|------|
+| Started without a role argument | Everyone |
+| Received `leave` | Everyone |
+| The attempt failed. It goes after emitting the `FAIL` line | Player always. Host only before the room is set up |
+| The session with the host ended in `CLOSED` | Player |
+| The room ended on the server and all remaining sessions ended too. The `FAIL` line was already emitted when it learned the room had ended | Host |
+
+**After setting up the room, the host stays in the room even when the session list is empty.**
+There are three triggers for leaving the room. They are `leave`, `quit`, and all remaining sessions
+ending after the room has ended on the server. The decision that the room has ended on the server
+is owned by the final error rule of [`control_plane.md`](control_plane.md) 4.6. The room is set up when `register_candidate` succeeds
+(step 6 of `control_plane.md` 8.4 From Launch to Punch).
+
+> **Why.** The host has no session both right after setting up the room and after the last
+> player leaves. Deciding the lobby by the session list would abandon the room at those two
+> moments, and the room that late joins and seat reclamation rely on would disappear. The basis is
+> [ADR 0011](decisions/0011-lobby-is-room-membership.md).
+
+**When one pair on the host side fails, the host emits a `FAIL` line and stays in the room.** The
+other pairs are not affected. Whether that line says which player it belongs to is not decided
+yet. When it is decided is owned by [`roadmap.md`](roadmap.md).
+
 
 | What | In the lobby |
 |------|--------------|
 | UDP socket | **Kept.** It is not bound again ([`protocol.md`](protocol.md) chapter 6 Socket Ownership). If the port changes, the STUN result and the local candidates all go stale |
 | Adapter session | **Kept.** Only the address and the route are set again in the next room. Creating the adapter needs administrator rights and takes a few seconds |
-| Counters | Not reset. They are per process ([`architecture.md`](architecture.md) chapter 9) |
+| Counters | Not reset. They are per process (`architecture.md` chapter 9) |
 | Local record file | Kept open and appended to. It is not reopened per attempt |
 | Late packets | They keep arriving because the socket is open. With no session they fall to `drop_unknown_peer` (`protocol.md` 8.1 Common Checks) |
-| The host's `host_report` | **Stops.** Leaving the room drops the lease ([`control_plane.md`](control_plane.md) 5.1) |
+| The host's `host_report` | **Stops.** Leaving the room drops the lease (`control_plane.md` 5.1) |
 
 **Do not assert that the mapping survives.** The socket is kept because rebinding changes the
 mapping **for certain**, and keeping it does not guarantee that the mapping lives. Whether to
-run STUN again on the next join after a long stay in the lobby is decided by measurement. That
-point in time belongs to [`roadmap.md`](roadmap.md).
+run STUN again on the next join after a long stay in the lobby is decided by measurement, and that
+point in time belongs to `roadmap.md`. Until it is decided, STUN runs again in the order of
+`control_plane.md` 8.4.
 
 **The console vocabulary splits in two.**
 
 | Command | What it does |
 |------|---------|
-| `leave` | Close all sessions and go to the lobby. The process stays |
+| `leave` | Leave the room. Close all sessions, abort the attempt in progress, then go to the lobby. The process stays |
 | `quit` | Signal the shutdown event. It goes through the `shutdown()` order above |
 
 > **Why split the words.** Making one `quit` do different things depending on state forces the
@@ -591,6 +623,22 @@ non-blocking form. One thread is cheap.
 | Socket | A new TCP socket per request. Non-blocking `connect` + `select` for the connection time limit, `SO_SNDTIMEO`/`SO_RCVTIMEO` for the send/receive time limits. Values are in [`control_plane.md`](control_plane.md) 8.2 Time Limits |
 | DNS | Once at startup. `[control]` holds the resulting single IPv4 address and uses it for all later requests. This is the only state `[control]` has |
 | Shutdown | On seeing the shutdown event, close the socket and return without waiting for the response of the in-flight request. Because of the socket time limits it can be late by at most one request bound (`control_plane.md` 8.2 Time Limits), and that is fenced by the 2-second join bound and `_exit` in chapter 7 Shutdown |
+
+**An outstanding request runs to completion even when the attempt ends.** The triggers are both
+`leave` and `FAIL`. An example of `FAIL` is a `get_peers` poll response still outstanding when
+the deadline hits. The failure of one pair on the host side is not the end of the attempt. The
+outstanding `host_report` response at that time is applied as usual. `[control]` handles that
+request as usual and pushes it to the response queue. `drain_control` does not apply that
+response and discards it. It does not emit the room code standard output line either. If it was
+waiting for a retry, it clears that timer.
+
+- **Do not push the next attempt's request before that response arrives.** It is the outstanding
+  request rule of the table above as is. `host` and `join` arriving in the meantime are not
+  accepted ([`architecture.md`](architecture.md) 3.5 Startup Inputs)
+- The bound on the wait is the bound of one request (`control_plane.md` 8.2 Time Limits)
+
+> **Why.** Even without attempt numbers on requests, which attempt a response belongs to is not
+> mixed up. There is always one outstanding request, so there is always one response to discard.
 
 **`[control]` neither reads nor writes session state.** It sends what it takes from the request
 queue and pushes what it receives to the response queue. Applying responses to session state is

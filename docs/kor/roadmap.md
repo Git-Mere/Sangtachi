@@ -349,7 +349,6 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 응답이 와도 `ROOM` 줄이 나오지 않고, 그 뒤에 STUN 요청도 `register_candidate` 도 나가지
     않는다. 출력만 숨기고 응답을 반영하는 구현이 여기서 걸린다
   - 응답이 오기 전에 친 `host` 는 `WARN` 이고, 온 뒤에 친 `host` 는 받는다
-
 - 호스트가 받은 `host_report` 오류 (`control_plane.md` 4.6 host_report 의 오류 표)
   - 첫 행의 네 응답(`room_expired`, `room_not_found`, `unauthorized`, `bad_request`)을 각각
     돌린다. `room_expired` 는 서버 시계를 주입해 만들고, 나머지 셋은 서버의 응답 주입점으로 만든다

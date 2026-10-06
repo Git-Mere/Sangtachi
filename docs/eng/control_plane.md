@@ -45,7 +45,7 @@ this document first.
 | Virtual IP assignment | Collect metrics. The telemetry service does that ([`architecture.md`](architecture.md) 3.4, [ADR 0003](decisions/0003-telemetry-service-split.md)) |
 | Store and deliver candidate endpoints | **Open a UDP socket.** The EC2-side UDP probe sender used to measure NAT mapping lifetime is not a function of the control server. It is a separate tool. Its ownership and procedure belong to the [`roadmap.md`](roadmap.md) Phase 4 pre-start items |
 | Provide the rendezvous reference point (`punch_delay_ms`, `elapsed_since_ready_ms`) | Judge NAT type or hole punching results. The client does that |
-| Reclaim a slot on the host's report (4.6 `host_report`) | Start session retries. Who retries and when is undecided, and [`protocol.md`](protocol.md) 10.4 Endpoint Learning says so |
+| Reclaim a slot on the host's report, and server reclaim of a participant who left without candidates (4.6 `host_report`) | Start session retries. Who retries and when is undecided, and [`protocol.md`](protocol.md) 10.4 Endpoint Learning says so |
 | Renew the room lease on the host's signal (4.6, 5.1) | **Judge tunnel liveness.** Even if the lease lapses, an already established tunnel keeps going ([`spec.md`](spec.md) NFR-3) |
 | Record pair readiness (4.6, 5.2) | **Recover the identifiers of a departed peer.** There is no rejoin (4.3). Coming back in is a new join |
 
@@ -197,14 +197,16 @@ When it leaves a room and joins the next one, it draws a new value.
 | Participant pool | From `10.100.0.2` to `10.100.0.(MAX_PEERS)`. `MAX_PEERS` is 5, so the pool is the four addresses `10.100.0.2` through `10.100.0.5` |
 | Assignment order | Walk the pool from the lowest address and claim the `VIP#<ip>` item with a conditional write (6.3). On failure, move to the next address. When the pool is exhausted, `room_full` |
 | Attempt cap | The pool size. One pass over the pool and it ends. It does not loop forever |
-| Reclaim | When the host reports that peer's departure with 4.6 `host_report`, the `PEER#` and `VIP#` items are deleted together. When the room expires, the remaining items are deleted by TTL (6.5) |
+| Reclaim | Two ways. When the host reports that peer's departure with 4.6 `host_report`, the `PEER#` and `VIP#` items are deleted together. A participant that never registered a candidate and whose `JOIN_REGISTER_GRACE_S` has passed is deleted by the server while it processes the same request (4.6). When the room expires, the remaining items are deleted by TTL (6.5) |
 
 **A reclaimed address is used by the next `join_room` new join right away.** No slot is held open
 for a return. There is no rejoin (4.3), so there is no path by which the peer that used that
 address asks for it again.
 
 **The precondition for reclaim is that the tunnel session of that peer is terminated.** The host
-reports only after the session has ended (4.6). Reclaiming the address of a session that is still
+reports only after the session has ended (4.6). Server reclaim does not check this condition
+separately. The host cannot confirm a peer with no candidates (step 3 of the 4.6 processing order),
+so no tunnel session ever existed for it. Reclaiming the address of a session that is still
 alive makes two sessions claim one row of the client routing table
 ([`protocol.md`](protocol.md) 8.5 Transmit-Side Validation).
 
@@ -220,6 +222,7 @@ MAX_PEERS                 = 5           # protocol.md section 1. Five peers per 
 ROOM_LEASE_S              = 120         # How far one host_report pushes the expiry time (4.6, 5.1)
 HOST_REPORT_OPEN_S        = 5           # host_report interval while a slot is open (4.6)
 HOST_REPORT_FULL_S        = 30          # Interval once the room is full (4.6)
+JOIN_REGISTER_GRACE_S     = 90          # Until the server reclaims a participant with no candidates (2.5, 4.6)
 STORAGE_GRACE_S           = 86400       # Grace from expiry to DynamoDB TTL deletion (6.5)
 PUNCH_DELAY_MS            = 1000        # protocol.md 10.2. Written to the pair once when it becomes ready
 MAX_CANDIDATES            = 8           # Same value as protocol.md section 3. Per peer
@@ -440,7 +443,8 @@ is it `register_peer`".
 **There is no `leave_room` either.** No operation is called by the one who leaves. What knows
 whether the slot may be reclaimed is the host, one end of that tunnel session (2.5 Reclaim), and
 if the leaver calls it, a state appears where the slot is free before the host has closed the
-session.
+session. A participant that left without candidates never had a session, so the server reclaims it
+(4.6 server reclaim).
 
 ### 4.1 Common Envelope
 
@@ -470,7 +474,7 @@ humans and its content is not pinned. **Do not put the request body or tokens in
 | `room_expired` | 410 | The room exists but its expiry time has passed (5.1) | Same |
 | `room_full` | 409 | Every address in the participant pool is already claimed (2.5) | Same |
 | `unauthorized` | 403 | `peer_token` does not belong to that `peer_id` | Same |
-| `rate_limited` | 429 | The per-source budget of 6.4 Rate Limit is exhausted | Same. The client does not wait and retry on its own. A person restarts it |
+| `rate_limited` | 429 | The per-source budget of 6.4 Rate Limit is exhausted | Same. The client does not wait and retry on its own. A person restarts it. Only `host_report` is the exception (4.6) |
 | `internal` | 500 | Storage error, redraw cap reached | **Transient error.** Follow the rules of 8.3 Error Classification and Retry |
 | `unavailable` | 503 | `MAX_INFLIGHT` exceeded (7.2) | Same. Transient error |
 
@@ -514,7 +518,9 @@ room is created. The basis for the decision is the `NONCE#` item (6.3).
 and `peer_token`. There is one form.
 
 **There is no rejoin.** If a process dies, that peer's slot is reclaimed on the host's report
-(2.5 Reclaim), and coming back in is a new join. It receives a new `peer_id` and a new virtual IP.
+(2.5 Reclaim), and coming back in is a new join. It receives a new `peer_id`, and the virtual IP is
+assigned again in the 2.5 assignment order. If the old address is free at that time, the same value
+can come out.
 
 > **Why.** Holding a slot open for a return means the address cannot be reclaimed while the room
 > is alive. A late participant using that slot and a departed peer getting it back cannot both
@@ -740,6 +746,27 @@ response is the current room state the host has to know.
 is full, every `HOST_REPORT_FULL_S` (30 seconds). The decision uses the `peers` length of the
 previous response.
 
+**When a session ends, call it once right away without waiting for the next cycle.** The `departed`
+of that call carries the ended peer. If a request is outstanding, call it right after that response
+arrives. The one-at-a-time rule ([`concurrency.md`](concurrency.md) chapter 8 The `[control]`
+Thread) stays as is. The periodic timer counts again from this call.
+
+**The host keeps the `departed` it has not yet reported.** It puts each peer whose session ended into
+that set and carries the whole set in every `host_report`. On a success response it removes what
+that request carried from the set. It removes them even if they are not in `released`, since that
+means the peer was already gone. On failure it leaves the set as is and carries it again in the next
+call.
+
+- The set does not exceed `MAX_PEERS - 1`. An unreported peer still holds a slot on the server, so
+  their number cannot exceed the pool size
+- Reclaim is idempotent, so carrying the same peer twice is safe
+
+> **Why.** When one person leaves a full room, the slot frees only after the host reports it.
+> Following the cycle alone, that gap is up to 30 seconds, and a join arriving in that window gets
+> `room_full`. Calling right away shrinks the gap to one request. When a player process dies, the
+> host too learns of it only after the idle timeout ([`protocol.md`](protocol.md) section 11), so
+> this rule does not shrink that case.
+
 **Both intervals have to be smaller than `ROOM_LEASE_S`.** Otherwise a healthy host's room dies of
 lease expiry. The current values are 5 and 30 against 120, which **tolerates four consecutive
 failures.** Keep that margin in view when changing the values.
@@ -774,12 +801,50 @@ failures.** Keep that margin in view when changing the values.
 
 1. Caller decision. If it does not match, it ends with `unauthorized`
 2. For each `peer_id` in `departed`, delete the `PEER#`, that peer's `VIP#`, and the `PAIR#`
-   items that peer is part of (6.3)
+   items that peer is part of (6.3). Then delete the `PEER#` and `VIP#` of the server reclaim
+   targets too. "Server reclaim" below decides the targets
 3. For each `peer_id` in `confirm`, if that peer and the caller **both have 1 or more candidates**
    and the `PAIR#` of that pair is absent, create it with a conditional write. The item carries
    `ready_at_*` and `punch_delay_ms = PUNCH_DELAY_MS` (6.3)
 4. Renew `ROOM.expires_at_ms` to `now + ROOM_LEASE_S * 1000`
 5. Read with `Query(pk, ConsistentRead=true)` and build the response
+
+**Server reclaim.** The targets are the peers of the room read in step 1 that satisfy all of the
+following. Deleting one also deletes that peer's `NONCE#`. The key is known from the `client_nonce`
+of `PEER#`. Peers deleted in step 2 are put into `released`.
+
+- Not the host
+- Candidates are empty. It is `joined` of 5.3 Peer
+- `joined_at_ms + JOIN_REGISTER_GRACE_S * 1000 <= now`
+
+**The race is blocked by a storage condition.** The peer can register candidates after the read and
+before the delete. So the delete condition includes "candidates are still empty" (6.3). If the
+condition fails, that peer is not deleted. The next `register_candidate` of a deleted peer ends in
+`unauthorized` at the token check of the 7.3 operation processing order. If the reclaim happens
+after the token check passes and before the write, the conditional update of 6.3 fails, and that is
+`unauthorized` too. Either way, the client gets `CONTROL_PLANE_EXCHANGE_FAILED` per 8.3 Error
+Classification and Retry.
+
+> **Why the server deletes it.** A participant that left without candidates never had a session
+> with the host, so the host has no trigger to report it. Each time someone joins the same room
+> again from the lobby, such a slot piles up and the pool fills. Whether candidates are empty is a
+> fact the server knows directly from the store, and unlike whether a tunnel is alive, there is no
+> need to ask the host. The basis is
+> [ADR 0012](decisions/0012-server-reclaims-candidateless-peers.md).
+
+> **Why 90 seconds.** The reference point `joined_at_ms` is the time the server wrote `PEER#`. The
+> upper bound from there until the player's `register_candidate` succeeds is the sum of three.
+>
+> - Losing the `join_room` response and getting it again with the same nonce. 3 times including the
+>   first attempt, at most 9 seconds each plus two 1-second intervals, is 29 seconds (8.2, 8.3)
+> - The STUN stage. With the default list it is 10 seconds (`protocol.md` section 11 Timers)
+> - `register_candidate` retry. 29 seconds as above
+>
+> A margin is put on the sum of 68 seconds. This sum is computed from the documented upper bounds
+> and was not measured. There are two cases that exceed it. A long list given with `--stun` raises
+> the STUN bound. And 9 seconds per attempt is the single-request bound of 8.2, and as that table
+> states, the send and receive limits are per operation, so in practice it can be longer. Either
+> way it ends on the `unauthorized` path above.
 
 **Step 2 comes before step 3.** If one request carries the same `peer_id` in both `departed` and
 `confirm`, the reclaim wins. Writing an ended session as ready would fill that slot again.
@@ -802,15 +867,55 @@ in `peers`.
 | `H(departed=[P], confirm=[P])` | No P | Zero | Nothing |
 | An implementation that writes step 3 with no condition | — | **Writes even for a pair with no candidates. This is the defect the table catches** | — |
 
+**Server reclaim case table.** `J` is `joined_at_ms` and `G` is `JOIN_REGISTER_GRACE_S * 1000`.
+
+| Peer | Time | Result |
+|------|------|------|
+| No candidates | `now < J + G` | Stays |
+| No candidates | `now == J + G` | **Deleted.** The boundary is on the reclaim side. Put into `released` |
+| No candidates | `now > J + G` | Deleted. That address becomes eligible for assignment again. Which join gets it follows the 2.5 assignment order |
+| Has candidates | `now > J + G` | Stays. A peer that may have a tunnel is reclaimed only by the host |
+| No candidates, registers after the read and before the delete | `now > J + G` | **Stays.** The delete condition fails. An implementation that deletes with no condition is caught on this row |
+| The host itself, no candidates | `now > J + G` | Stays. Deleting it would make the caller itself disappear |
+| `join_room` retry with the nonce of a reclaimed peer | - | A new join. There is no `NONCE#`, so it is not the idempotent response of 4.3. Because of the first term of "Why 90 seconds" above, a normal client's retry finishes before the reclaim |
+| `joined_at_ms` field missing | - | **Stays.** Do not turn "cannot decide" into reclaim. Leave `peer.reclaim_skipped` of the 7.5 log. Ending the whole request as `internal` would block even that room's lease renewal |
+
 **Idempotency.** It does not use a `client_nonce`. Sending the same request twice leaves the
 second one's `released` and `confirmed` empty and the stored state the same. The renewal uses the
-`now` of that moment, so only the lease is pushed further.
+`now` of that moment, so only the lease is pushed further. Server reclaim also decides with the
+`now` of that moment, so if a peer's grace passes between the two requests, the second one deletes
+it. What idempotency guarantees is that the same `departed` and `confirm` are not applied twice.
 
 **Errors.** `room_not_found`, `room_expired`, `unauthorized`. The common four (4.1) are not listed
 separately.
 
 **An expired room cannot be revived.** If `expires_at_ms` has already passed, it is
 `room_expired` and no renewal happens. A room whose lease has lapsed is a room that has ended.
+
+**When the host receives an error, it handles it in three groups.** This differs from the general
+rule of 8.3 Error Classification and Retry. A `host_report` failure is not a failure of an attempt
+but a matter of a room that already has tunnels.
+
+| Received | Meaning | What the host does |
+|---------|-----|------------------|
+| `room_expired`, `room_not_found`, `unauthorized`, `bad_request` | The room has ended on the server. Sending the same request again gets the same answer | Emit the `FAIL CONTROL_PLANE_EXCHANGE_FAILED` line once and stop `host_report`. Even when a session ends, do not make the immediate call above. Leave existing sessions as they are. When all remaining sessions end, go to the lobby. If there is no session, go right away |
+| `rate_limited` | The room may be alive. Another source behind the same public IP may have burned the budget (6.4) | Do not emit `FAIL`; call again on the next cycle |
+| `internal`, `unavailable`, transport error | Transient error | Call again on the next cycle |
+
+- After the room ends, the tunnels of the remaining sessions keep going ([`spec.md`](spec.md)
+  NFR-3). What is lost is only new joins
+- The lease can expire while `rate_limited` continues. The budget check comes before the store
+  (6.4), so the responses in that window stay `rate_limited`. The first request processed once the
+  budget refills gets `room_expired`, or `room_not_found` if TTL has already deleted it, and moves to
+  the first row
+- The list of triggers for going to the lobby is owned by `concurrency.md` chapter 7 Lobby
+
+> **Why stop on the first row.** An expired room cannot be revived, and the first three errors of
+> that row deduct from the source's rate-limit budget (6.4). Calling on gains nothing and blocks
+> other users behind the same public IP.
+
+> **Why call again on `rate_limited`.** Stopping because of a budget burned by someone else's
+> guessing would kill a live room by lease expiry. The budget refills one token every 6 seconds.
 
 ### Why It Was Decided This Way
 
@@ -876,18 +981,20 @@ a room with a lapsed lease loses is **new joins and control plane operations.**
 
 **State what the lease covers and what it does not.**
 
-- The allowance for both sides to finish registration is not this value but the `get_peers`
-  deadline of [`protocol.md`](protocol.md) section 11 Timers. The side that started first has to
-  see the other side's registration and the host's confirmation within that deadline, counted from
-  its own successful `register_candidate`. Beyond it, the run ends in
-  `CONTROL_PLANE_EXCHANGE_FAILED` even though the room is still alive (9.6)
-- A peer whose process died loses its slot. Coming back in is a new join and the virtual IP
-  changes (4.3). The room is alive, so the same room code is used again
+- The allowance for a player to receive the host's confirmation is not this value but the
+  `get_peers` deadline of [`protocol.md`](protocol.md) section 11 Timers. The player has to see the
+  host's confirmation within that deadline, counted from its own successful `register_candidate`.
+  Beyond it, the run ends in `CONTROL_PLANE_EXCHANGE_FAILED` even though the room is still alive
+  (9.6)
+- The host has no such deadline. It does not call `get_peers` (8.4), and after setting up the room
+  it stays in the room even with no players ([`concurrency.md`](concurrency.md) chapter 7 Lobby)
+- A peer whose process died loses its slot. Coming back in is a new join and the virtual IP is
+  assigned anew at that time (4.3). The room is alive, so the same room code is used again
 - If the host dies, the room expires within `ROOM_LEASE_S`. A participant who joins in that window
   has no host to confirm the pair, never reaches ready, and ends at the polling deadline
 
-**Reflect in the demo script that the two values have different roles.** The first side failing
-within a minute is not a control plane outage.
+**Reflect in the demo script that the two values have different roles.** A player that did not
+receive the host's confirmation failing within a minute is not a control plane outage.
 
 **Allowed states per operation.**
 
@@ -943,11 +1050,14 @@ It stays even if any peer registers candidates again. The basis is in 4.5 `get_p
 
 ```text
 (none) --create_room / join_room--> joined --register_candidate--> registered
-   ^                                                                   |
+   ^  ^                                  |                             |
+   |  +-- server reclaim (grace passed) -+                             |
    +------------- the departed of host_report (slot reclaim) ----------+
 ```
 
-**Only the host's report deletes a peer.** Otherwise peers disappear together with the room.
+**Two things delete a peer.** The host's report, and the server reclaim (4.6) of a participant
+whose `JOIN_REGISTER_GRACE_S` has passed with no candidates. Otherwise peers disappear together with
+the room.
 
 > **Why.** The reason `leave_room` is not provided is at the head of section 4. The one who leaves
 > does not know whether its session is closed on the host side too.
@@ -1023,16 +1133,18 @@ it. Therefore an operation that needs the token has two steps.
   change between the read and the write
 
 **All writes are conditional, and any place that writes several items together uses
-`TransactWriteItems`.** If any one condition fails, all of them are cancelled.
+`TransactWriteItems`.** If any one condition fails, all of them are cancelled. The only exception is
+the `host_report` renewal (table below).
 
 | Operation | Write | Condition |
 |------|------|------|
 | `create_room` | Transaction: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NONCE#` put | **All four puts carry `attribute_not_exists(pk)`.** A `ROOM` failure is a `room_id` collision → redraw (2.1). A `NONCE#` failure means the same nonce arrived concurrently, so read again and return that result. `PEER#` and `VIP#` cannot exist without `ROOM`, so a failure there means the store deleted only part of an earlier room's items. That is `internal` and there is no redraw |
 | `join_room` new join | Per pool address, a transaction: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `PEER#<peer_id>` put, `NONCE#` put | `attribute_exists(pk) AND expires_at_ms > :now` on `ROOM`. This blocks the race where the room expires or is deleted between the prior read and the write. `attribute_not_exists(pk)` on `VIP#`, `PEER#`, and `NONCE#` each. Failure handling is in the cancellation reason table below |
-| `register_candidate` | `PEER#` update: `candidates = :list` | `attribute_exists(pk) AND peer_token = :t` |
+| `register_candidate` | `PEER#` update: `candidates = :list` | `attribute_exists(pk) AND peer_token = :t`. Failure is `unauthorized`. It is the case where that peer was reclaimed after the token check (4.6 server reclaim) |
 | `host_report` reclaim | Per target, a transaction: `PEER#<target>` delete, `VIP#<that peer's virtual_ip>` delete, delete the `PAIR#` items that peer is part of | **`attribute_exists(pk)` on `PEER#` only.** If that condition fails, the target was already gone and is not put into `released` (4.6). The other two are unconditional deletes. A peer that left before confirmation has no `PAIR#` at all, and conditioning on it would cancel the whole reclaim |
+| `host_report` server reclaim | Per target, a transaction: `PEER#<target>` delete, `VIP#<that peer's virtual_ip>` delete, `NONCE#<that peer's client_nonce>` delete | `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff` on `PEER#`. `:cutoff` is `now - JOIN_REGISTER_GRACE_S * 1000`. If the condition fails, the peer registered in the meantime or was already gone, so it is not put into `released`. A peer that had no candidates cannot have a `PAIR#`, so none is deleted |
 | `host_report` confirmation | Per pair, a transaction: `PEER#<host>` **ConditionCheck**, `PEER#<other>` **ConditionCheck**, `PAIR#<lo>-<hi>` put | Both condition checks are `attribute_exists(pk) AND size(candidates) > :zero`. The put is `attribute_not_exists(pk)`. **The both-sides-have-candidates rule is a storage condition.** The other peer can be reclaimed or have its candidates cleared between the read and the write. If only the put condition fails, the pair is already confirmed and that is not an error (4.6) |
-| `host_report` renewal | A transaction: `ROOM` update (`expires_at_ms = :new`, `ttl = :new_ttl`) and **a `ttl = :new_ttl` update for every other item of that room** | `attribute_exists(pk) AND expires_at_ms > :now` on `ROOM`. Failure is `room_expired`. The other updates are unconditional. **The item list is the first `Query` of this request.** The item count is at most `1 + MAX_PEERS * 2 + (MAX_PEERS - 1)`, inside the transaction limit |
+| `host_report` renewal | First write the single `ROOM` update (`expires_at_ms = :new`, `ttl = :new_ttl`). If it succeeds, write a separate `ttl = :new_ttl` update for each other item of that room. Not bundled into a transaction | `attribute_exists(pk) AND expires_at_ms > :now` on `ROOM`. Failure is `room_expired`, and the rest is not written. **Each other item carries `attribute_exists(pk)`.** If the condition fails, the item was deleted in the meantime, so it is ignored. The item list is the first `Query` result of this request minus the items step 2 deleted |
 
 **When a transaction is cancelled, read the cancellation reason per item and decide by the
 priority below.**
@@ -1176,7 +1288,7 @@ Items of the same room share the same `ttl`. One day after the room expires, Dyn
 
 **Renewing the lease pushes the `ttl` of every item of that room.** Renewing only `ROOM` would
 delete the `PEER#`, `VIP#` and `PAIR#` items of a long-lived room first, leaving a live room with
-no peers. The write is done by the renewal transaction of 4.6 `host_report` (6.3).
+no peers. The write is done by the renewal writes of 4.6 `host_report` (6.3).
 
 - **An item created between two renewals takes its `ttl` from the `expires_at_ms` of that moment.**
   The next renewal pushes it along. The report interval is at most 30 seconds and
@@ -1192,6 +1304,13 @@ no peers. The write is done by the renewal transaction of 4.6 `host_report` (6.3
 
 ### Why It Was Decided This Way
 
+- **6.3 The `host_report` renewal is not bundled into a transaction.** An unconditional update
+  creates a missing item, so it would revive a `PEER#` or `VIP#` deleted by the reclaim of the same
+  request or by another overlapping request as an item holding only `ttl`. A revived `VIP#` blocks
+  that address until the room ends. Putting conditions on them inside a transaction would cancel
+  the whole lease renewal because of one item another request deleted. Writing them separately can
+  leave the `ttl` of some items pushed one time fewer, but the next cycle pushes it again, and
+  `STORAGE_GRACE_S` is one day, so they are not deleted in between
 - **6.3 `NONCE#` is placed at cancellation reason row 1.** It is because of the retry scenario.
   When a participant who lost the response comes back with the same nonce and the first request
   already claimed `VIP#`, then `VIP#` and `NONCE#` fail together in the same transaction. If
@@ -1336,15 +1455,17 @@ elapsed_since_ready_ms(room):
 | Negative in the wall clock fallback | `max(0, ...)` | 0. The client waits the full `punch_delay_ms` |
 | No `boot_id` file (not Linux) | A random value drawn at process start is used as `boot_id` | Every process restart drops to the wall clock fallback. That is what happens in local tests. **The deployment target is Linux** |
 
-**The two premises were not confirmed in this repo.** This machine is Windows and
-`time.get_clock_info('monotonic')` returns `GetTickCount64()`.
+**The two premises were confirmed on the deployment instance.** Two things were checked in the 7.6
+deployment environment.
 
-- Confirming on the deployment instance, with the same call, that the implementation is
-  `clock_gettime(CLOCK_MONOTONIC)`, and confirming that `boot_id` differs before and after a
-  reboot, are [`roadmap.md`](roadmap.md) Phase 3 pre-start items
-- Until confirmed, this section is **a design, not verified behavior**
-- If either premise turns out wrong, it drops to the wall clock fallback, so what is lost is
-  accuracy, not correctness
+- The implementation of `time.get_clock_info('monotonic')` is `clock_gettime(CLOCK_MONOTONIC)` and
+  `adjustable=False`
+- `boot_id` was read before and after a reboot, and the two values differed
+
+The development machine is Windows, so the same call returns `GetTickCount64()`. Local tests are the
+last row of the case table above. If the deployment image changes, do the same two checks again. If
+either premise turns out wrong, it drops to the wall clock fallback, so what is lost is accuracy,
+not correctness.
 
 ### 7.5 Logs and Counters
 
@@ -1358,7 +1479,8 @@ following.
 | `http.request` | `op`, `status`, `error` (`-` on success), `src`, `ms` | Verification of every operation. **Does not carry `peer_token`, the body, or `room_id`.** If a room code lands in the log, reading the log is room hijacking |
 | `room.created` | `peer_id`, `virtual_ip` | Virtual IP assignment verification. `room_id` is not carried |
 | `pair.ready` | `host_peer_id`, `peer_id` (the other end of the pair), `punch_delay_ms` | Verification of the single ready write. It has to appear **exactly once** per pair. Splitting lines in a log with more than one room needs the two `peer_id`s |
-| `peer.released` | `peer_id`, `virtual_ip` | Slot reclaim verification (4.6). Reassignment is seen when the reclaimed address appears in `vip.claimed` again |
+| `peer.released` | `peer_id`, `virtual_ip`, `by` (`host` or `server`) | Slot reclaim verification (4.6). Reassignment is seen when the reclaimed address appears in `vip.claimed` again. `by` separates the host's report from server reclaim |
+| `peer.reclaim_skipped` | `peer_id`, `reason` | A peer that server reclaim skipped because it could not decide (4.6 server reclaim case table). The level is `WARN` |
 | `room.renewed` | `host_peer_id`, `expires_in_s` | Lease renewal verification (5.1). The line stopping after the host stops signalling is what is watched |
 | `vip.claimed` | `virtual_ip`, `peer_id` | Verification of duplicate assignment under concurrent join |
 | `counter` | `name`, `value` | The counters below |
@@ -1391,6 +1513,62 @@ local, which needs no credentials.
 Deployment is **one systemd service.** `Restart=always`. There is no restart recovery procedure
 (6.1), so restarts are cheap. The security group opens inbound TCP 8000. The telemetry service's
 port is outside this document's scope and is a [`roadmap.md`](roadmap.md) Phase 9 pre-start item.
+
+**Deployment environment.** The values below were confirmed on the real instance and table. Actual
+values such as the region, table name, public address, and account details are not kept in the
+public repo. They are kept in `deploy/aws.local.md` inside the repo, and `.gitignore` blocks it.
+
+| Item | Value | How it was confirmed |
+|------|-----|----------------|
+| OS | Ubuntu 26.04 LTS, x86_64 | `/etc/os-release`, `uname -m` on the instance |
+| Instance type | t3.micro | Console |
+| Python | 3.14 (system). The server runs with `boto3` installed in a venv | `python3 --version` |
+| systemd | Present | `systemctl --version` |
+| Credentials | IAM role. There is no credentials file on the instance | `aws sts get-caller-identity` gives `assumed-role`; no `~/.aws/credentials` |
+| Security group inbound | TCP 8000 allowed from anywhere | Console |
+| Public address | Elastic IP. The client is given an IPv4 literal. No DNS name is used | Console. [`windows-prereq.md`](windows-prereq.md) section 10 |
+| Table | The two keys of 6.2 (`pk`, `sk`), TTL attribute `ttl`, no index | Console |
+| Capacity | provisioned, RCU 25, WCU 25 | Console. "Capacity" below |
+
+**The IAM role needs six actions.** The resource is narrowed to that one table.
+
+| Action | Where it is used |
+|------|-----------|
+| `dynamodb:GetItem` | Prior read of `NONCE#` and `ROOM` (6.3 reads) |
+| `dynamodb:Query` | Reading the whole room (6.3 reads) |
+| `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem` | Single writes and the same actions inside transactions |
+| `dynamodb:ConditionCheckItem` | ConditionCheck inside transactions (the `join_room` and `host_report` confirmation of 6.3) |
+
+> **Why list `ConditionCheckItem` separately.** Put, Update, and Delete inside a transaction are
+> allowed by the permission of the single action of the same name, but ConditionCheck needs this
+> permission separately (the transactions IAM section of the AWS DynamoDB Developer Guide). Without
+> it, joins and pair confirmations end in a permission error.
+
+**Capacity.** RCU 25 and WCU 25 are the DynamoDB Always Free limit. This limit is per region and per
+payer account, and applies when the table class is Standard. It was confirmed that the account's
+Free Tier page shows it as "Always Free monthly allowance".
+
+The load is the worst case under the assumption that each item is 1KB or less. A write uses 1 WCU
+per item, and a strongly consistent `Query` uses RCU equal to the total bytes read rounded up in
+4KB units (the read/write units section of the AWS DynamoDB Developer Guide). One room has at most
+15 items per 6.2.
+
+| Load | Worst case |
+|------|--------|
+| `host_report` renewal writes of a room below capacity | With three players, 12 items every 5 seconds. 2.4 WCU/s |
+| Renewal writes of a full room | 15 items every 30 seconds. 0.5 WCU/s |
+| Reads of `host_report` | Two `Query`s per call (4.6). If the room has just become full it is 15KB, so 4 RCU per `Query` and 8 RCU per call. The interval is set by the previous response, so that call can come 5 seconds later, and the periodic calls alone give a worst case of 1.6 RCU/s. The immediate call when a session ends adds 8 RCU per call |
+| One player polling with `get_peers` | One `Query` every 0.5 seconds. With 15 items it is 15KB, so 4 RCU, 8 RCU/s. It runs only until ready |
+
+One room fits within 25 for writes. For reads, during the few seconds when four players poll at the
+same time, polling alone is a worst case of 32 RCU/s, and the `host_report` reads on top of that go
+over 25. The excess can be absorbed by burst capacity, where DynamoDB keeps up to 300 seconds of
+unused capacity. It is not guaranteed, though. The same guide says that reserve can be used for
+background work without notice, so throttling can happen. Then the client gets `internal` (the 6.3
+cancellation reason table) and retries per 8.3 or waits for the next poll. Real items are expected
+to be much smaller than 1KB so that a whole room fits within 4KB, but this was not measured. If
+several rooms are joining at the same moment it can go over. When the actual consumed capacity is
+checked is owned by `roadmap.md`.
 
 **The unit file and deployment commands are not kept here.** This follows the rule that procedures
 not yet executed do not go into documents. After the real deployment in Phase 3, the procedure goes
@@ -1467,10 +1645,11 @@ that section's rule of "the only state is the resolved server address".
 | `create_room`, `join_room` new join | **With the same `client_nonce`,** at 1-second intervals, **3 times in total including the first attempt**. Beyond that, `CONTROL_PLANE_EXCHANGE_FAILED` |
 | `register_candidate` | At 1-second intervals, 3 times in total including the first attempt. Replace semantics (4.4) make retry safe |
 | `get_peers` | **No separate retry rule.** The next poll is the retry. The polling interval and deadline are in [`protocol.md`](protocol.md) section 11 Timers |
-| `host_report` | **No separate retry rule.** The next cycle is the retry. It is idempotent (4.6), so the same request is sent again as is. Even if transient errors continue and the lease lapses, the tunnel is kept (5.1) |
+| `host_report` | **No separate retry rule.** The next cycle is the retry. It is idempotent (4.6), so the unreported `departed` is carried again and sent (4.6). Even if transient errors continue and the lease lapses, the tunnel is kept (5.1). Definite errors also follow the error table of 4.6, not the general rule below |
 
 A definite error is not retried and is immediately `CONTROL_PLANE_EXCHANGE_FAILED`.
-**`rate_limited` is a definite error too.** A person restarts it.
+**`rate_limited` is a definite error too.** A person restarts it. Only `host_report` is the
+exception and follows the error table of 4.6.
 
 > **Why.** If the client waited and retried on its own, several normal clients behind the same NAT
 > would back off at the same time, rush back at the same time, and get caught again.
@@ -1485,7 +1664,8 @@ This is the order in which the client calls the operations of this document. The
 all from [`protocol.md`](protocol.md) section 11 Timers; only the order is fixed here.
 
 ```text
-1. Take whether to create or join a room (architecture.md 3.5). Host: create_room; player: join_room
+1. Take whether to create or join a room. It is the CLI role or a lobby command (architecture.md 3.5).
+   Host: create_room; player: join_room
 2. [control] resolves DNS once. On failure, launch fails
 3. UDP socket bind, getsockname (protocol.md section 6)
 4. create_room or join_room. Print the room_id from the response to the console (the host passes it to the peer)
@@ -1498,8 +1678,13 @@ all from [`protocol.md`](protocol.md) section 11 Timers; only the order is fixed
    candidates, put that peer_id into the confirm of the next call (4.6). It does not call get_peers
 8. Apply 10.1 hygiene again to the received candidates. If own peer_id appears, CONTROL_PLANE_EXCHANGE_FAILED
 9. Punch after max(0, punch_delay_ms - elapsed_since_ready_ms) (protocol.md 10.2)
-10. When a session ends, the host puts that peer_id into the departed of the next host_report (4.6)
+10. When a session ends, the host sends one host_report right away and puts that peer_id into departed (4.6)
 ```
+
+**Steps 2 and 3 happen once per process.** They are done at startup even with no role argument.
+When a new attempt starts from the lobby, it takes the command of step 1 and goes again from step 4.
+The STUN of step 5 also runs again. Whether to skip it is left undecided by
+[`concurrency.md`](concurrency.md) chapter 7 Lobby.
 
 **Step 4 comes before step 5.** The protocol still holds if the order is swapped, but the person
 waits longer.
@@ -1548,11 +1733,8 @@ rule line deleted `FAIL`s on. If a mutation drops no row, that rule does not pro
 
 | What | Where and when |
 |------|-------------|
-| Table name, capacity values, region | Deployment configuration. Together with the [`roadmap.md`](roadmap.md) Phase 3 pre-start item (free tier check) |
-| Actual values of the Elastic IP and DNS name | At Phase 3 deployment. Addresses are not hard-coded in documents |
-| Telemetry service port, schema, authentication | Outside this document's scope. `roadmap.md` Phase 9 |
+| Telemetry service port, schema, authentication | Outside this document's scope. [`roadmap.md`](roadmap.md) Phase 9 |
 | Whether the two services share one table, whether IAM is split | [ADR 0004](decisions/0004-state-store-dynamodb.md) deferred it to Phase 9 |
 | Automatic retry and re-polling by the surviving side | [`protocol.md`](protocol.md) 10.4 open item. There is no rejoin (4.3), so that procedure has to stand on a new join |
 | TLS, caller authentication | Stretch. 1.2 |
 | Whether `ROOM_LEASE_S` (120) and the two signalling intervals are right | After the Phase 8 demo. Judged by how long a room takes to disappear after the host dies, and by how long a late participant waits |
-| Whether the renewal writes fit in the free tier | `roadmap.md` Phase 3 pre-start item. Compute the write count when one room stays up for a long time |

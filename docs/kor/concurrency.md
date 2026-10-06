@@ -95,7 +95,7 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 |------|:---:|-----|
 | Phase 1~2 | 3 | |
 | Phase 3~5 | 4 | 제어 응답 이벤트가 들어온다 |
-| Phase 6 이후 | 4 | 콘솔 이벤트가 빠지고 Wintun 이벤트가 들어온다 |
+| Phase 6 이후 | 5 | Wintun 이벤트가 들어온다. 콘솔 빌드 기준이다. GUI 빌드는 1장 스레드의 미결이다 |
 
 `timeout_ms`는 아래처럼 계산한다. **뺄셈을 먼저 하면 안 된다.**
 

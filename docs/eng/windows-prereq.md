@@ -468,7 +468,8 @@ and it does not distinguish listening from not listening.
 
 ## 6. Control plane EC2
 
-**Status: unverified.** The EC2 instance has not been launched yet. That is Phase 3 work.
+**Status: partial.** The instance was launched, and a person checked the security group's inbound TCP 8000 in the console.
+The bind address and external connection decisions below can run only after the server is deployed.
 
 Three things each block the connection.
 
@@ -734,15 +735,17 @@ This value applies **to that interface only.** If you turn it off, leave a code 
 
 ## 10. EC2 public IP change
 
-**Status: unverified.** The instance has not been launched yet.
+**Status: human-checked (console).** An Elastic IP was attached to the instance. The `describe-addresses` decision
+command below has not been run yet. This project does not use a DNS name and gives the client an IPv4 literal.
+So the DNS decision below is skipped.
 
 An auto-assigned public IPv4 changes when the instance is stopped and started. Hard-coding the
 address in the client breaks the demo on the day. **An attached Elastic IP does not change.** That
 is the measure below.
 
-**Owner: person.** Attach an Elastic IP and point a DNS name at it. The client receives the DNS
-name ([`control_plane.md`](control_plane.md) 3.2 Address). Not one of the two, but both. If only
-DNS is used and the address behind it changes, a client that is already running keeps going to the
+**Owner: person.** Attach an Elastic IP. In an operation that uses a DNS name, point that name at
+the Elastic IP and give the client the name ([`control_plane.md`](control_plane.md) 3.2 Address). In that
+case it is not one of the two, but both. If only DNS is used and the address behind it changes, a client that is already running keeps going to the
 old address, because the client resolves once at startup ([`concurrency.md`](concurrency.md)
 chapter 8 The `[control]` Thread).
 
@@ -755,7 +758,7 @@ aws ec2 describe-addresses \
 **Pass criterion. The output must be `1`.** `0` means no Elastic IP is attached and the address
 changes on every restart. If 2 or more, a person checks what is attached.
 
-**Check the DNS side too. It is both, so there are two decisions.** Call the Elastic IP obtained
+**In an operation that uses a DNS name, check the DNS side too. It is both, so there are two decisions.** Call the Elastic IP obtained
 above `<EIP>`, and the name given to the client `<name>`.
 
 ```powershell

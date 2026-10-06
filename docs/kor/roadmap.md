@@ -200,23 +200,13 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 문서에 빠진 값을 만나면 코드에서 정하지 않고 그 문서를 먼저 고친다
   - 저장소를 SQLite에서 바꾼 결정과 그 대가는
     [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)에 있다
-- **착수 전 Elastic IP 와 DNS 이름 확보.** 클라이언트는 DNS 이름을 받고 그 이름은 Elastic IP 를
-  가리킨다 (`control_plane.md` 3.2 주소, [`windows-prereq.md`](windows-prereq.md) 10절). 실제
-  값은 문서에 적지 않는다
-- **착수 전 테이블 이름, 리전, 용량 값을 배포 설정으로 정한다.** 코드에 박지 않는다
-  (`control_plane.md` 7.6 설정과 배포)
-- **착수 전 배포 인스턴스에서 시계 전제 둘을 확인한다.** `control_plane.md` 7.4 시계가 이 둘을
-  전제로 두고 확인하지 않았다고 적었다. 어긋나면 그 절을 고친다
-  - `time.get_clock_info('monotonic')` 의 구현이 `clock_gettime(CLOCK_MONOTONIC)` 인지
-  - 재부팅 전후에 `/proc/sys/kernel/random/boot_id` 가 바뀌는지
-- **착수 전 EC2의 자격 증명 방식 확정.** 액세스 키를 소스나 문서에 적지 않는다. 문서 권장은 IAM 역할이다 (ADR 0004)
-- **착수 전 프리 티어 적용 범위를 계정에서 직접 확인.** 문서만으로는 25 WCU / 25 RCU / 25 GB 가 영구인지 확인되지 않았다 (ADR 0004 "확인하지 못한 것")
 - 로컬 시험은 DynamoDB local 로 돌린다. **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
 - **착수 시 `control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4)를
   `control-server/tests/` 로 옮기고 문서는 그 파일을 가리키게 고친다.** 표 한 벌이 두 곳에
   있으면 한쪽만 고쳐져 어긋난다. 옮긴 표마다 변이 시험을 붙인다
 - Python 제어 서버를 AWS EC2에 배포. systemd 서비스, 보안 그룹 TCP 8000. **배포 절차를 실제로
-  한 번 돌린 뒤 도구로 넣고 문서는 가리킨다** (`control_plane.md` 7.6)
+  한 번 돌린 뒤 도구로 넣고 문서는 가리킨다** (`control_plane.md` 7.6). 배포 환경과 계정 쪽
+  확인 결과도 그 절에 있다
 - 방 생성 구현 (`create_room`, 멱등성 nonce)
 - 방 참가 구현 (`join_room`. 형식은 하나다. 재참가는 없다)
 - 가상 IP 할당 (`VIP#` 조건부 쓰기 선점)
@@ -315,6 +305,17 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
     **0 건이어야 한다**
   - 이것은 필요 조건이고 충분 조건이 아니다. 어느 경로에서도 나오지 않는다는 것은 코드를
     읽어 본다
+
+**배포.**
+
+- 배포한 서버가 실제 테이블에서 연산 다섯을 다 돈다. 특히 `join_room` 과 `host_report` 확인이
+  권한 오류(`AccessDeniedException`)로 `internal` 이 되지 않는다. IAM 동작 목록
+  (`control_plane.md` 7.6 설정과 배포)에서 `ConditionCheckItem` 이 빠지면 여기서 걸린다
+- 방 하나를 만들고 플레이어를 넷까지 넣었다 빼는 동안 CloudWatch 의 테이블 지표를 1분 단위로
+  본다. `ConsumedReadCapacityUnits` 와 `ConsumedWriteCapacityUnits` 는 1분 `Sum` 을 60 으로 나눈
+  값이 25 이하이고, 같은 기간 `ThrottledRequests` 의 `Sum` 이 0 이다. 7.6 의 용량 계산이 재지
+  않은 최악값이기 때문이다
+  - 지표의 원시 값은 기간 합이라 초당 용량 25 와 바로 비교하지 않는다
 
 **시계와 로그.**
 

@@ -442,7 +442,8 @@ Invoke-NetQuerySafe { Get-NetTCPConnection -LocalPort 25565 -State Listen } |
 
 ## 6. 제어 평면 EC2
 
-**검증: 미검증.** EC2 인스턴스를 아직 띄우지 않았다. Phase 3 작업이다.
+**검증: 부분.** 인스턴스를 띄웠고 보안 그룹의 인바운드 TCP 8000 을 사람이 콘솔에서 확인했다.
+아래 바인드 주소와 외부 접속 판정은 서버를 배포해야 돌릴 수 있다.
 
 세 가지가 각각 접속을 막는다.
 
@@ -694,14 +695,16 @@ Set-NetIPInterface -InterfaceAlias '<어댑터 이름>' -AddressFamily IPv4 -Dad
 
 ## 10. EC2 공인 IP 변경
 
-**검증: 미검증.** 인스턴스를 아직 띄우지 않았다.
+**검증: 사람 확인 (콘솔).** Elastic IP 를 인스턴스에 붙였다. 아래 `describe-addresses` 판정
+명령은 아직 돌리지 않았다. 이 프로젝트는 DNS 이름을 쓰지 않고 클라이언트에 IPv4 리터럴을
+준다. 그래서 아래 DNS 판정은 건너뛴다.
 
 **자동 할당된** 공인 IPv4 는 인스턴스를 중지했다 켜면 바뀐다. 클라이언트에 주소를 박아 두면
 그날 시연이 깨진다. **Elastic IP 를 붙이면 바뀌지 않는다.** 그것이 아래 조치다.
 
-**분류: 사람.** Elastic IP 를 붙이고 DNS 이름이 그것을 가리키게 한다. 클라이언트는 DNS
-이름을 받는다([`control_plane.md`](control_plane.md) 3.2 주소). 둘 중 하나가 아니라 둘 다다.
-DNS 만 쓰고 뒤의 주소가 바뀌면 클라이언트가 기동 시 한 번만 해석하므로
+**분류: 사람.** Elastic IP 를 붙인다. DNS 이름을 쓰는 운영이면 그 이름이 Elastic IP 를
+가리키게 하고 클라이언트에 이름을 준다([`control_plane.md`](control_plane.md) 3.2 주소). 그때는
+둘 중 하나가 아니라 둘 다다. DNS 만 쓰고 뒤의 주소가 바뀌면 클라이언트가 기동 시 한 번만 해석하므로
 ([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드) 켜 둔 클라이언트는 옛
 주소로 간다.
 
@@ -714,7 +717,7 @@ aws ec2 describe-addresses \
 **판정 기준. 출력이 `1` 이어야 한다.** `0` 이면 붙은 Elastic IP 가 없어 주소가 재시작마다
 바뀐다. 2 이상이면 무엇이 붙었는지 사람이 확인한다.
 
-**DNS 쪽도 확인한다. 둘 다라고 했으므로 판정도 둘이다.** 위에서 얻은 Elastic IP 를 `<EIP>`
+**DNS 이름을 쓰는 운영이면 DNS 쪽도 확인한다. 둘 다라고 했으므로 판정도 둘이다.** 위에서 얻은 Elastic IP 를 `<EIP>`
 라 하고, 클라이언트에 줄 이름을 `<이름>` 이라 한다.
 
 ```powershell

@@ -22,9 +22,8 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘 | 계정과 인스턴스가 필요해 문서로 끝나지 않는다. 저장소 소유자가 진행하고 결과를 알려 준다 |
-| - | `docs/eng` 미러. 로비 정의를 바꾼 변경과 [ADR 0011](decisions/0011-로비는-방-소속으로-정한다.md), [ADR 0012](decisions/0012-후보-없는-참가자는-서버가-회수한다.md), [ADR 0013](decisions/0013-방이-끝난-호스트는-세션이-끝나면-로비로-간다.md) | 한국어만 고쳤다. 게이트가 `mirror` 와 `parity` 로 막는 것이 그 표시다. 푸시 전에 맞춘다 |
-| 2 | Phase 3. 제어 평면 ([`control_plane.md`](control_plane.md)) | Phase 2 가 닫혔다 |
+| 1 | `docs/eng` 미러. 로비 정의를 바꾼 변경, 배포 환경 반영과 [ADR 0011](decisions/0011-로비는-방-소속으로-정한다.md), [ADR 0012](decisions/0012-후보-없는-참가자는-서버가-회수한다.md), [ADR 0013](decisions/0013-방이-끝난-호스트는-세션이-끝나면-로비로-간다.md) | 한국어만 고쳤다. 게이트가 `mirror` 와 `parity` 로 막는 것이 그 표시다. 푸시 전에 맞춘다 |
+| 2 | Phase 3. 제어 평면 ([`control_plane.md`](control_plane.md)). 첫 작업은 케이스 표를 `control-server/tests/` 로 옮기는 것이다 | 착수 전 항목이 전부 닫혔다. 계정 쪽 확인 결과는 `control_plane.md` 7.6 이 갖는다 |
 
 **Phase 2 가 남긴 것.** 코드가 아니라 다음 Phase 가 받을 자리다.
 

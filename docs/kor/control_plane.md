@@ -1337,14 +1337,15 @@ elapsed_since_ready_ms(room):
 | 벽시계 대체에서 음수 | `max(0, ...)` | 0. 클라이언트는 `punch_delay_ms` 를 다 기다린다 |
 | `boot_id` 파일이 없다 (Linux 가 아니다) | 프로세스 시작 시 뽑은 난수를 `boot_id` 로 쓴다 | 프로세스 재시작마다 벽시계 대체로 떨어진다. 로컬 시험에서 그렇다. **배포 대상은 Linux 다** |
 
-**두 전제는 이 레포에서 확인하지 않았다.** 이 기기는 Windows 이고
-`time.get_clock_info('monotonic')` 이 `GetTickCount64()` 를 돌려준다.
+**두 전제는 배포 인스턴스에서 확인했다.** 7.6 의 배포 환경에서 두 가지를 봤다.
 
-- 배포 인스턴스에서 같은 호출로 구현이 `clock_gettime(CLOCK_MONOTONIC)` 인지 확인하고,
-  재부팅 전후의 `boot_id` 가 다른지 확인하는 것이 [`roadmap.md`](roadmap.md) Phase 3 의
-  착수 전 항목이다
-- 확인 전에는 이 절이 **설계이지 검증된 동작이 아니다**
-- 어느 쪽이든 어긋나면 벽시계 대체로 떨어지므로 틀린 값이 아니라 정확도를 잃는다
+- `time.get_clock_info('monotonic')` 의 구현이 `clock_gettime(CLOCK_MONOTONIC)` 이고
+  `adjustable=False` 다
+- `boot_id` 를 재부팅 전후에 읽었고 두 값이 달랐다
+
+개발 기기는 Windows 라 같은 호출이 `GetTickCount64()` 를 돌려준다. 로컬 시험은 위 케이스 표의
+마지막 행이다. 배포 이미지를 바꾸면 같은 두 확인을 다시 한다. 어긋나면 벽시계 대체로 떨어지므로
+틀린 값이 아니라 정확도를 잃는다.
 
 ### 7.5 로그와 카운터
 
@@ -1386,6 +1387,58 @@ local 이라 자격 증명이 필요 없다.
 배포는 **systemd 서비스 하나**다. `Restart=always`. 재시작 복원 절차가 없으므로(6.1)
 재시작이 싸다. 보안 그룹은 인바운드 TCP 8000 을 연다. 텔레메트리 서비스의 포트는 이 문서
 범위 밖이고 [`roadmap.md`](roadmap.md) Phase 9 착수 전 항목이다.
+
+**배포 환경.** 아래는 실제 인스턴스와 테이블에서 확인한 값이다. 리전, 테이블 이름, 공인 주소,
+계정 정보 같은 실제 값은 공개 레포에 두지 않는다. 레포 안의 `deploy/aws.local.md` 에 두고
+`.gitignore` 가 막는다.
+
+| 항목 | 값 | 어떻게 확인했나 |
+|------|-----|----------------|
+| OS | Ubuntu 26.04 LTS, x86_64 | 인스턴스에서 `/etc/os-release`, `uname -m` |
+| 인스턴스 유형 | t3.micro | 콘솔 |
+| Python | 3.14 (시스템). 서버는 venv 에 `boto3` 를 넣어 돈다 | `python3 --version` |
+| systemd | 있음 | `systemctl --version` |
+| 자격 증명 | IAM 역할. 인스턴스에 자격 증명 파일이 없다 | `aws sts get-caller-identity` 가 `assumed-role`, `~/.aws/credentials` 없음 |
+| 보안 그룹 인바운드 | TCP 8000 전체 허용 | 콘솔 |
+| 공인 주소 | Elastic IP. 클라이언트에는 IPv4 리터럴을 준다. DNS 이름은 쓰지 않는다 | 콘솔. [`windows-prereq.md`](windows-prereq.md) 10절 |
+| 테이블 | 6.2 의 키 둘(`pk`, `sk`), TTL 속성 `ttl`, 인덱스 없음 | 콘솔 |
+| 용량 | provisioned, RCU 25, WCU 25 | 콘솔. 아래 "용량" |
+
+**IAM 역할에 필요한 동작은 여섯이다.** 리소스는 그 테이블 하나로 좁힌다.
+
+| 동작 | 쓰는 자리 |
+|------|-----------|
+| `dynamodb:GetItem` | `NONCE#`, `ROOM` 사전 읽기 (6.3 읽기) |
+| `dynamodb:Query` | 방 전체 읽기 (6.3 읽기) |
+| `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem` | 단일 쓰기와 트랜잭션 안의 같은 동작 |
+| `dynamodb:ConditionCheckItem` | 트랜잭션 안의 ConditionCheck (6.3 의 `join_room`, `host_report` 확인) |
+
+> **왜 `ConditionCheckItem` 을 따로 적나.** 트랜잭션 안의 Put, Update, Delete 는 같은 이름의
+> 단일 동작 권한으로 허용되지만 ConditionCheck 는 이 권한이 따로 필요하다(AWS DynamoDB 개발자
+> 가이드의 트랜잭션 IAM 절). 빠지면 참가와 쌍 확인이 권한 오류로 끝난다.
+
+**용량.** RCU 25, WCU 25 는 DynamoDB 의 Always Free 한도다. 이 한도는 리전과 결제 계정 단위이고
+테이블 클래스가 Standard 일 때 적용된다. 계정의 Free Tier 화면에서 "Always Free monthly
+allowance" 로 표시되는 것을 확인했다.
+
+부하는 항목 하나가 1KB 이하라는 가정의 최악값이다. 쓰기는 항목마다 1 WCU 이고, 강한 일관성
+`Query` 는 읽은 바이트 합을 4KB 단위로 올림한 만큼 RCU 를 쓴다(AWS DynamoDB 개발자 가이드의
+읽기·쓰기 단위 절). 방 하나의 항목은 6.2 대로 최대 15개다.
+
+| 부하 | 최악값 |
+|------|--------|
+| 정원 미만 방의 `host_report` 갱신 쓰기 | 플레이어 셋이면 항목 12개를 5초마다. 2.4 WCU/s |
+| 정원이 찬 방의 갱신 쓰기 | 항목 15개를 30초마다. 0.5 WCU/s |
+| `host_report` 의 읽기 | 호출마다 `Query` 둘(4.6). 방이 막 정원이 찼으면 15KB 라 회당 4 RCU, 호출당 8 RCU 다. 간격은 직전 응답으로 정하므로 그 호출이 5초 뒤일 수 있어 주기 호출만으로 최악 1.6 RCU/s 다. 세션이 끝날 때의 즉시 호출이 호출당 8 RCU 씩 더해진다 |
+| `get_peers` 로 폴링하는 플레이어 한 명 | 0.5초마다 `Query` 한 번. 항목 15개면 15KB 라 4 RCU, 8 RCU/s. 준비 완료까지만 돈다 |
+
+방 하나는 쓰기가 25 안에 든다. 읽기는 플레이어 넷이 동시에 폴링하는 몇 초 동안 폴링만으로 최악
+32 RCU/s 이고, 거기에 `host_report` 의 읽기가 더해져 25 를 넘는다. 넘는 부분은 DynamoDB 가 쓰지
+않은 용량을 최대 300초어치 모아 두는 burst capacity 가 받을 수 있다. 다만 보장되지 않는다. 같은
+가이드가 그 여유를 예고 없이 백그라운드 작업에 쓸 수 있다고 적었으므로 스로틀이 날 수 있다.
+그때 클라이언트는 `internal` 을 받고(6.3 취소 사유 표) 8.3 대로 재시도하거나 다음 폴링을
+기다린다. 실제 항목은 1KB 보다 훨씬 작아 방 전체가 4KB 안에 들 것으로 보지만 재지 않았다. 여러 방이 같은 순간에 참가 중이면 넘을 수 있다. 실제 소비 용량을 확인하는
+시점은 `roadmap.md` 가 갖는다.
 
 **유닛 파일과 배포 명령은 여기 두지 않는다.** 아직 실행하지 않은 절차를 문서에 두지 않는다는
 규칙 때문이다. Phase 3 에서 실제로 배포한 뒤 그 절차를 도구로 넣고 문서는 가리킨다.
@@ -1531,11 +1584,8 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 이 문�
 
 | 무엇 | 어디서 언제 |
 |------|-------------|
-| 테이블 이름, 용량 값, 리전 | 배포 설정. [`roadmap.md`](roadmap.md) Phase 3 착수 전 항목(프리 티어 확인)과 같이 |
-| Elastic IP 와 DNS 이름의 실제 값 | Phase 3 배포 시. 문서에 주소를 박지 않는다 |
-| 텔레메트리 서비스의 포트, 스키마, 인증 | 이 문서 범위 밖. `roadmap.md` Phase 9 |
+| 텔레메트리 서비스의 포트, 스키마, 인증 | 이 문서 범위 밖. [`roadmap.md`](roadmap.md) Phase 9 |
 | 두 서비스가 같은 테이블을 쓰는가, IAM 을 나누는가 | [ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 가 Phase 9 로 미뤘다 |
 | 자동 재시도와 살아남은 쪽의 재폴링 | [`protocol.md`](protocol.md) 10.4 미정 항목. 재참가가 없으므로(4.3) 그 절차는 새 참가 위에 서야 한다 |
 | TLS, 호출자 인증 | 스트레치. 1.2 |
 | `ROOM_LEASE_S`(120)와 신호 간격 두 값의 적정성 | Phase 8 시연 뒤. 호스트가 죽은 뒤 방이 사라지기까지와, 늦게 온 참가자가 기다리는 시간으로 판단한다 |
-| 갱신 쓰기가 프리 티어 안에 드는가 | `roadmap.md` Phase 3 착수 전 항목. 방 하나가 오래 떠 있을 때의 쓰기 건수를 계산한다 |

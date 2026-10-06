@@ -2,12 +2,16 @@
 .env
 .env.*
 !.env.example
+sangtachi-control-plane-key.pem
 
 # 빌드 산출물
 dist/
 build/
 out/
 *.log
+
+# AWS 배포 정보. 계정 번호, 공인 주소, 인스턴스 식별자가 들어 있다. 공개 레포라 로컬에만 둔다.
+deploy/*.local.md
 
 # 이 기계의 빌드 루트. 경로는 기계마다 다르므로 레포에 박지 않는다.
 scripts/build-root.local

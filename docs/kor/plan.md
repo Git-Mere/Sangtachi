@@ -22,8 +22,8 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘, 방을 세운 뒤 `host_report` 확정 오류의 호스트 거동 | 앞의 다섯은 계정과 인스턴스가 필요해 문서로 끝나지 않는다. 뒤의 하나는 문서에서 정한다 |
-| - | `docs/eng` 미러. 로비 정의를 바꾼 변경과 [ADR 0011](decisions/0011-로비는-방-소속으로-정한다.md), [ADR 0012](decisions/0012-후보-없는-참가자는-서버가-회수한다.md) | 한국어만 고쳤다. 게이트가 `mirror` 와 `parity` 로 막는 것이 그 표시다. 푸시 전에 맞춘다 |
+| 1 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘 | 계정과 인스턴스가 필요해 문서로 끝나지 않는다. 저장소 소유자가 진행하고 결과를 알려 준다 |
+| - | `docs/eng` 미러. 로비 정의를 바꾼 변경과 [ADR 0011](decisions/0011-로비는-방-소속으로-정한다.md), [ADR 0012](decisions/0012-후보-없는-참가자는-서버가-회수한다.md), [ADR 0013](decisions/0013-방이-끝난-호스트는-세션이-끝나면-로비로-간다.md) | 한국어만 고쳤다. 게이트가 `mirror` 와 `parity` 로 막는 것이 그 표시다. 푸시 전에 맞춘다 |
 | 2 | Phase 3. 제어 평면 ([`control_plane.md`](control_plane.md)) | Phase 2 가 닫혔다 |
 
 **Phase 2 가 남긴 것.** 코드가 아니라 다음 Phase 가 받을 자리다.
@@ -56,7 +56,7 @@
 | 단계를 마친 뒤 도착한 STUN 응답 | 공개 서버 관측에서 세 번째 서버의 늦은 응답이 `rx.raw` 에만 남고 `stun.result` 도 `drop_*` 카운터도 없었다. 두 번 재현했다. [`protocol.md`](protocol.md) 7장 수신 분류가 그 구간을 정하는지 코드와 대조한다 | Phase 3 |
 | 목록이 정확히 둘일 때의 STUN 성공 경로 | 단위 시험의 성공 케이스가 둘 다 목록 넷이라 소진 판정과 성공 판정의 순서를 바꿔도 통과한다. 지금 그 자리를 지키는 것은 e2e 하나다 | Phase 3 |
 | `ROSTER` | 타입 `0x08` 송수신과 전용 카운터 셋 (`protocol.md` 5.7) | Phase 4 |
-| 로비 | 방에 속하지 않은 상태다. 계기 넷은 [`concurrency.md`](concurrency.md) 7장 로비에 있다. 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
+| 로비 | 방에 속하지 않은 상태다. 로비로 가는 계기는 [`concurrency.md`](concurrency.md) 7장 로비에 있다. 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
 | 로비 명령 `host`, `join`, `leave` | 지금 어휘에 없다. 계약은 `architecture.md` 3.5 기동 입력이다 | Phase 3 |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 | `host_report` | 호스트의 주기 호출 ([`control_plane.md`](control_plane.md) 4.6) | Phase 3 |

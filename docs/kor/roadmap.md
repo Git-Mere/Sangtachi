@@ -209,11 +209,6 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   전제로 두고 확인하지 않았다고 적었다. 어긋나면 그 절을 고친다
   - `time.get_clock_info('monotonic')` 의 구현이 `clock_gettime(CLOCK_MONOTONIC)` 인지
   - 재부팅 전후에 `/proc/sys/kernel/random/boot_id` 가 바뀌는지
-- **착수 전 방을 세운 뒤 `host_report` 가 확정 오류를 받았을 때의 호스트 거동을 정한다.**
-  [`concurrency.md`](concurrency.md) 7장 로비가 미결로 두었다
-  - `control_plane.md` 8.3 오류 분류와 재시도는 확정 오류를
-    `CONTROL_PLANE_EXCHANGE_FAILED` 로 끝내고, 5.1 방은 임대가 끊겨도 터널이 유지된다고 정한다
-  - 그 뒤 호스트가 방에 남는지, `host_report` 를 계속 부르는지가 어느 문서에도 없다
 - **착수 전 EC2의 자격 증명 방식 확정.** 액세스 키를 소스나 문서에 적지 않는다. 문서 권장은 IAM 역할이다 (ADR 0004)
 - **착수 전 프리 티어 적용 범위를 계정에서 직접 확인.** 문서만으로는 25 WCU / 25 RCU / 25 GB 가 영구인지 확인되지 않았다 (ADR 0004 "확인하지 못한 것")
 - 로컬 시험은 DynamoDB local 로 돌린다. **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
@@ -231,7 +226,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 출발지별 속도 제한과 `MAX_INFLIGHT`
 - DynamoDB에 방/피어 상태 저장
 - C++ 측 제어 평면 클라이언트 구현. `[control]` 스레드와 두 큐
-  (`concurrency.md` 8장 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
+  ([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
   오류 분류와 재시도 (`control_plane.md` 8장)
 - 기동 입력 처리 완성. `--server` 와 `--room` 이 실제로 쓰인다 ([`architecture.md`](architecture.md) 3.5)
   - 역할 없이 준 `--room` 을 기동 실패로 바꾼다. 지금은 Phase 1~2 경로라 통과한다
@@ -354,6 +349,17 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
     않는다. 출력만 숨기고 응답을 반영하는 구현이 여기서 걸린다
   - 응답이 오기 전에 친 `host` 는 `WARN` 이고, 온 뒤에 친 `host` 는 받는다
 
+- 호스트가 받은 `host_report` 오류 (`control_plane.md` 4.6 host_report 의 오류 표)
+  - 첫 행의 네 응답(`room_expired`, `room_not_found`, `unauthorized`, `bad_request`)을 각각
+    돌린다. `room_expired` 는 서버 시계를 주입해 만들고, 나머지 셋은 서버의 응답 주입점으로 만든다
+  - 넷 다 호스트가 `FAIL CONTROL_PLANE_EXCHANGE_FAILED` 로 시작하는 줄을 한 번 내고, 그 뒤
+    `host_report` 가 더 나가지 않으며, 세션이 없으므로 로비로 간다
+  - `rate_limited` 는 서버의 속도 제한 보충 시계를 멈춘 채 같은 출발지에서 없는 방 `join_room`
+    을 10번 보내 만든다. 보충이 멈춰 있으므로 다음 `host_report` 가 반드시 `rate_limited` 다
+  - 그때 `FAIL` 줄이 나오지 않고 다음 주기의 호출이 나간다. 보충 시계를 풀어 예산이 찬 뒤의
+    호출은 성공한다
+  - `rate_limited` 에 멈추는 구현과 첫 행 응답에도 계속 부르는 구현이 각각 여기서 걸린다
+
 **클라이언트 쪽 계약.**
 
 - 제어 서버가 죽어 있을 때 클라이언트의 `[loop]` 가 멈추지 않는다
@@ -366,7 +372,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - `connect` 가 `[loop]` 에 있는 구현은 여기서 걸린다 (`concurrency.md` 8장)
 - 클라이언트의 제어 평면 재시도 (`control_plane.md` 8.3 오류 분류와 재시도)
   - `rate_limited`, `room_full`, `unauthorized` 를 받으면 재시도 없이 즉시
-    `CONTROL_PLANE_EXCHANGE_FAILED` 다
+    `CONTROL_PLANE_EXCHANGE_FAILED` 다. `host_report` 는 예외이고 위 "로비" 의 호스트 항목이 본다
   - `internal`, `unavailable`, connect 타임아웃은 **같은 `client_nonce` 로 첫 시도를 포함해
     총 3회**를 시도한다
   - 연산마다 판정 축이 다르다. `create_room` 은 방이 하나만 생기는 것으로 본다
@@ -692,6 +698,14 @@ PC A <========== Direct UDP ==========> PC B
   - 플레이어가 `leave` 한 뒤에도 호스트의 `host_report` 가 계속 나간다
   - 그 플레이어가 같은 방 코드로 다시 `join` 하면 연결된다
   - 세션 목록이 비었다고 로비로 가는 구현은 여기서 걸린다
+- 방이 서버에서 끝나도 연결된 세션은 유지된다 (`control_plane.md` 4.6 host_report 의 오류 표)
+  - 플레이어 둘이 `CONNECTED` 인 방에서 서버 시계를 주입해 임대를 만료시킨다. 호스트는 `FAIL`
+    줄을 한 번 내지만 두 세션의 `KEEPALIVE` 와 `DATA` 왕복이 계속된다
+  - 한 플레이어가 `leave` 하면 그 세션만 끝나고 `host_report` 는 나가지 않는다. 즉시 보고 규칙이
+    살아 있는 구현이 여기서 걸린다. 호스트는 아직 방에 남는다
+  - 그동안 새 플레이어의 `join` 은 `room_expired` 로 `FAIL` 이다
+  - 나머지 플레이어도 `leave` 하면 호스트가 로비로 간다
+  - 따로 한 번 더, 두 세션이 남은 상태에서 호스트가 `leave` 하면 세션을 닫고 바로 로비로 간다
 - 세션이 끝나면 호스트의 `host_report` 가 다음 주기를 기다리지 않고 나간다 (`control_plane.md`
   4.6 host_report)
   - 정원이 찬 방에서 한 플레이어가 `leave` 하고 그 `host_report` 응답이 온 뒤 새 플레이어가

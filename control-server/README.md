@@ -43,7 +43,23 @@ py -3.14 -m venv .venv
 
 변이를 넣기 전에 원본으로 같은 시험을 한 번 돌린다. 원본이 떨어지면 판정하지 않고 멈춘다.
 
-## 아직 없는 것
+## DynamoDB local
 
-DynamoDB local 은 Docker 컨테이너로 띄운다(ADR 0014). 실행 명령은 실제로 한 번 띄운 뒤 여기에
-넣는다.
+Docker 컨테이너로 띄운다([ADR 0014](../docs/kor/decisions/0014-제어-서버-시험-pytest와-docker.md)). 아래는
+Docker Desktop 29.8 에서 실제로 돌린 명령이다.
+
+```text
+docker run -d --rm --name sangtachi-ddb -p 127.0.0.1:8001:8000 amazon/dynamodb-local:3.3.1 -jar DynamoDBLocal.jar -inMemory -sharedDb
+docker stop sangtachi-ddb
+```
+
+- 이미지 태그는 `3.3.1` 로 고정한다. 받은 이미지의 다이제스트는
+  `sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab` 였다
+- 호스트 쪽 포트는 `127.0.0.1:8001` 이다. 8000 은 제어 서버의 포트(`CONTROL_PORT`)라 피했고,
+  루프백에만 묶어 같은 망의 다른 기기가 닿지 않게 한다
+- `-inMemory` 라 컨테이너를 멈추면 테이블이 사라진다. `--rm` 이라 컨테이너도 사라진다
+- `-sharedDb` 는 자격 증명과 리전이 달라도 같은 데이터베이스를 쓰게 한다
+- `boto3` 는 자격 증명이 없으면 요청을 보내지 않는다. 실제 키가 아닌 값을 넣는 이유는
+  `control_plane.md` 7.6 설정과 배포에 있다
+
+저장소 시험을 돌리는 방법은 그 시험이 생길 때 여기에 넣는다.

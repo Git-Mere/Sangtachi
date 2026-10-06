@@ -16,10 +16,9 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Docker Desktop 을 띄우고 DynamoDB local 컨테이너를 한 번 실제로 돌린 뒤, 그 명령을 `control-server/README.md` "아직 없는 것" 절에 넣는다 | ADR 0014. 이 기기는 Docker 클라이언트만 있고 데몬이 떠 있지 않았다 |
-| 2 | 제어 서버를 DynamoDB local 로 구현한다. `store.py`, `ops.dispatch`, 수락 루프 | 연산 다섯과 저장 계약은 [`control_plane.md`](control_plane.md) 가 정했다. 아래 "구현 때 같이 볼 자리" 의 제어 서버 줄을 같이 본다 |
-| 3 | EC2 에 배포하고 `roadmap.md` Phase 3 검증의 "배포" 묶음을 돌린다 | 권한(`ConditionCheckItem`)과 용량 계산이 재지 않은 값이다 |
-| 4 | 클라이언트의 `[control]` 스레드, 로비 명령, `FAIL` 줄 | `roadmap.md` Phase 3 작업의 클라이언트 쪽이다 |
+| 1 | 제어 서버를 DynamoDB local 로 구현한다. `store.py`, `ops.dispatch`, 수락 루프. 저장소 시험의 하네스(자격 증명 대체값, 루프백 엔드포인트 확인)도 같이 | 연산 다섯과 저장 계약은 [`control_plane.md`](control_plane.md) 가 정했다. DynamoDB local 을 띄우는 명령은 `control-server/README.md` 에 있다. 아래 "구현 때 같이 볼 자리" 의 제어 서버 줄을 같이 본다 |
+| 2 | EC2 에 배포하고 `roadmap.md` Phase 3 검증의 "배포" 묶음을 돌린다 | 권한(`ConditionCheckItem`)과 용량 계산이 재지 않은 값이다 |
+| 3 | 클라이언트의 `[control]` 스레드, 로비 명령, `FAIL` 줄 | `roadmap.md` Phase 3 작업의 클라이언트 쪽이다 |
 
 **AWS 쪽 실제 값은 `deploy/aws.local.md` 에 있다.** 계정, 리전, Elastic IP, 인스턴스, 역할, 테이블
 이름이다. 공개 레포라 `.gitignore` 가 막고 이 기기에만 있다. SSH 키도 레포 루트에 ignore 된 채
@@ -47,8 +46,8 @@
 | 단계를 마친 뒤 도착한 STUN 응답 | 공개 서버 관측에서 세 번째 서버의 늦은 응답이 `rx.raw` 에만 남고 `stun.result` 도 `drop_*` 카운터도 없었다. 두 번 재현했다. [`protocol.md`](protocol.md) 7장 수신 분류가 그 구간을 정하는지 코드와 대조한다 | Phase 3 |
 | 목록이 정확히 둘일 때의 STUN 성공 경로 | 단위 시험의 성공 케이스가 둘 다 목록 넷이라 소진 판정과 성공 판정의 순서를 바꿔도 통과한다. 지금 그 자리를 지키는 것은 e2e 하나다 | Phase 3 |
 | `main.cpp` 의 `StunClient` 수명 순서 | 루프가 든 핸들러를 `loop.run()` 뒤에 끊어 막았다. 루프 수명이 길어지면 다시 본다 | Phase 3 |
-| 제어 서버의 건너뛴 행 8건 | `test_host_report.py` 의 `CONFIRM_RACE` 6행과 `RECLAIM_CASES` 의 `needs="store"` 2행. 지금은 `pytest.skip` 이다. 풀 때 `store.py` 의 조건식을 지우는 변이를 붙인다. 특히 `unconditional-write-impl` 과 `registers-between-read-and-delete` | 2번 |
-| `ops.dispatch` 의 계약 | `server.py` 의 `handle_request` 는 `dispatch(Request) -> dict` 와 `OpError` 를 전제한다(`control_plane.md` 7.2). `ops.py` 는 아직 `dispatch` 가 없다. 두 쪽을 이 계약으로 맞춘다 | 2번 |
+| 제어 서버의 건너뛴 행 8건 | `test_host_report.py` 의 `CONFIRM_RACE` 6행과 `RECLAIM_CASES` 의 `needs="store"` 2행. 지금은 `pytest.skip` 이다. 풀 때 `store.py` 의 조건식을 지우는 변이를 붙인다. 특히 `unconditional-write-impl` 과 `registers-between-read-and-delete` | 1번 |
+| `ops.dispatch` 의 계약 | `server.py` 의 `handle_request` 는 `dispatch(Request) -> dict` 와 `OpError` 를 전제한다(`control_plane.md` 7.2). `ops.py` 는 아직 `dispatch` 가 없다. 두 쪽을 이 계약으로 맞춘다 | 1번 |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 
 ## 문서 부채

@@ -1388,9 +1388,13 @@ elapsed_since_ready_ms(room):
 | `AWS_REGION` | 리전 | 없음. 필수. `boto3` 표준 변수 |
 | `SANGTACHI_CP_ENDPOINT` | DynamoDB 엔드포인트 URL 덮어쓰기. 로컬 시험용 | 없음. 없으면 리전 기본 |
 
-**자격 증명 변수는 없다.** EC2 에서는 IAM
-역할이고([ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 결정 5), 로컬 시험은 DynamoDB
-local 이라 자격 증명이 필요 없다.
+**서버가 자격 증명을 받는 변수는 없다.** EC2 에서는 IAM
+역할이다([ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 결정 5).
+
+로컬 시험은 다르다. DynamoDB local 은 자격 증명을 검사하지 않지만 `boto3` 는 자격 증명을 찾지
+못하면 요청을 보내지 않는다(`NoCredentialsError`). 그래서 시험 하네스가 `boto3` 표준 변수에 실제
+키가 아닌 값을 넣는다. 이 값이 실제 AWS 로 가지 않도록 하네스는 엔드포인트가 루프백일 때만
+저장소 시험을 돈다.
 
 > **왜.** 액세스 키를 받는 변수를 두면 누군가 그것을 쓴다.
 

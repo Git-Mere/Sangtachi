@@ -209,15 +209,11 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   전제로 두고 확인하지 않았다고 적었다. 어긋나면 그 절을 고친다
   - `time.get_clock_info('monotonic')` 의 구현이 `clock_gettime(CLOCK_MONOTONIC)` 인지
   - 재부팅 전후에 `/proc/sys/kernel/random/boot_id` 가 바뀌는지
-- **착수 전 로비가 받는 입력을 [`architecture.md`](architecture.md) 3.5 에 적는다.**
-  [ADR 0008](decisions/0008-스타-토폴로지-후속-결정.md) 결정 8 이 콘솔 빌드도 로비로 돌아간다고
-  정하면서 "콘솔 어휘와 CLI 인자의 관계" 를 3.5 로 위임했는데 그 서술이 아직 없다
-  - 3.5 는 기동 시 한 번 받는 CLI 만 적고, 콘솔 최소 어휘 다섯에는 방을 만들거나 방 코드를
-    넣는 명령이 없다. 로비로 간 뒤 새 방에 들어가는 경로가 어느 문서에도 없다
-  - 정하지 않으면 `leave` 가 프로세스를 못 쓰게 만드는 명령이 된다
-  - **같은 자리에서 `FAIL <코드> <문장>` 표준 출력 줄과 시도 실패 뒤의 프로세스 거동을 정한다.**
-    `architecture.md` 3.5 가 그 줄을 정했으나 Phase 2 는 로그(`session.failed`)만 낸다.
-    실패한 시도가 로비로 돌아가는지 끝나는지가 정해져야 그 줄을 어디서 낼지도 정해진다
+- **착수 전 방을 세운 뒤 `host_report` 가 확정 오류를 받았을 때의 호스트 거동을 정한다.**
+  [`concurrency.md`](concurrency.md) 7장 로비가 미결로 두었다
+  - `control_plane.md` 8.3 오류 분류와 재시도는 확정 오류를
+    `CONTROL_PLANE_EXCHANGE_FAILED` 로 끝내고, 5.1 방은 임대가 끊겨도 터널이 유지된다고 정한다
+  - 그 뒤 호스트가 방에 남는지, `host_report` 를 계속 부르는지가 어느 문서에도 없다
 - **착수 전 EC2의 자격 증명 방식 확정.** 액세스 키를 소스나 문서에 적지 않는다. 문서 권장은 IAM 역할이다 (ADR 0004)
 - **착수 전 프리 티어 적용 범위를 계정에서 직접 확인.** 문서만으로는 25 WCU / 25 RCU / 25 GB 가 영구인지 확인되지 않았다 (ADR 0004 "확인하지 못한 것")
 - 로컬 시험은 DynamoDB local 로 돌린다. **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
@@ -235,9 +231,15 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 출발지별 속도 제한과 `MAX_INFLIGHT`
 - DynamoDB에 방/피어 상태 저장
 - C++ 측 제어 평면 클라이언트 구현. `[control]` 스레드와 두 큐
-  ([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
+  (`concurrency.md` 8장 `[control]` 스레드), 최소 HTTP/1.1 클라이언트,
   오류 분류와 재시도 (`control_plane.md` 8장)
-- 기동 입력 처리 완성. `--server` 와 `--room` 이 실제로 쓰인다 (`architecture.md` 3.5)
+- 기동 입력 처리 완성. `--server` 와 `--room` 이 실제로 쓰인다 ([`architecture.md`](architecture.md) 3.5)
+  - 역할 없이 준 `--room` 을 기동 실패로 바꾼다. 지금은 Phase 1~2 경로라 통과한다
+- 로비 명령 `host`, `join`, `leave` 와 `FAIL` 줄 (`architecture.md` 3.5 기동 입력, `concurrency.md`
+  7장 로비)
+  - 시도가 실패하면 `FAIL` 줄을 낸다. 지금은 `session.failed` 로그만 낸다. 그 뒤 로비로 가는지는
+    `concurrency.md` 7장 로비의 계기를 따른다
+  - `leave` 가 중단한 시도의 늦은 응답을 버린다 (`concurrency.md` 8장 `[control]` 스레드)
 
 ### 산출물
 
@@ -271,6 +273,14 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 호스트가 아닌 피어가 부르면 `unauthorized`
   - 토큰이 틀리면 `unauthorized`
   - 이미 없는 `peer_id` 를 알리면 `released` 가 빈 배열이고 오류가 아니다
+- 서버 회수 (`control_plane.md` 4.6 host_report 의 서버 회수). 서버 회수 케이스 표를 전 행 돌린다
+  - 시각은 서버 시계를 주입해 만든다. 유예를 실제로 기다리지 않는다
+  - `join_room` 만 하고 후보를 등록하지 않은 플레이어 넷으로 풀을 채운다. 유예가 지난 뒤의
+    `host_report` 가 넷을 `released` 에 담고, 그 뒤의 `join_room` 이 `room_full` 이 아니다
+  - 로그의 `peer.released` 가 `by=server` 다
+  - 읽은 뒤 지우기 전에 등록하는 행은 store 계층의 지연 주입점으로 만든다
+  - 반대 순서도 돌린다. `register_candidate` 가 토큰 검사를 통과한 뒤 쓰기 전에 회수가 먼저
+    커밋되면 `unauthorized` 이고, 지워진 `PEER#` 가 되살아나지 않는다
 - 임대 갱신 (`control_plane.md` 5.1 방). `host_report` 를 멈추면 `ROOM_LEASE_S` 안에 방이
   만료되고 그 뒤의 `join_room` 이 `room_expired` 다
   - **이미 수립된 터널은 그대로다** (`spec.md` NFR-3). 임대 만료가 세션을 끊지 않는다
@@ -278,7 +288,8 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 멱등성 (`control_plane.md` 4.2 create_room, 4.3)
   - 같은 `client_nonce` 로 `join_room` 을 두 번 부르면 두 번째가 첫 번째와 같은 응답을
     돌려주고 **`VIP#` 항목이 하나만 생긴다**
-  - 다른 `client_nonce` 로 부르면 새 참가다. 새 `peer_id` 와 새 가상 IP 를 받는다
+  - 다른 `client_nonce` 로 부르면 새 참가다. 새 `peer_id` 와 다른 가상 IP 를 받는다. 첫 참가가
+    자리를 그대로 차지하고 있기 때문이다
   - 풀의 주소가 전부 선점된 뒤의 참가만 `room_full` 이다 (`control_plane.md` 4.3 join_room)
   - `create_room` 도 같은 nonce 면 같은 방이다
 - 준비 완료가 **쌍마다 정확히 한 번** 기록된다 (`control_plane.md` 4.6 host_report,
@@ -322,6 +333,27 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   > **왜.** `boot_id` 가 없어 프로세스 재시작마다 벽시계 대체로 내려가는 것이 `control_plane.md`
   > 7.4 케이스 표가 정한 동작이고, 그때 카운터가 1 인 것이 규정이다.
 
+**로비.** 판정은 표준 출력의 `FAIL` 줄과 요청 로그로 한다. 종료 코드로 하지 않는다
+(`architecture.md` 3.5 기동 입력).
+
+- 역할 없이 기동하면 제어 요청이 하나도 나가지 않고 로비에서 기다린다. `--room` 만 주면
+  종료 코드 2 로 기동 실패다
+- 없는 방 코드로 `join` 하면 `FAIL CONTROL_PLANE_EXCHANGE_FAILED` 로 시작하는 줄이 표준 출력에
+  한 줄 나오고 프로세스가 남는다. 이어서 맞는 방 코드로 `join` 하면 참가된다
+- 참가한 방을 `leave` 한 뒤 같은 방에 다시 `join` 하면 새 `peer_id` 를 받는다
+  - `client_nonce` 를 참가마다 새로 뽑는지를 보는 항목이다 (`control_plane.md` 2.4
+    client_nonce)
+  - 값을 다시 쓰는 구현은 옛 참가의 응답을 그대로 돌려받으므로 여기서 걸린다
+  - 다시 참가할 때 STUN 요청이 새로 나간다 (`control_plane.md` 8.4). 앞 시도의 결과를 다시 쓰는
+    구현이 여기서 걸린다
+- 방에 있는 동안 친 `host` 와 `join` 은 `WARN` 한 줄이고 요청이 나가지 않는다. 로비에서 친
+  `leave` 도 `WARN` 한 줄이다
+- 응답이 미결인 동안의 `leave` ([`concurrency.md`](concurrency.md) 8장 `[control]` 스레드)
+  - 제어 서버의 응답을 늦추는 주입점으로 `host` 를 미결로 둔 채 `leave` 한다
+  - 응답이 와도 `ROOM` 줄이 나오지 않고, 그 뒤에 STUN 요청도 `register_candidate` 도 나가지
+    않는다. 출력만 숨기고 응답을 반영하는 구현이 여기서 걸린다
+  - 응답이 오기 전에 친 `host` 는 `WARN` 이고, 온 뒤에 친 `host` 는 받는다
+
 **클라이언트 쪽 계약.**
 
 - 제어 서버가 죽어 있을 때 클라이언트의 `[loop]` 가 멈추지 않는다
@@ -331,7 +363,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
     넘지 않는다
   - 콘솔 명령 응답도 함께 보되 그것만으로 판정하지 않는다. 사람이 치는 속도로는 수십 초 멈춘
     것도 "응답했다" 로 보인다
-  - `connect` 가 `[loop]` 에 있는 구현은 여기서 걸린다 ([`concurrency.md`](concurrency.md) 8장)
+  - `connect` 가 `[loop]` 에 있는 구현은 여기서 걸린다 (`concurrency.md` 8장)
 - 클라이언트의 제어 평면 재시도 (`control_plane.md` 8.3 오류 분류와 재시도)
   - `rate_limited`, `room_full`, `unauthorized` 를 받으면 재시도 없이 즉시
     `CONTROL_PLANE_EXCHANGE_FAILED` 다
@@ -359,7 +391,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 
 ### 작업
 
-**착수 전에 정할 것.** 넷이다. 이것들이 정해지기 전에는 그 자리의 구현을 시작하지 않는다
+**착수 전에 정할 것.** 다섯이다. 이것들이 정해지기 전에는 그 자리의 구현을 시작하지 않는다
 
 - **착수 전 keepalive 매핑 수명 측정 절차 재설계**
 
@@ -400,6 +432,12 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 호스트 NAT 의 위험을 방 생성 전에 판정해 사람에게 경고할지를 이 측정 결과로 정한다
     (ADR 0006). 넣기로 하면 그 판정이 무엇을 입력으로 보는지부터 정한다
 - **착수 전 로컬 기록 파일의 경로와 줄 형식 확정.** [`architecture.md`](architecture.md) 9장에 계약 4개만 있고 형식이 없다. **정하기 전에는 M-6을 판정할 수 없다.** 코드에서 임의로 정하지 않고 그 문서를 먼저 고친다
+  - `leave` 가 중단한 시도를 기록에 어떻게 적는지도 같이 정한다. 9장의 수립 줄은 모든 시도에
+    결과 코드를 요구하는데 사용자의 중단은 FR-13 의 실패 코드가 아니다
+- **착수 전 호스트 쪽 쌍 실패의 `FAIL` 줄이 어느 플레이어의 것인지 담는지 정한다.**
+  [`concurrency.md`](concurrency.md) 7장 로비가 미결로 두었다. 호스트는 그 줄을 내고 방에
+  남으므로 쌍이 여럿이면 줄만으로 어느 쌍인지 알 수 없다. 담기로 하면 그 필드를
+  `architecture.md` 3.5 기동 입력의 줄 형식에 더한다
 
 **구현.** `protocol.md` 15장 구현 체크리스트를 그대로 따른다. 이 Phase는 설계가 아니라 구현이다.
 
@@ -456,11 +494,12 @@ PC A <========== Direct UDP ==========> PC B
 
 검증 절차가 쓰는 도구의 계약이다. 검증 기준이 아니라 준비물이다.
 
-- **검증 절차가 쓰는 콘솔 명령을 못박는다.** Phase 1~5 의 `[console]` 스캐폴딩
-  ([`concurrency.md`](concurrency.md))이 받는 최소 어휘는 다섯이다
+- **검증 절차가 쓰는 콘솔 명령을 못박는다.** `[console]`([`concurrency.md`](concurrency.md))이
+  받는 명령 가운데 아래 다섯을 검증 절차가 쓴다. 방을 만들고 참가하는 `host` 와 `join` 은
+  로비 명령이고 계약은 `architecture.md` 3.5 기동 입력에 있다
   - `quit` 는 종료 이벤트를 신호해 정상 종료 절차를 시작한다 (`concurrency.md` 3장 루프 한
     바퀴). **로비에 있든 세션이 있든 프로세스를 끝낸다**
-  - `leave` 는 세션을 전부 닫고 로비로 간다. 프로세스는 남는다 (`concurrency.md` 7장 로비)
+  - `leave` 는 방을 떠나 로비로 간다. 프로세스는 남는다 (`concurrency.md` 7장 로비)
   - `counters` 는 카운터 전량을 즉시 로그로 낸다 (`architecture.md` 9장). 카운터를 보는 검증
     항목이 이 명령으로 시점을 잡는다
   - `raw <바이트 수>` 는 Phase 1~2 의 원시 송신이고 그 계약은 `architecture.md` 3.5 기동
@@ -649,6 +688,27 @@ PC A <========== Direct UDP ==========> PC B
     하면 `0x01`, 펀치 마감으로 실패하면 `0x03` 이다. 셋을 한 값으로 보내는 구현은 여기서
     걸린다
 - 한쪽만 `HELLO`를 받은 상태에서는 `CONNECTED`로 전이하지 않음 (한 방향만 뚫린 경우를 성공으로 오판하지 않는다)
+- 호스트는 마지막 플레이어의 세션이 끝나도 방에 남는다 ([`concurrency.md`](concurrency.md) 7장 로비)
+  - 플레이어가 `leave` 한 뒤에도 호스트의 `host_report` 가 계속 나간다
+  - 그 플레이어가 같은 방 코드로 다시 `join` 하면 연결된다
+  - 세션 목록이 비었다고 로비로 가는 구현은 여기서 걸린다
+- 세션이 끝나면 호스트의 `host_report` 가 다음 주기를 기다리지 않고 나간다 (`control_plane.md`
+  4.6 host_report)
+  - 정원이 찬 방에서 한 플레이어가 `leave` 하고 그 `host_report` 응답이 온 뒤 새 플레이어가
+    `join` 하면 `room_full` 이 아니다
+  - 판정은 호스트 로그의 그 세션 `session.state to=CLOSED` 와 서버 로그
+    `peer.released by=host` 의 시각 차가 20초 이내인 것이다. 상한은 미결 요청 하나의 응답을
+    기다린 뒤 새 요청 하나를 보내는 시간이다(요청 한 건 9초)
+  - 이 상한은 요청이 `control_plane.md` 8.2 시간 제한의 표대로 끝난다는 전제의 값이다. 그 표가
+    적은 대로 송수신 제한이 연산별이라 더 길어질 수 있으므로, 이 항목은 제어 서버를 느리게
+    하는 주입 없이 돌린다
+  - `leave` 시각에서 재지 않는다. `CLOSE` 는 한 번만 보내므로(`protocol.md` 5.6) 유실되면 호스트가
+    유휴 타임아웃까지 모르고, 그것은 이 규칙이 줄이는 공백이 아니다
+  - `leave` 는 주기 호출의 응답을 받은 직후에 친다. 그러면 다음 주기가 30초 뒤라 주기를 기다리는
+    구현이 우연히 통과하지 않는다
+- 호스트가 보고하지 못한 `departed` 는 다음 호출에 다시 담긴다
+  - 응답을 잃게 하는 주입점으로 `host_report` 를 한 번 실패시키고, 그동안 다른 세션이 끝나게
+    한다. 다음 성공 호출의 `departed` 에 두 피어가 다 있다
 - keepalive 주기: 캡처에서 `CONNECTED` 진입 즉시 1회, 그 뒤 15초 간격으로 `KEEPALIVE`가 나간다. **여기서 재는 것은 우리 송신 주기이고 NAT 매핑 수명이 아니다.** 매핑 수명 측정은 아래 작업 절의 착수 전 항목이다
 
 **`DATA` 왕복.**
@@ -658,7 +718,7 @@ PC A <========== Direct UDP ==========> PC B
   - 송신 측이 캡슐화 직전에 가진 페이로드 바이트열과, 수신 측이 8.4 검증을 통과한 뒤 페이로드
     훅이 받은 바이트열을 길이를 포함해 byte-for-byte 비교한다
   - 그 훅이 어댑터 없는 빌드에서 8.4 통과 `DATA` 가 가는 자리이고 계약은
-    [`concurrency.md`](concurrency.md) 3장 루프 한 바퀴에 있다. 에코 응답기도 같은 자리에
+    `concurrency.md` 3장 루프 한 바퀴에 있다. 에코 응답기도 같은 자리에
     붙는다
   - 로그 문자열이나 재구성한 헤더를 비교하지 않는다
   - 제품 빌드에서는 그 `DATA` 가 `drop_no_sink` 로 버려지는 것도 함께 확인한다. 훅이 제품
@@ -674,8 +734,8 @@ PC A <========== Direct UDP ==========> PC B
     줄이다.** 실패 시 FR-13 코드가 적힌다
   - RTT 는 표본이 없으면 비어 있는 것이 정상이다. 수립 줄은 `PING` 이 아직 돌기 전이라 대개
     비어 있고, 종료 줄에 마지막 표본이 들어간다. 빈 값을 실패로 판정하지 않는다
-- 홀펀칭 실패 시 `HOLE_PUNCH_TIMEOUT`이 기록되고 프로세스는 정상 종료.
-  **`FAILED` 도달이 곧 종료 계기다** (`concurrency.md` 7장 종료)
+- 홀펀칭 실패 시 `HOLE_PUNCH_TIMEOUT`이 기록되고 `FAIL` 줄이 나온다. **프로세스는 끝나지
+  않는다.** 플레이어는 로비로 가고 호스트는 방에 남는다 (`concurrency.md` 7장 로비)
   - 그 전이에서 `HELLO` 재전송이 멈추는 것도 캡처로 함께 본다. 멈추지 않는 구현은 끝난 세션이
     후보 전체로 계속 쏜다 (`protocol.md` 9.6)
 - RTT 기준선 비교는 ICMP가 아니라 **같은 소켓, 같은 엔드포인트 쌍에서의 왕복**으로 한다

@@ -8,7 +8,7 @@
 | 축 | 출처 | 지금 |
 |----|------|------|
 | 구현 | [`roadmap.md`](roadmap.md) | **Phase 2 구현 완료.** 남은 검증은 아래 대기 표에 있다. 다음은 Phase 3 (제어 평면) |
-| 문서 부채 | 이 파일 "문서 부채" 절 | 8건 |
+| 문서 부채 | 이 파일 "문서 부채" 절 | 9건 |
 
 **토폴로지 후속은 끝났다.** [ADR 0006](decisions/0006-무중계-스타-토폴로지.md),
 [ADR 0007](decisions/0007-gui-핵심-범위-qt.md), [ADR 0008](decisions/0008-스타-토폴로지-후속-결정.md),
@@ -22,17 +22,16 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | `docs/eng` 미러를 한국어에 맞춘다. 대상은 `spec.md`, `architecture.md`, `protocol.md`, `concurrency.md`, `roadmap.md`, `windows-prereq.md` 여섯과 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md), `commit_history/` 의 최근 항목이다. `tools/` 의 README 는 미러를 두지 않는다 | 미러가 한국어보다 뒤에 있다. 게이트가 `parity` 로 막히는 것이 그 표시다. 푸시 전에 맞춘다 |
-| 2 | Phase 2 를 끝내는 전문 대상 감사 | `CLAUDE.md` 가 Phase 를 끝낼 때마다 요구한다. 범위는 그 Phase 가 건드린 문서와 코드다 |
-| 3 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘, 로비 입력과 `FAIL` 줄 | 앞의 다섯은 계정과 인스턴스가 필요해 문서로 끝나지 않는다. 뒤의 하나는 문서에서 정한다 |
-| 4 | Phase 3. 제어 평면 ([`control_plane.md`](control_plane.md)) | Phase 2 가 닫혔다 |
+| 1 | Phase 3 착수 전 항목 ([`roadmap.md`](roadmap.md)). Elastic IP·DNS, 자격 증명, 프리 티어 확인, 배포 설정 값, 시계 전제 둘, 방을 세운 뒤 `host_report` 확정 오류의 호스트 거동 | 앞의 다섯은 계정과 인스턴스가 필요해 문서로 끝나지 않는다. 뒤의 하나는 문서에서 정한다 |
+| - | `docs/eng` 미러. 로비 정의를 바꾼 변경과 [ADR 0011](decisions/0011-로비는-방-소속으로-정한다.md), [ADR 0012](decisions/0012-후보-없는-참가자는-서버가-회수한다.md) | 한국어만 고쳤다. 게이트가 `mirror` 와 `parity` 로 막는 것이 그 표시다. 푸시 전에 맞춘다 |
+| 2 | Phase 3. 제어 평면 ([`control_plane.md`](control_plane.md)) | Phase 2 가 닫혔다 |
 
 **Phase 2 가 남긴 것.** 코드가 아니라 다음 Phase 가 받을 자리다.
 
 | 무엇 | 어디 |
 |------|------|
 | 7장 출발지 위생의 자기 서브넷 브로드캐스트 판정 | [`roadmap.md`](roadmap.md) Phase 4. 인터페이스 주소와 넷마스크를 읽는 로컬 후보 수집과 같은 자리다 |
-| `FAIL <코드> <문장>` 표준 출력 줄과 시도 실패 뒤의 프로세스 거동 | `roadmap.md` Phase 3 착수 전. 지금은 `session.failed` 로그만 낸다 |
+| `FAIL <코드> <문장>` 표준 출력 줄과 실패 뒤 로비로 가는 것 | `roadmap.md` Phase 3 작업. 거동은 [`concurrency.md`](concurrency.md) 7장 로비가 정했다. 지금은 `session.failed` 로그만 낸다 |
 | `main.cpp` 의 `StunClient` 수명 순서 | 루프가 든 핸들러를 `loop.run()` 뒤에 끊어 막았다. 루프 수명이 길어지는 Phase 3 에서 다시 본다 |
 
 ## 대기 중인 것
@@ -57,8 +56,8 @@
 | 단계를 마친 뒤 도착한 STUN 응답 | 공개 서버 관측에서 세 번째 서버의 늦은 응답이 `rx.raw` 에만 남고 `stun.result` 도 `drop_*` 카운터도 없었다. 두 번 재현했다. [`protocol.md`](protocol.md) 7장 수신 분류가 그 구간을 정하는지 코드와 대조한다 | Phase 3 |
 | 목록이 정확히 둘일 때의 STUN 성공 경로 | 단위 시험의 성공 케이스가 둘 다 목록 넷이라 소진 판정과 성공 판정의 순서를 바꿔도 통과한다. 지금 그 자리를 지키는 것은 e2e 하나다 | Phase 3 |
 | `ROSTER` | 타입 `0x08` 송수신과 전용 카운터 셋 (`protocol.md` 5.7) | Phase 4 |
-| 로비 | 세션 목록이 비면 로비로 간다 ([`concurrency.md`](concurrency.md) 7장 로비). 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
-| 콘솔 `leave` | 로비로 가는 명령. 지금 어휘에 없다 | Phase 3 |
+| 로비 | 방에 속하지 않은 상태다. 계기 넷은 [`concurrency.md`](concurrency.md) 7장 로비에 있다. 지금 `main.cpp` 는 `loop.run()` 한 번이다 | Phase 3 |
+| 로비 명령 `host`, `join`, `leave` | 지금 어휘에 없다. 계약은 `architecture.md` 3.5 기동 입력이다 | Phase 3 |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 | `host_report` | 호스트의 주기 호출 ([`control_plane.md`](control_plane.md) 4.6) | Phase 3 |
 
@@ -72,6 +71,7 @@
 | 케이스 표 이관 | `control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4)는 Phase 3 착수 시 `control-server/tests/` 로 옮긴다 |
 | 중복 주장 링크화 미완 | 살아 있는 문서 여덟에서 같은 주장이 두 곳에 있는 자리를 링크로 바꾸는 작업이 중간에 멈춰 있다 (규칙 5). `git stash list` 로 확인하고 `git stash pop` 으로 잇는다. **스타 토폴로지 반영이 같은 문서를 크게 고쳤으므로 그대로 적용되지 않는다.** 충돌을 풀면서 잇는다 |
 | `IDLE` 정의의 긴장 | [`protocol.md`](protocol.md) 9.4.1 종료 상태 폐기는 `IDLE` 이면 상대 `peer_id` 도 모른다고 전제하는데, 9.1 상태는 `IDLE` 을 "아직 상대 후보를 받지 못함" 으로 정의한다. `get_peers` 가 `peer_id` 는 주고 후보는 아직 비어 있는 구간에서 둘이 갈린다. 어느 문서도 그 구간에서 세션이 `peer_id` 를 기억하는지 정하지 않았다. 9.1 이나 9.4.1 에 한 줄이 필요하다 |
+| 종료 세션 객체의 수명 | [`protocol.md`](protocol.md) 5.6 `CLOSE` 는 받은 쪽 세션을 `CLOSED` 로 남겨 늦은 패킷을 `drop_terminal_state` 로 세게 한다. [`concurrency.md`](concurrency.md) 7장 종료는 끝난 세션을 목록에서 지운다. 같은 장 로비 표의 `drop_unknown_peer` 는 뒤쪽을 전제한다. 로비를 다시 정의한 작업의 리뷰가 짚었고, 그 작업 전부터 있던 모순이다. Phase 4 의 세션 구현 전에 정한다 |
 | Phase 8 제목 | `## Phase 8: Minecraft 검증` 인데 목표가 GUI 시연을 포함한다. 제목 문자열에 기대는 자리는 `roadmap.md` 의 한국어와 영어 제목 줄 둘뿐이고 `#phase-8` 앵커는 없다. 바꿀지는 정하지 않았다 |
 | 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md) 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 둘 많다.** `endpoint_learned` 는 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
 

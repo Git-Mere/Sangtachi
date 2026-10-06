@@ -4,7 +4,7 @@
 //
 // 이 파일은 형식만 판정한다. 값이 그 구간에서 필수인지는 보지 않는다. 필수 판정은
 // architecture.md 3.5 표의 "필수" 열이 정하고, 그 검사는 제어 평면이 들어오는 Phase 3
-// 에서 붙는다 (roadmap.md). Phase 1~2 는 역할이 없어도 기동한다.
+// 에서 붙는다 (roadmap.md). 역할은 어느 구간에서나 없어도 기동하고, 그때는 로비에서 시작한다.
 //
 // 형식 검사는 그 구간에서 값을 쓰지 않아도 한다. 미루면 Phase 1 에서 통과한 입력이
 // Phase 3 에서야 거부되고, 그 사이 시험이 어느 형식으로 돌았는지 기록에서 읽을 수 없다.
@@ -27,7 +27,7 @@ namespace sangtachi {
 inline constexpr std::uint16_t kControlPort = 8000;
 
 enum class Role {
-    None,    // 주지 않았다. Phase 1~2 는 이것으로 기동한다
+    None,    // 주지 않았다. 로비에서 시작한다 (architecture.md 3.5)
     Host,
     Player,
 };

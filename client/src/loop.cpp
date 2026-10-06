@@ -188,7 +188,7 @@ DrainOutcome EventLoop::drain_udp() {
                 // Phase 1 의 대조 수단이다 (architecture.md 3.5 기동 입력). 분류 앞에
                 // 둔다. 로그 한 줄은 회신이 아니라 진단이므로 출발지 위생이 막는 반사·
                 // 증폭 경로에 들지 않고, 버려진 데이터그램도 진단에 남아야 한다.
-                // `[console]` 스캐폴딩과 함께 Phase 6 에서 사라진다.
+                // 시험용 `--peer`, `raw` 와 함께 Phase 6 에서 사라진다.
                 emit_rx_raw(result.from, payload);
 
                 switch (classify_datagram(result.from, payload)) {

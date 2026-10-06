@@ -32,7 +32,7 @@ struct RejectCase {
 }  // namespace
 
 TEST_CASE("args: empty argv starts with no role", "[args]") {
-    // Phase 1~2 는 역할이 없어도 기동한다. 필수 판정은 Phase 3 에서 붙는다.
+    // 역할은 어느 구간에서나 없어도 기동한다. 그때는 로비에서 시작한다 (architecture.md 3.5).
     const auto r = run({});
     REQUIRE(r.ok());
     REQUIRE(r.args->role == Role::None);

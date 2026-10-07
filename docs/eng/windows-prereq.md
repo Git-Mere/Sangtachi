@@ -26,7 +26,7 @@ Each section header states its verification status.
 | **Partly measured** | The command was run, but **the pass condition is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
-Currently 4 sections are measured, 4 partly measured, 5 unverified.
+Currently 5 sections are measured, 4 partly measured, 4 unverified.
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
 `commit_history/` and `tools/nat-probe/records/`. This document holds only the current spec and the
@@ -468,8 +468,9 @@ and it does not distinguish listening from not listening.
 
 ## 6. Control plane EC2
 
-**Status: partial.** The instance was launched, and a person checked the security group's inbound TCP 8000 in the console.
-The bind address and external connection decisions below can run only after the server is deployed.
+**Status: measured.** Both decisions below were run against the deployed server. Inside the instance,
+`ss -ltnp4 'sport = :8000'` showed `0.0.0.0:8000`, and `Test-NetConnection` on this development machine
+showed `TcpTestSucceeded : True`. A person checked the security group's inbound TCP 8000 in the console.
 
 Three things each block the connection.
 

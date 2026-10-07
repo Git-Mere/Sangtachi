@@ -1124,6 +1124,16 @@ Candidates each peer registers with the control plane:
 
 As stated in Chapter 2, without these rules the client becomes a reflection tool that sends a packet every 200ms to a third party chosen by the attacker.
 
+**A received list is handled in this order.** Type check, hygiene rejection, deduplication, then the first `MAX_CANDIDATES` entries.
+
+- The type check is the job of [`control_plane.md`](control_plane.md) 3.5 Checks the Client Makes. If even one candidate
+  has the wrong type, the whole response is a transport error
+- For a duplicate, the element that came first is kept
+- Broadcast is only `255.255.255.255`. The peer's prefix is unknown, so subnet directed broadcast is
+  not judged. It is the same range as the server's judgement (`control_plane.md` 4.4 register_candidate)
+
+> **Why the cap is last.** Cutting first lets candidates that will be filtered out take up slots, and usable candidates are dropped.
+
 **This table applies only to the candidate list.** The source of a received datagram gets the separate source hygiene of Chapter 7,
 and the two tables differ on loopback. The reason is written in Chapter 7.
 

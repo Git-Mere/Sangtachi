@@ -522,7 +522,7 @@ so before that (8) is `[telemetry]` only.
   waiting for telemetry, and if the OS kills the process at that point, all that is lost is a
   few metrics.
 - The join bound is 2 seconds for both threads combined. Past it, abandon the remaining records
-  and the in-flight control request, skip the join, and end immediately with `_exit`. Cleanup
+  and the in-flight control request, skip the join, and end immediately with `_exit`. The exit code is 0, the same as a normal exit. The exit code does not carry the result of the attempt. Cleanup
   already finished at (7), so this is safe. **What actually enforces the bound is this `_exit`,
   not the socket timeouts.** The socket timeouts only end the common case cleanly; what keeps
   shutdown from ever being held hostage to telemetry service availability is `_exit`.
@@ -622,7 +622,31 @@ non-blocking form. One thread is cheap.
 | Wakeup | `[control]` waits on the shutdown event and the request event (auto reset, signaled by `[loop]`) with `WaitForMultipleObjects`. `[loop]` wakes on the response event (rank 4 in chapter 2 Waiting) |
 | Socket | A new TCP socket per request. Non-blocking `connect` + `select` for the connection time limit, `SO_SNDTIMEO`/`SO_RCVTIMEO` for the send/receive time limits. Values are in [`control_plane.md`](control_plane.md) 8.2 Time Limits |
 | DNS | Once at startup. `[control]` holds the resulting single IPv4 address and uses it for all later requests. This is the only state `[control]` has |
-| Shutdown | On seeing the shutdown event, close the socket and return without waiting for the response of the in-flight request. Because of the socket time limits it can be late by at most one request bound (`control_plane.md` 8.2 Time Limits), and that is fenced by the 2-second join bound and `_exit` in chapter 7 Shutdown |
+| Shutdown | On seeing the shutdown event, close the socket and return without waiting for the response of the in-flight request. In the connect and receive stages it is within 50ms. In the send stage, the per-call send time limit (`control_plane.md` 8.2 Time Limits) can pile up once per call (below). That is fenced by the 2-second join bound and `_exit` in chapter 7 Shutdown |
+
+**When the response queue is full, `[control]` does not drop the response; it waits until a slot frees.** While it waits it
+still watches the shutdown event. There is only one outstanding request, so on the normal path it does not fill.
+
+> **Why.** If it dropped the response, the attempt waiting for that response would stall until its deadline. Unlike the request queue,
+> nothing on the `[control]` side can end the attempt.
+
+**If a wait in `[control]` fails or the thread ends with an exception, it emits one `ERROR` line and signals
+the shutdown event.** It is the same judgement as `WAIT_FAILED` in chapter 3 One Loop Iteration. A process that cannot handle control requests cannot
+be used as a lobby either.
+
+**While waiting for connect and receive, it checks the shutdown event every 50ms.** `select` cannot wait on the
+event too, so the wait is split into pieces of that length. So the shutdown delay in those stages is within 50ms. Send is
+left to `SO_SNDTIMEO`, so this interval does not apply. If a send is split into several calls, the delay piles up by that much, and what fences the end is the join bound and `_exit` of chapter 7 Shutdown.
+
+**If the next request's turn comes while one is outstanding, it is sent right after the response arrives.** The host's `host_report` cycle and
+`register_candidate` retries are such cases. Only `get_peers` polling is skipped. Retries are counted by the number of times
+actually sent.
+
+- If the attempt that ends because the request queue is full is the `host_report` of the host that set up the room, it is handled like the first row
+  of the host error table in `control_plane.md` 4.6 host_report. Emit the `FAIL` line once and stop `host_report`
+
+> **Why `host_report` is not skipped.** If lease renewal slips by one cycle, the room is that much closer to expiry.
+> Polling does the same work on the next iteration, so skipping it loses nothing.
 
 **An outstanding request runs to completion even when the attempt ends.** The triggers are both
 `leave` and `FAIL`. An example of `FAIL` is a `get_peers` poll response still outstanding when

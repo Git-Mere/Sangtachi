@@ -315,6 +315,12 @@ The first word is fixed. Tests split lines with it. **On a `FAIL` line, the thir
 the end of the line is one sentence and contains spaces.** It is a different line from the
 `<name>=<value>` log format (chapter 9).
 
+**When standard output is redirected, it is written as UTF-8 bytes.** The line ending is a single LF. When
+standard output is a console, it is emitted with the console's Unicode write. The console code page is not changed.
+
+> **Why.** The sentence is Korean, so if the byte encoding is not fixed, scripts cannot match the lines.
+> Changing the code page stays on that console even after the process ends.
+
 > **Why emit the code and the sentence together.** Emitting the code alone leaves the user not
 > knowing what to do next, and emitting the sentence alone makes it impossible to match what the
 > user reported against the classification in chapter 8.
@@ -334,7 +340,7 @@ The order is from step 4 of `control_plane.md` 8.4 From Launch to Punch.
 | `leave` | Goes to the lobby. What it does is decided by `concurrency.md` chapter 7 Lobby | When not in the lobby |
 
 A command that arrives when it is not accepted, and a `join` with no room code or a malformed
-one, send no request and leave one `WARN` line. The process stays in the state it was in. Unlike a
+one, send no request and leave one `WARN` line. Words left after the command also make it malformed. Commands are case-sensitive. The process stays in the state it was in. Unlike a
 format violation of `--room`, this is not a startup failure. The reason `host` and `join` are not
 accepted while a request is outstanding is in `concurrency.md` chapter 8 The `[control]` Thread.
 
@@ -695,7 +701,7 @@ sentence ([`spec.md`](spec.md) FR-15).
 | Code | Human-readable sentence |
 |------|------------------|
 | `STUN_DISCOVERY_FAILED` | Could not confirm your address on the internet. Check your network connection and try again. |
-| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not find the other side. Check that the room code is right and that the other side is still in the room. |
+| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not exchange room information. Check that the room code is right and that the room is still open, then try again. |
 | `HOLE_PUNCH_TIMEOUT` | Could not make a direct connection with the other side. Try again with one of you on a different network. |
 | `PEER_HANDSHAKE_FAILED` | The connection opened in one direction only. Check your firewall settings and try again. |
 | `TUNNEL_DROPPED` | The connection with the other side was lost. The other side closed the session, or the network is unstable. |
@@ -892,7 +898,7 @@ leaves one `WARN` line at startup.
 | `virtual_ip` | Dotted-decimal IPv4 |
 | `candidates` | `IPv4:port` joined by commas. No spaces |
 | `code` | A chapter 8 failure code string, or in `socket.error` a decimal error code |
-| `error` (`control.result`) | An error code string from [`control_plane.md`](control_plane.md) 4.1 Common Envelope, `transport` for a transport error, `-` on success |
+| `error` (`control.result`) | An error code string from [`control_plane.md`](control_plane.md) 4.1 Common Envelope, `transport` for a transport error, `unknown_code` for a code not in the 4.1 table, `self_in_peers` if the response's peer list contains its own `peer_id`, `-` on success. When the code the server sent is not in the table, that string is not carried as is |
 | `value` (`counter`) | Decimal integer |
 
 The value formats of the remaining fields are not fixed. They are human-read diagnostics.
@@ -993,6 +999,8 @@ The two language trees hold the same files. When editing a document, modify both
 | Python standard library | `asyncio`, `json` | Standard library |
 | AWS SDK for Python (`boto3`) | DynamoDB access for the control server and the telemetry service | **Approved** |
 | Catch2 v3 | Test case registration, execution, failure reporting. Linked only into the test executable | **Approved.** [`spec.md`](spec.md) NFR-5 owns who approves |
+| pytest | Test execution and failure reporting for the control server. The deployed server process does not import it | **Approved.** Test only ([ADR 0014](decisions/0014-control-server-tests-pytest-and-docker.md)) |
+| DynamoDB local | Store for local tests of the control server. Run as a Docker container | **Approved.** Test only (ADR 0014) |
 | Qt | Window, widgets, and event loop of the minimum GUI. `spec.md` FR-15 owns the scope | **Approved.** It is a product dependency, so the instructor approves |
 | Amazon DynamoDB | Persistent storage of room/peer state and metrics | External managed service |
 

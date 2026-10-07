@@ -228,14 +228,18 @@ is Phase 4.
   - If a value is missing from the document, fix the document first instead of deciding it in code
   - The decision to switch the store from SQLite and its cost are in
     [ADR 0004](decisions/0004-state-store-dynamodb.md)
-- Local tests run on DynamoDB local. **The consistency path is not judged there, though.** Local reads usually look up to date, so a missing `ConsistentRead` does not show (ADR 0004)
-- **At start, move the case tables of `control_plane.md` (2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4) into
-  `control-server/tests/` and change the document to point at those files.** A table kept in two
-  places gets fixed in one and drifts. Attach a mutation test to each moved table
+- Local tests run on DynamoDB local. It runs as a Docker container ([ADR 0014](decisions/0014-control-server-tests-pytest-and-docker.md)). **The consistency path is not judged there, though.** Local reads usually look up to date, so a missing `ConsistentRead` does not show (ADR 0004)
+- **The case tables of `control_plane.md` (2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4) live in
+  `control-server/tests/` and the document points at those files.** A table kept in two places gets
+  fixed in one and drifts. Attach a mutation test to each table (`control-server/tests/mutants/`)
+  - Rows that need the store to run (`needs="store"`) are unblocked when the store layer is built,
+    and the store-side mutants are attached at that time
 - Deploy the Python control server to AWS EC2. systemd service, security group TCP 8000. **Run the
   deployment procedure once for real, then put it in a tool and have the document point at it**
   (`control_plane.md` 7.6). The results of the deployment environment and account-side checks are
   also in that section
+  - The deployment tool is `tools/cp-deploy/`. The time limits and retry counts used when the server
+    calls DynamoDB belong to `control_plane.md` 7.6 Configuration and Deployment
 - Implement room creation (`create_room`, idempotency nonce)
 - Implement room join (`join_room`. There is one form. There is no rejoin)
 - Virtual IP allocation (`VIP#` conditional-write claim)
@@ -257,6 +261,17 @@ is Phase 4.
     Whether it then goes to the lobby follows the triggers of `concurrency.md` chapter 7 Lobby
   - Discard the late response of an attempt that `leave` aborted (`concurrency.md` chapter 8 The
     `[control]` Thread)
+- **The client of this Phase stops at step 8 of `control_plane.md` 8.4 From Launch to Punch.** Steps 9
+  and 10 (punch and session) are Phase 4
+  - A player emits one `control.peers` line on the first response in which the condition of step 7
+    still holds after step 8, and stops `get_peers` polling. After that it stays in the room until
+    `leave` or `quit`
+  - The host, for each peer, emits that peer's `control.peers` line on the first response in which
+    that pair is `ready: true` and has peer candidates that went through step 8. The `host_report`
+    cycle keeps running
+  - The candidates of step 6 are reflexive candidates only. Local candidate gathering is Phase 4
+  - The fields of `control.peers` belong to `architecture.md` chapter 9 Telemetry and Records. The
+    candidates are the list after the hygiene of step 8
 
 ### Deliverable
 
@@ -336,9 +351,8 @@ Two clients on different networks obtain each other's endpoints through AWS.
   `punch_delay_ms` reference point of the existing pair does not move, and only the new pair becomes
   ready on its own
 
-**All rows of the case tables pass.** The `control_plane.md` sections below say **where each table
-came from.** Once the task above has moved the tables into `control-server/tests/`, those files are
-what gets run.
+**All rows of the case tables pass.** The `control_plane.md` sections below own **the rules** of each
+table. The tables themselves are in the `control-server/tests/` files those sections point at.
 
 - All rows of the HTTP parsing case table (`control_plane.md` 3.3 HTTP Subset) pass. In particular,
   duplicate `Content-Length`, `Transfer-Encoding`, a 4097-byte body, and `HTTP/1.0` are rejected.
@@ -380,7 +394,7 @@ what gets run.
   - Do not run this item on a local Windows machine. There a correct implementation also fails
 
   > **Why.** With no `boot_id`, falling back to the wall clock on every process restart is the
-  > behavior set by the `control_plane.md` 7.4 case table, and a counter of 1 is the rule there.
+  > behavior set by the calculation path of `control_plane.md` 7.4 Clocks, and a counter of 1 is the rule there.
 
 **Lobby.** The verdict uses the `FAIL` line on standard output and the request log. Not the exit
 code (`architecture.md` 3.5 Startup Inputs).
@@ -436,17 +450,25 @@ code (`architecture.md` 3.5 Startup Inputs).
   - On `rate_limited`, `room_full`, or `unauthorized` the client reports
     `CONTROL_PLANE_EXCHANGE_FAILED` immediately without retry. `host_report` is the exception, and
     the host item of "Lobby" above covers it
-  - `internal`, `unavailable`, and connect timeout are attempted **3 times in total including the
+  - `internal`, `unavailable`, and transport errors are attempted **3 times in total including the
     first attempt, with the same `client_nonce`**
+  - Transport errors are built in two ways on loopback. A server that accepts the connection and does
+    not answer (receive time limit), and a closed port (connection refused). A connect timeout cannot
+    be built on Windows loopback. Even when the connection backlog is full, it ends in a refusal. A
+    connect timeout itself needs an address with no route, so it is not run in this group
   - The judging axis differs per operation. For `create_room`, check that only one room is created
     (`ROOM` item count 1)
   - For `join_room`, check that the second response has the same `peer_id` and virtual IP as the
     first. **Also check that the `VIP#` item count is 1.** The pool holds four addresses
     (`control_plane.md` 2.5), so an implementation that ignores the nonce claims a second address and
     ends with two items
-  - Connect timeout and `unavailable` happen before the store is reached, so nonce sameness leaves no
-    trace in the store. Put an injection point in the store layer that fails right after the commit
-    and just before the response, and run the `internal` retry through it
+  - The connection refusal and no-answer above, and `unavailable`, happen before the store is
+    reached, so nonce sameness leaves no trace in the store. So it is checked with the `internal`
+    retry. The first attempt is built with an injection point in the store layer that fails right
+    after the commit and just before the response. The second attempt with the same nonce only
+    returns the stored response again and has no write, so it does not hit that injection point. The
+    second failure is built with an injection point that raises an error after the operation is
+    processed and just before the response
 
   > **Why look at two axes.** The item count alone lets through the case where a mutant ends with
   > `room_full` in a full room and the count stays the same. Sameness of `peer_id` catches that case.

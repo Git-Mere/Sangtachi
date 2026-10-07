@@ -1149,7 +1149,7 @@ Connection: close\r\n
 
 **저장소가 돌려준 값의 형은 `store.py` 가 맞춰 넘긴다.** `boto3` 는 숫자를 `Decimal` 로
 돌려주므로 정수 속성은 `int` 로 바꾼다. 위 항목 표의 속성이 없거나 형이 다르면 판정 불가이고
-`internal` 이다. 예외는 둘이다.
+`internal` 이다. 예외는 셋이다.
 
 - `PEER#` 의 `candidates` 는 없으면 빈 목록이다. 아직 후보를 등록하지 않은 피어(5.3 피어의
   `joined`)다. 4.6 서버 회수의 삭제 조건이 `attribute_not_exists(candidates)` 를 빈 것으로 보는

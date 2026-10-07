@@ -112,7 +112,7 @@ decision formula is set by `protocol.md` 9.2 `CONNECTED` Condition.
 | NFR-2 | The tunnel layer contains no Minecraft-specific logic. Replacing Minecraft with another IP-based application does not change the tunnel code. |
 | NFR-3 | A control plane failure does not tear down an already established P2P tunnel. Telemetry transmission failures are ignored. **Failed records are not resent.** The next period sends that period's new metrics. The basis for verdicts is the local record file, not the upload ([`architecture.md`](architecture.md) chapter 9). |
 | NFR-4 | STUN, NAT traversal, hole punching, the tunnel protocol, routing, and session management are implemented directly. Wintun provides virtual interface access only. |
-| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Four are approved: Wintun, `boto3`, Catch2, and Qt. |
+| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Six are approved: Wintun, `boto3`, Catch2, pytest, DynamoDB local, and Qt. |
 | NFR-6 | The virtual adapter MTU is set with the tunnel header overhead in mind, and no IP fragmentation occurs for normal game traffic. |
 | NFR-7 | Failures are not hidden. NAT environments that cannot be traversed are explicitly marked as out of support scope and recorded. |
 | NFR-8 | Source control and weekly development records are maintained. Where AI tools contributed to code or documents, the contribution is verified and attributed according to course policy. |
@@ -128,7 +128,7 @@ tunnel topology FR-4 fixes, and the test that judges this requirement is designe
 | Kind | What it is | Who approves | Today |
 |------|------------|--------------|-------|
 | Product dependency | The product needs it to run, client or server | The instructor | Wintun, `boto3`, and Qt are approved |
-| Test-only dependency | Only running the tests needs it | The repository owner | Catch2 is approved |
+| Test-only dependency | Only running the tests needs it | The repository owner | Catch2, pytest, and DynamoDB local are approved |
 
 The reason for the split is what this requirement blocks: replacing the list NFR-4 requires us to
 implement ourselves with an outside library. A test runner is not on that list.

@@ -889,24 +889,31 @@ def _launch(env: dict, root: Path) -> tuple[subprocess.Popen, list[str], int]:
         proc = subprocess.Popen([sys.executable, "-m", "controlplane"], cwd=root,
                                 env=dict(env, SANGTACHI_CP_PORT=str(port)), stderr=subprocess.PIPE,
                                 stdout=subprocess.DEVNULL, creationflags=flags)
-        err_lines: list[str] = []
-        threading.Thread(target=lambda p=proc, out=err_lines: out.extend(
-            line.decode("utf-8", "replace").rstrip() for line in p.stderr), daemon=True).start()
-        deadline = time.monotonic() + 20
-        while not any(line.startswith("INFO server.started ") for line in err_lines):
-            if proc.poll() is not None:
-                time.sleep(0.2)  # 표준 오류의 나머지를 읽을 틈
-                if proc.returncode == cp_main.EXIT_START and any(line.startswith(BIND_IN_USE) for line in err_lines):
-                    break  # 진단된 bind 충돌. 다른 포트로 다시
-                raise AssertionError(f"기동 전에 끝났다: {err_lines}")
-            if time.monotonic() > deadline:
+        # 띄운 뒤 돌려주기 전까지가 한 가드다. 부르는 쪽은 돌려받은 뒤에야 정리할 수 있으므로, 여기서 어떤
+        # 이유로 떨어지든(시간 초과, 기동 줄 검사 실패) 그 프로세스를 죽이고 기다린 뒤 다시 던진다.
+        try:
+            err_lines: list[str] = []
+            threading.Thread(target=lambda p=proc, out=err_lines: out.extend(
+                line.decode("utf-8", "replace").rstrip() for line in p.stderr), daemon=True).start()
+            deadline = time.monotonic() + 20
+            while not any(line.startswith("INFO server.started ") for line in err_lines):
+                if proc.poll() is not None:
+                    time.sleep(0.2)  # 표준 오류의 나머지를 읽을 틈
+                    if proc.returncode == cp_main.EXIT_START and any(line.startswith(BIND_IN_USE) for line in err_lines):
+                        break  # 진단된 bind 충돌. 다른 포트로 다시
+                    raise AssertionError(f"기동 전에 끝났다: {err_lines}")
+                if time.monotonic() > deadline:
+                    raise AssertionError(f"기동 줄이 나오지 않았다: {err_lines}")
+                time.sleep(0.05)
+            else:
+                started = records(err_lines, "server.started")[0]
+                assert started["port"] == str(port)
+                return proc, err_lines, port
+        except BaseException:
+            if proc.poll() is None:
                 proc.kill()
-                raise AssertionError(f"기동 줄이 나오지 않았다: {err_lines}")
-            time.sleep(0.05)
-        else:
-            started = records(err_lines, "server.started")[0]
-            assert started["port"] == str(port)
-            return proc, err_lines, port
+            proc.wait(STOP_S)
+            raise
     raise AssertionError(f"bind 충돌이 {LAUNCH_TRIES}번 났다")
 
 
@@ -964,6 +971,28 @@ def test_launch_retries_on_bind_conflict(monkeypatch):
             proc.kill()
             proc.wait()
         busy.close()
+
+
+def test_launch_cleans_up_when_the_started_line_check_fails(monkeypatch):
+    # _launch 가 프로세스를 띄운 뒤 돌려주기 전에 떨어지면 그 프로세스가 남지 않는다. 부르는 쪽은 받은 것이 없어
+    # 정리할 수 없다. 기동 줄 검사(records)를 실패시켜 그 자리를 만든다.
+    started = []
+    real = subprocess.Popen
+
+    def recording(*a, **kw):
+        p = real(*a, **kw)
+        started.append(p)
+        return p
+
+    def broken(lines, event):
+        raise AssertionError("injected: started line check failed")
+
+    monkeypatch.setattr(subprocess, "Popen", recording)
+    monkeypatch.setattr(sys.modules[__name__], "records", broken)
+    env = dict(os.environ, SANGTACHI_CP_TABLE="t-launch-clean", AWS_REGION="local-only")
+    with pytest.raises(AssertionError, match="injected"):
+        _launch(env, Path(cp_main.__file__).resolve().parents[1])
+    assert len(started) == 1 and started[0].poll() is not None
 
 
 def test_launch_retries_only_on_bind_conflict(tmp_path):

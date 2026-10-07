@@ -31,19 +31,20 @@ struct RejectCase {
 
 }  // namespace
 
-TEST_CASE("args: empty argv starts with no role", "[args]") {
+TEST_CASE("args: only the server is needed and there is no role", "[args]") {
     // 역할은 어느 구간에서나 없어도 기동한다. 그때는 로비에서 시작한다 (architecture.md 3.5).
-    const auto r = run({});
+    // --server 는 Phase 3 이후 필수다.
+    const auto r = run({"--server", "a.example"});
     REQUIRE(r.ok());
     REQUIRE(r.args->role == Role::None);
-    REQUIRE_FALSE(r.args->server.has_value());
+    REQUIRE(r.args->server.has_value());
     REQUIRE_FALSE(r.args->peer.has_value());
     REQUIRE(r.args->stun.empty());
 }
 
 TEST_CASE("args: role positional", "[args]") {
-    REQUIRE(run({"host"}).args->role == Role::Host);
-    REQUIRE(run({"player"}).args->role == Role::Player);
+    REQUIRE(run({"host", "--server", "a.example"}).args->role == Role::Host);
+    REQUIRE(run({"player", "--server", "a.example", "--room", "ABCDEF"}).args->role == Role::Player);
 }
 
 TEST_CASE("args: server takes the control port by default", "[args]") {
@@ -61,34 +62,33 @@ TEST_CASE("args: server keeps an explicit port", "[args]") {
 }
 
 TEST_CASE("args: room is normalized to upper case", "[args]") {
-    const auto r = run({"--room", "abcdef"});
+    const auto r = run({"player", "--server", "a.example", "--room", "abcdef"});
     REQUIRE(r.ok());
     REQUIRE(*r.args->room == "ABCDEF");
-    REQUIRE(*run({"--room", "aBcDeF"}).args->room == "ABCDEF");
-    REQUIRE(*run({"--room", "ABCDEF"}).args->room == "ABCDEF");
+    REQUIRE(*run({"player", "--server", "a.example", "--room", "aBcDeF"}).args->room == "ABCDEF");
+    REQUIRE(*run({"player", "--server", "a.example", "--room", "ABCDEF"}).args->room == "ABCDEF");
 }
 
 TEST_CASE("args: room is rejected for the host role", "[args]") {
     // architecture.md 3.5. 방 코드는 create_room 응답으로만 생긴다.
-    const auto r = run({"host", "--room", "ABCDEF"});
+    const auto r = run({"host", "--server", "a.example", "--room", "ABCDEF"});
     REQUIRE_FALSE(r.ok());
     REQUIRE(r.error == ArgError::RoomWithHost);
     REQUIRE(r.offending == "--room");
 
     // player 는 그대로 받는다.
-    REQUIRE(run({"player", "--room", "ABCDEF"}).ok());
-    // 역할이 없으면 Phase 1~2 경로라 통과한다.
-    REQUIRE(run({"--room", "ABCDEF"}).ok());
+    REQUIRE(run({"player", "--server", "a.example", "--room", "ABCDEF"}).ok());
 }
 
 TEST_CASE("args: peer is an IPv4 endpoint", "[args]") {
-    const auto r = run({"--peer", "192.0.2.10:30000"});
+    const auto r = run({"--server", "a.example", "--peer", "192.0.2.10:30000"});
     REQUIRE(r.ok());
     REQUIRE(r.args->peer->to_string() == "192.0.2.10:30000");
 }
 
 TEST_CASE("args: stun accumulates and the rest is last wins", "[args]") {
-    const auto r = run({"--stun", "a.example:3478",
+    const auto r = run({"player", "--server", "a.example",
+                        "--stun", "a.example:3478",
                         "--stun", "b.example:19302",
                         "--room", "ABCDEF",
                         "--room", "GHJKLM",
@@ -180,6 +180,41 @@ TEST_CASE("args: error tokens are stable", "[args]") {
     REQUIRE(sangtachi::to_token(ArgError::BadHost) == "bad_host");
     REQUIRE(sangtachi::to_token(ArgError::BadPort) == "bad_port");
     REQUIRE(sangtachi::to_token(ArgError::MissingPort) == "missing_port");
+    REQUIRE(sangtachi::to_token(ArgError::MissingServer) == "missing_server");
+    REQUIRE(sangtachi::to_token(ArgError::MissingRoom) == "missing_room");
+    REQUIRE(sangtachi::to_token(ArgError::RoomWithoutRole) == "room_without_role");
+}
+
+TEST_CASE("args: required inputs from Phase 3 case table", "[args]") {
+    // architecture.md 3.5 의 "필수" 열, Phase 3 이후. 형식 검사는 이보다 먼저다.
+    const RejectCase cases[] = {
+        {{}, ArgError::MissingServer, "no arguments: the server is required"},
+        {{"host"}, ArgError::MissingServer, "host without a server"},
+        {{"--peer", "192.0.2.1:1"}, ArgError::MissingServer, "test inputs do not replace the server"},
+        {{"player", "--server", "a.example"}, ArgError::MissingRoom, "player needs a room"},
+        {{"player"}, ArgError::MissingRoom, "player without room or server reports the room"},
+        {{"--room", "ABCDEF", "--server", "a.example"}, ArgError::RoomWithoutRole, "room without a role"},
+        {{"--room", "ABCDEF"}, ArgError::RoomWithoutRole, "room without a role or server"},
+        {{"host", "--room", "ABCDEF"}, ArgError::RoomWithHost, "host with a room is still its own error"},
+        {{"--room", "ABCDE0"}, ArgError::BadRoom, "format errors come before required checks"},
+    };
+    for (const auto& c : cases) {
+        INFO("why=" << c.why);
+        const auto r = parse_args(std::span<const std::string_view>(c.argv));
+        REQUIRE_FALSE(r.ok());
+        REQUIRE(r.error == c.error);
+    }
+
+    // 넷 다 있으면 통과한다.
+    REQUIRE(run({"--server", "a.example"}).ok());
+    REQUIRE(run({"host", "--server", "a.example"}).ok());
+    REQUIRE(run({"player", "--server", "a.example", "--room", "ABCDEF"}).ok());
+}
+
+TEST_CASE("args: the missing input is named in offending", "[args]") {
+    REQUIRE(run({}).offending == "--server");
+    REQUIRE(run({"player", "--server", "a.example"}).offending == "--room");
+    REQUIRE(run({"--server", "a.example", "--room", "ABCDEF"}).offending == "--room");
 }
 
 TEST_CASE("args: the offending argument is reported", "[args]") {

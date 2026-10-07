@@ -6,6 +6,8 @@
 // 터널 상태를 건드리는 코드가 한 스레드에서만 도는 것이 이 설계의 전부다 (concurrency.md).
 
 #include "sangtachi/console.hpp"
+#include "sangtachi/control/channel.hpp"
+#include "sangtachi/control/lobby.hpp"
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/network/udp_socket.hpp"
@@ -79,6 +81,12 @@ using DatagramHandler =
 struct LoopOptions {
     std::optional<network::Endpoint> peer;  // architecture.md 3.5 의 --peer
     bool probe_timer = false;               // 시험 빌드의 probe200 타이머
+    // 종료 이벤트. 비워 두면 루프가 만든다. 주면 루프는 그것을 **복제해서** 든다.
+    //
+    // main 은 제어 서버 주소를 UDP bind 보다 먼저 해석한다 (control_plane.md 8.4 의 2번이
+    // 3번 앞이다). 그 사이의 Ctrl+C 가 종료 절차를 타려면 종료 이벤트와 콘솔 제어 핸들러가
+    // 루프보다 먼저 있어야 한다. 그래서 main 이 이벤트를 만들어 넘긴다.
+    void* shutdown_event = nullptr;
 };
 
 class EventLoop {
@@ -98,11 +106,40 @@ public:
     //
     // 대기 배열에 들어가는 핸들이 모두 살아 있어야 한다. 빈자리에 널을 넣으면
     // WaitForMultipleObjects 가 WAIT_FAILED 를 낸다 (concurrency.md 2장 대기).
-    // Phase 1~2 의 세 핸들은 전부 항상 있으므로, 여기서 한 번 확인하면 배열은 구성상
-    // 조밀하다.
+    // 종료·UDP·콘솔의 세 핸들은 전부 항상 있으므로, 여기서 한 번 확인하면 배열은 구성상
+    // 조밀하다. 제어 응답 이벤트(순위 4)는 채널을 붙였을 때만 배열에 들어가므로 그때만 본다.
     [[nodiscard]] bool valid() const noexcept {
         return shutdown_event_ != nullptr && console_event_ != nullptr &&
-               socket_.read_event() != nullptr;
+               socket_.read_event() != nullptr &&
+               (control_ == nullptr || control_->response_event() != nullptr);
+    }
+
+    // `[control]` 의 채널을 붙인다 (concurrency.md 2장 대기의 순위 4, 3장의 drain_control).
+    //
+    // 소유하지 않는다. 채널은 이 루프보다 오래 산다. concurrency.md 7장 종료가 join 을 정리
+    // 완료 뒤에 두므로 채널은 루프가 소멸한 뒤에야 끝난다. 붙인 뒤에는 valid() 를 다시 본다.
+    //
+    // 붙이지 않은 루프는 순위 4 없이 돈다. Phase 1~2 의 시험이 그 모양이다. 제품 경로는
+    // main 이 늘 붙인다 (concurrency.md 2장의 "Phase 3~5 배열 길이 4").
+    void attach_control(control::ControlChannel* channel) noexcept { control_ = channel; }
+
+    // drain_control 이 꺼낸 응답을 하나씩 넘길 곳. 비워 두면 꺼내서 버린다.
+    //
+    // 응답을 세션 상태에 반영하는 것이 이 자리다 (concurrency.md 8장). 해석(ops.hpp 의
+    // interpret_*)도 여기서 한다.
+    void set_control_handler(std::function<void(control::ControlResponse)> handler) {
+        on_control_ = std::move(handler);
+    }
+
+    [[nodiscard]] control::ControlChannel* control() const noexcept { return control_; }
+
+    // 로비 명령(`host`, `join`, `leave`)을 넘길 곳 (architecture.md 3.5 로비 명령).
+    //
+    // 콘솔 줄은 control::parse_lobby_command 가 먼저 본다. 로비 명령이면 여기로 가고, 아니면
+    // quit, counters, raw 의 기존 경로다. 비워 두면 로비 명령도 기존 경로로 가서
+    // unknown_command 가 된다.
+    void set_lobby_command_handler(std::function<void(const control::LobbyCommand&)> handler) {
+        on_lobby_command_ = std::move(handler);
     }
 
     // 터널 후보로 분류된 데이터그램을 넘길 곳 (protocol.md 8장 검증 파이프라인이 들어올
@@ -162,6 +199,9 @@ private:
     // 여기를 거치지 않으면 카운터 전량 출력이 낡은 값을 낸다.
     void sync_console_drop_counter() noexcept;
     void drain_console();
+    // `[control]` 이 응답 큐에 넣은 것을 비운다 (concurrency.md 3장, 8장). 예산이 없다.
+    // 두 큐는 작고 요청이 사람 속도다 (concurrency.md 3장).
+    void drain_control();
     void handle_command(std::string_view line);
     void send_raw(std::size_t length);
 
@@ -173,6 +213,9 @@ private:
     DatagramHandler on_tunnel_;
     DatagramHandler on_stun_;
     std::function<void(const TimerTick&)> on_tick_;
+    std::function<void(control::ControlResponse)> on_control_;
+    std::function<void(const control::LobbyCommand&)> on_lobby_command_;
+    control::ControlChannel* control_ = nullptr;  // 소유하지 않는다
 
     void* shutdown_event_ = nullptr;  // 수동 리셋. 이 객체가 소유한다
     void* console_event_ = nullptr;   // 자동 리셋. ConsoleSession 이 소유한다

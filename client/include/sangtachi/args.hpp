@@ -2,9 +2,17 @@
 
 // 기동 인자 파싱 (architecture.md 3.5 기동 입력).
 //
-// 이 파일은 형식만 판정한다. 값이 그 구간에서 필수인지는 보지 않는다. 필수 판정은
-// architecture.md 3.5 표의 "필수" 열이 정하고, 그 검사는 제어 평면이 들어오는 Phase 3
-// 에서 붙는다 (roadmap.md). 역할은 어느 구간에서나 없어도 기동하고, 그때는 로비에서 시작한다.
+// 이 파일은 형식과 필수 여부를 판정한다. 필수 판정은 architecture.md 3.5 표의 "필수" 열이
+// 정한다. 이 코드는 Phase 3 이후의 열을 따른다.
+//
+// | 입력 | 필수 | 없거나 어긋나면 |
+// |------|------|-----------------|
+// | `--server` | 예 | MissingServer |
+// | `--room` | `player` 는 항상 | MissingRoom |
+// | `--room` 을 `host` 에 | 주면 기동 실패 | RoomWithHost |
+// | `--room` 을 역할 없이 | 주면 기동 실패 | RoomWithoutRole |
+//
+// 역할은 어느 구간에서나 없어도 기동하고, 그때는 로비에서 시작한다.
 //
 // 형식 검사는 그 구간에서 값을 쓰지 않아도 한다. 미루면 Phase 1 에서 통과한 입력이
 // Phase 3 에서야 거부되고, 그 사이 시험이 어느 형식으로 돌았는지 기록에서 읽을 수 없다.
@@ -66,6 +74,9 @@ enum class ArgError {
     BadHost,
     BadPort,
     MissingPort,
+    MissingServer,    // --server 가 없다. Phase 3 이후 필수다
+    MissingRoom,      // player 인데 --room 이 없다
+    RoomWithoutRole,  // 역할 없이 --room 을 줬다. Phase 3 이후 기동 실패다
 };
 
 // 로그와 시험이 쓰는 고정 토큰.

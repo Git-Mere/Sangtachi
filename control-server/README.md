@@ -14,6 +14,7 @@ Sangtachi 제어 서버. 설계의 출처는 [`docs/kor/control_plane.md`](../do
 | `tests/test_*.py` | 케이스 표와 그 시험. 표는 파일 머리의 목록이다 |
 | `tests/mutants/<표>.py` | 그 표의 변이 목록 |
 | `tests/mutate.py` | 변이 실행기. 판정 규칙은 그 파일 첫머리에 있다 |
+| `tests/harness/` | 클라이언트 시험용 하네스. 진짜 서버를 DynamoDB local 의 새 테이블 위에 루프백으로 띄우고, 관리 포트로 지연·오류·시계·속도 제한을 주입한다. `scripts/lobby-check.ps1` 이 쓴다. 배포물이 아니다 |
 | `requirements.txt` | 제품 의존성. 배포하는 프로세스가 쓰는 것만 |
 | `requirements-dev.txt` | 시험 전용 의존성 ([ADR 0014](../docs/kor/decisions/0014-제어-서버-시험-pytest와-docker.md)) |
 

@@ -136,7 +136,10 @@ EventLoop::EventLoop(network::UdpSocket socket, Counters& counters, ConsoleQueue
       options_(std::move(options)),
       console_event_(console_event) {
     // 종료 이벤트는 수동 리셋이다. 신호되면 기다리는 모든 스레드가 함께 깨어난다.
-    shutdown_event_ = platform::create_event(platform::ResetMode::Manual);
+    // 받은 것이 있으면 복제한다. 소유는 어느 쪽이든 이 객체가 자기 핸들 하나를 갖는 것이다.
+    shutdown_event_ = options_.shutdown_event != nullptr
+                          ? platform::duplicate_event(options_.shutdown_event)
+                          : platform::create_event(platform::ResetMode::Manual);
 
     if (options_.probe_timer) {
         if (!timers_.add_periodic(std::string(kProbeTimerName), kProbeTimerIntervalMs, now_ms())) {
@@ -261,6 +264,14 @@ void EventLoop::handle_command(std::string_view line) {
     if (command.empty()) {
         return;
     }
+    // 로비 명령이 먼저다. 첫 낱말이 정확히 host, join, leave 일 때만 값이 있다
+    // (control/lobby.hpp 의 parse_lobby_command). 형식 검사와 WARN 은 로비가 한다.
+    if (on_lobby_command_) {
+        if (const auto lobby_command = control::parse_lobby_command(command)) {
+            on_lobby_command_(*lobby_command);
+            return;
+        }
+    }
     if (command == "quit") {
         // shutdown() 을 직접 부르지 않는다. 종료 이벤트를 신호해 다음 바퀴가 concurrency.md 7장 의
         // 순서를 그대로 타게 한다 (concurrency.md 3장).
@@ -308,10 +319,24 @@ void EventLoop::drain_console() {
     }
 }
 
+void EventLoop::drain_control() {
+    if (control_ == nullptr) {
+        return;
+    }
+    // 응답 이벤트는 자동 리셋이라 따로 리셋하지 않는다. 깨어난 바퀴가 링을 다 비운다.
+    while (auto response = control_->try_pop()) {
+        if (on_control_) {
+            on_control_(std::move(*response));
+        }
+    }
+}
+
 bool EventLoop::run_once() {
     // 살아 있는 핸들만 모아 조밀한 배열을 만든다. 빈자리에 NULL 을 넣으면 WAIT_FAILED 가
     // 난다 (concurrency.md 2장). 논리적 순위와 배열 인덱스는 다르다.
-    platform::WaitHandle handles[3];
+    //
+    // 순위 2(Wintun)는 Phase 6 이후라 아직 없다. 순위 4(제어 응답)는 채널이 붙었을 때만 든다.
+    platform::WaitHandle handles[4];
     std::size_t count = 0;
     const std::size_t shutdown_index = count;
     handles[count++] = shutdown_event_;
@@ -319,6 +344,9 @@ bool EventLoop::run_once() {
     handles[count++] = socket_.read_event();
     const std::size_t console_index = count;
     handles[count++] = console_event_;
+    if (control_ != nullptr) {
+        handles[count++] = control_->response_event();
+    }
 
     const std::uint32_t timeout =
         busy_ ? 0 : next_timeout_ms(now_ms(), timers_.earliest_deadline());
@@ -356,6 +384,7 @@ bool EventLoop::run_once() {
     socket_.enumerate_events();
     const DrainOutcome udp = drain_udp();
     drain_console();
+    drain_control();  // concurrency.md 3장. Phase 3 이후
     timers_.run_expired(now_ms(), [this](const TimerTick& tick) {
         const LogField fields[] = {
             field("name", tick.name),

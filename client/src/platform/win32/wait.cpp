@@ -38,6 +38,19 @@ void close_event(WaitHandle handle) noexcept {
     ::CloseHandle(static_cast<HANDLE>(handle));
 }
 
+WaitHandle duplicate_event(WaitHandle handle) noexcept {
+    if (handle == nullptr) {
+        return nullptr;
+    }
+    HANDLE duplicated = nullptr;
+    if (::DuplicateHandle(::GetCurrentProcess(), static_cast<HANDLE>(handle),
+                          ::GetCurrentProcess(), &duplicated, 0, FALSE,
+                          DUPLICATE_SAME_ACCESS) == 0) {
+        return nullptr;
+    }
+    return duplicated;
+}
+
 WaitResult wait_any(std::span<const WaitHandle> handles, std::uint32_t timeout_ms) noexcept {
     // 먼저 검증한다. 빈 배열과 상한 초과는 OS 에 묻지 않고 여기서 판정한다.
     // 널이 섞인 배열은 OS 가 WAIT_FAILED 로 돌려주므로 아래 경로가 받는다

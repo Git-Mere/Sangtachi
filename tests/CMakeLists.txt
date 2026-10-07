@@ -22,6 +22,14 @@ add_executable(sangtachi_tests
     log_test.cpp
     loop_test.cpp
     timer_test.cpp
+    spsc_ring_test.cpp
+    control/channel_test.cpp
+    control/exchange_test.cpp
+    control/http_test.cpp
+    control/json_test.cpp
+    control/lobby_test.cpp
+    control/ops_test.cpp
+    control/runner_test.cpp
     network/endpoint_test.cpp
     network/stun_test.cpp
     network/stun_client_test.cpp
@@ -30,6 +38,8 @@ add_executable(sangtachi_tests
     platform/console_ctrl_test.cpp
     platform/random_test.cpp
     platform/resolve_test.cpp
+    platform/stdout_test.cpp
+    platform/tcp_test.cpp
     platform/wait_test.cpp
 )
 

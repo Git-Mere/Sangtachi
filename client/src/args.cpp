@@ -161,6 +161,9 @@ std::string_view to_token(ArgError error) noexcept {
         case ArgError::BadHost:         return "bad_host";
         case ArgError::BadPort:         return "bad_port";
         case ArgError::MissingPort:     return "missing_port";
+        case ArgError::MissingServer:   return "missing_server";
+        case ArgError::MissingRoom:     return "missing_room";
+        case ArgError::RoomWithoutRole: return "room_without_role";
     }
     return "unknown";
 }
@@ -240,6 +243,21 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
     // 미리 정할 수 없다. 조용히 무시하면 틀린 입력이 성공으로 보인다.
     if (args.role == Role::Host && args.room) {
         return fail(ArgError::RoomWithHost, "--room");
+    }
+    // 역할 없이 준 방 코드는 Phase 3 이후 기동 실패다 (architecture.md 3.5, roadmap.md Phase 3).
+    // 역할이 없으면 로비에서 시작하므로 그 값을 쓸 자리가 없다. 조용히 버리면 사용자는 참가한
+    // 줄 안다.
+    if (args.role == Role::None && args.room) {
+        return fail(ArgError::RoomWithoutRole, "--room");
+    }
+    // player 는 방 코드가 항상 필요하다 (architecture.md 3.5 의 "필수" 열).
+    if (args.role == Role::Player && !args.room) {
+        return fail(ArgError::MissingRoom, "--room");
+    }
+    // 제어 서버 주소는 Phase 3 이후 필수다. 역할이 없어도 그렇다. DNS 해석이 기동 시
+    // 한 번이고 역할 인자가 없어도 한다 (control_plane.md 8.4 의 2번).
+    if (!args.server) {
+        return fail(ArgError::MissingServer, "--server");
     }
 
     ParseResult result;

@@ -229,6 +229,15 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 시도가 실패하면 `FAIL` 줄을 낸다. 지금은 `session.failed` 로그만 낸다. 그 뒤 로비로 가는지는
     `concurrency.md` 7장 로비의 계기를 따른다
   - `leave` 가 중단한 시도의 늦은 응답을 버린다 (`concurrency.md` 8장 `[control]` 스레드)
+- **이 Phase 의 클라이언트는 `control_plane.md` 8.4 기동부터 펀치까지의 8번에서 멈춘다.** 9번과
+  10번(펀치와 세션)은 Phase 4 다
+  - 플레이어는 7번의 조건이 8번을 거친 뒤에도 성립한 첫 응답에서 `control.peers` 한 줄을 내고
+    `get_peers` 폴링을 멈춘다. 그 뒤 `leave` 나 `quit` 까지 방에 남는다
+  - 호스트는 상대마다, 그 쌍이 `ready: true` 이고 8번을 거친 상대 후보가 있는 첫 응답에서 그 상대의
+    `control.peers` 한 줄을 낸다. `host_report` 주기는 그대로 돈다
+  - 6번의 후보는 반사 후보뿐이다. 로컬 후보 수집은 Phase 4 다
+  - `control.peers` 의 필드는 `architecture.md` 9장 텔레메트리와 기록이 갖는다. 후보는 8번의 위생을
+    거친 뒤의 목록이다
 
 ### 산출물
 
@@ -377,16 +386,22 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - 클라이언트의 제어 평면 재시도 (`control_plane.md` 8.3 오류 분류와 재시도)
   - `rate_limited`, `room_full`, `unauthorized` 를 받으면 재시도 없이 즉시
     `CONTROL_PLANE_EXCHANGE_FAILED` 다. `host_report` 는 예외이고 위 "로비" 의 호스트 항목이 본다
-  - `internal`, `unavailable`, connect 타임아웃은 **같은 `client_nonce` 로 첫 시도를 포함해
+  - `internal`, `unavailable`, 전송 오류는 **같은 `client_nonce` 로 첫 시도를 포함해
     총 3회**를 시도한다
+  - 전송 오류는 루프백에서 둘로 만든다. 연결을 받고 답하지 않는 서버(수신 시간 제한)와 닫힌
+    포트(연결 거부)다. Windows 루프백에서는 connect 타임아웃을 만들 수 없다. 연결 대기열이 차도 거부로
+    끝난다. connect 타임아웃 자체는 경로가 없는 주소가 있어야 하므로 이 묶음에서
+    돌리지 않는다
   - 연산마다 판정 축이 다르다. `create_room` 은 방이 하나만 생기는 것으로 본다
     (`ROOM` 항목 수 1)
   - `join_room` 은 두 번째 응답이 첫 번째와 같은 `peer_id` 와 가상 IP 인 것으로 본다.
     **`VIP#` 항목 수 1 도 같이 본다.** 풀이 넷이므로(`control_plane.md` 2.5) nonce 를 무시하는
     구현은 두 번째 주소를 선점해 항목이 둘이 된다
-  - connect 타임아웃과 `unavailable` 은 저장소에 닿기 전이라 nonce 동일성이 저장소에 남지
-    않는다. store 계층에 커밋 뒤 응답 직전에 실패를 내는 주입점을 두고 그것으로 `internal`
-    재시도를 돌린다
+  - 위의 연결 거부와 무응답, 그리고 `unavailable` 은 저장소에 닿기 전이라 nonce 동일성이 저장소에
+    남지 않는다. 그래서
+    `internal` 재시도로 본다. 첫 시도는 store 계층에 커밋 뒤 응답 직전에 실패를 내는 주입점으로
+    만든다. 같은 nonce 의 두 번째 시도는 저장된 응답을 다시 돌려줄 뿐 쓰기가 없어 그 주입점에
+    걸리지 않는다. 두 번째 실패는 연산을 처리한 뒤 응답 직전에 오류를 내는 주입점으로 만든다
 
   > **왜 두 축을 같이 보나.** 항목 수만 보면 정원이 찬 방에서 변이가 `room_full` 로 끝나 항목이
   > 그대로인 경우를 통과시킨다. `peer_id` 동일성이 그 경우를 잡는다.

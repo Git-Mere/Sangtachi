@@ -5,13 +5,18 @@
 #
 #   pwsh -File scripts/test.ps1
 #   pwsh -File scripts/test.ps1 -Filter wsa      이름에 wsa 가 든 케이스만
+#   pwsh -File scripts/test.ps1 -Jobs 1          케이스를 하나씩 돌린다
+#
+# 케이스는 기본으로 코어 수만큼 동시에 돈다 (ctest -j). 케이스마다 30초 상한은 그대로다.
 
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')]
     [string]$Config = 'Debug',
     [string]$BuildDir = '',
-    [string]$Filter = ''
+    [string]$Filter = '',
+    [ValidateRange(0, 256)]
+    [int]$Jobs = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +29,9 @@ $buildDir = Resolve-BuildDir -Config $Config -Explicit $BuildDir
 & (Join-Path $PSScriptRoot 'build.ps1') -Config $Config -BuildDir $buildDir
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
 
-$ctestArgs = @('--test-dir', $buildDir, '--output-on-failure')
+# 0 이면 코어 수다.
+if ($Jobs -eq 0) { $Jobs = [Environment]::ProcessorCount }
+$ctestArgs = @('--test-dir', $buildDir, '--output-on-failure', '-j', $Jobs)
 if ($Filter) {
     $ctestArgs += @('-R', $Filter)
 }
@@ -41,6 +48,10 @@ if (-not $Filter) {
     # 프로세스 여럿이 실제로 데이터그램을 주고받는지 본다.
     & (Join-Path $PSScriptRoot 'e2e-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "end-to-end check failed ($LASTEXITCODE)" }
+
+    # 로비와 제어 평면 클라이언트 계약. 진짜 제어 서버를 DynamoDB local 위에 띄운다. 없으면 실패한다.
+    & (Join-Path $PSScriptRoot 'lobby-check.ps1') -Config $Config -BuildDir $buildDir
+    if ($LASTEXITCODE -ne 0) { throw "lobby check failed ($LASTEXITCODE)" }
 }
 
 Write-Host 'all tests passed'

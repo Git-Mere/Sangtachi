@@ -57,6 +57,13 @@ bool signal_event(WaitHandle handle) noexcept;
 // 이벤트를 닫는다. 널은 아무것도 하지 않는다.
 void close_event(WaitHandle handle) noexcept;
 
+// 같은 이벤트 객체를 가리키는 핸들을 하나 더 만든다. 실패하거나 널을 받으면 널이다.
+//
+// 다른 스레드가 기다리는 핸들을 소유자가 먼저 닫으면 그 대기는 정의되지 않는다. 그래서
+// 소유자보다 오래 살 수 있는 쪽이 자기 몫을 복제해 들고 간다. 객체는 마지막 핸들이 닫힐
+// 때까지 산다. 복제본은 close_event 로 닫는다.
+[[nodiscard]] WaitHandle duplicate_event(WaitHandle handle) noexcept;
+
 // 핸들 하나가 신호될 때까지, 또는 타임아웃까지 기다린다.
 //
 // 여럿이 동시에 신호되어 있으면 **가장 낮은 인덱스 하나**를 돌려준다. 루프가 반환값으로

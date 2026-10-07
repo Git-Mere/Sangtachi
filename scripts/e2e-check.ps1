@@ -33,7 +33,6 @@ $work = Join-Path ([System.IO.Path]::GetTempPath()) ("sangtachi_e2e_" + [guid]::
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 $procs = @{}
-$jobs = @()
 $failed = 0
 
 function Read-Log([string]$path) {
@@ -59,14 +58,16 @@ function Wait-ForLine([string]$path, [string]$pattern, [int]$timeoutMs = 5000) {
     return $null
 }
 
-# STUN 질의가 켜진 채로 도는 것이 기본이다 (architecture.md 3.5 기동 입력). 이 스크립트는
-# **공개 STUN 서버를 부르지 않는다.** 망이 없는 기계에서 깨지고, 남의 서버에 시험 트래픽을
-#보내게 되며, 그 응답이 rx.raw 로 섞여 Phase 1 의 대조를 어지럽힌다. 그래서 응답하지 않는
-# 로컬 주소 둘을 기본으로 준다. 직접 --stun 을 주는 호출은 그대로 쓴다.
+# 이 스크립트는 로비 명령을 치지 않으므로 STUN 이 돌지 않는다 (control_plane.md 8.4). 그래도
+# 목록은 기동 시 한 번 해석한다(architecture.md 3.5 기동 입력). 기본 목록이면 공개 서버의 이름을
+# 묻게 되므로 응답하지 않는 로컬 주소 둘을 기본으로 준다. 직접 --stun 을 주는 호출은 그대로 쓴다.
 $deadStun = @('--stun', '127.0.0.1:9', '--stun', '127.0.0.1:19')
 
 function Start-Client([string]$name, [string[]]$clientArgs) {
     if ($clientArgs -notcontains '--stun') { $clientArgs = $deadStun + $clientArgs }
+    # --server 는 Phase 3 이후 필수다 (architecture.md 3.5 기동 입력). 닫힌 루프백 포트를 준다.
+    # 로비 명령을 치지 않으므로 이 스크립트에서는 제어 요청이 나가지 않는다.
+    if ($clientArgs -notcontains '--server') { $clientArgs = @('--server', '127.0.0.1:9') + $clientArgs }
     $errPath = Join-Path $work "$name.err"
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $exe
@@ -78,19 +79,36 @@ function Start-Client([string]$name, [string[]]$clientArgs) {
 
     # 표준 오류를 파일로 보낸다. cmd 를 거치면 인용이 한 겹 더 붙으므로 직접 연다.
     $info.RedirectStandardError = $true
-    $p = [System.Diagnostics.Process]::Start($info)
-    $writer = [System.IO.StreamWriter]::new($errPath, $false)
-    $writer.AutoFlush = $true
-    # 표준 오류를 비동기로 파일에 옮긴다.
-    $handler = {
-        if ($null -ne $EventArgs.Data) { $Event.MessageData.WriteLine($EventArgs.Data) }
-    }
-    Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived -Action $handler `
-        -MessageData $writer | Out-Null
-    $p.BeginErrorReadLine()
 
-    return @{ proc = $p; err = $errPath; writer = $writer; name = $name }
+    # 파일 열기부터 이벤트 등록까지가 한 가드다. 중간에 실패하면 등록한 이벤트를 풀고, 연 파일을 닫고, 띄운 자식을
+    # 죽인 뒤 다시 던진다. 돌려준 뒤에는 부르는 쪽이 $procs 에 넣는다(그 사이에 실패할 수 있는 일이 없다).
+    $writer = $null
+    $p = $null
+    $sourceId = "e2e-stderr-$name-" + [guid]::NewGuid().ToString('N')
+    try {
+        $writer = [System.IO.StreamWriter]::new($errPath, $false)
+        $writer.AutoFlush = $true
+        $p = [System.Diagnostics.Process]::Start($info)
+        if ($null -eq $p) { throw "${name}: process did not start" }
+        # 표준 오류를 비동기로 파일에 옮긴다.
+        $handler = {
+            if ($null -ne $EventArgs.Data) { $Event.MessageData.WriteLine($EventArgs.Data) }
+        }
+        Register-ObjectEvent -InputObject $p -EventName ErrorDataReceived -Action $handler `
+            -MessageData $writer -SourceIdentifier $sourceId | Out-Null
+        $p.BeginErrorReadLine()
+        return @{ proc = $p; err = $errPath; writer = $writer; name = $name }
+    } catch {
+        Unregister-Event -SourceIdentifier $sourceId -ErrorAction SilentlyContinue
+        if ($null -ne $p) {
+            try { if (-not $p.HasExited) { $p.Kill(); [void]$p.WaitForExit(5000) } } catch { }
+            $p.Dispose()
+        }
+        if ($null -ne $writer) { $writer.Dispose() }
+        throw
+    }
 }
+
 
 function Get-LocalPort($client) {
     $m = Wait-ForLine $client.err 'socket\.bind local=0\.0\.0\.0:(\d+)'
@@ -116,52 +134,6 @@ function Get-RxRaw($client, [int]$index) {
         Start-Sleep -Milliseconds 50
     }
     return $null
-}
-
-# 자유 UDP 포트 하나. bind 해 보고 OS 가 고른 번호를 읽는다 (protocol.md 6장과 같은 방법).
-# 닫은 뒤 그 번호를 응답기가 다시 bind 하므로 그 사이에 남이 가져갈 수 있다. 시험 기계의
-# 이야기라 재시도를 두지 않고, 실패하면 응답기 작업이 죽어 아래 검사가 FAIL 로 드러난다.
-function Get-FreeUdpPort {
-    $probe = New-Object System.Net.Sockets.UdpClient(0, [System.Net.Sockets.AddressFamily]::InterNetwork)
-    try { return $probe.Client.LocalEndPoint.Port } finally { $probe.Close() }
-}
-
-# 최소 STUN 응답기. Binding Request 를 받으면 XOR-MAPPED-ADDRESS 하나를 실은 Binding
-# Success Response 를 돌려준다 (protocol.md 13장 STUN 사용 범위, RFC 5389).
-#
-# 검증은 클라이언트가 한다. 이 응답기는 트랜잭션 ID 를 그대로 되비추고 출발지를 매핑으로
-# 적는 것 말고는 아무것도 하지 않는다.
-$responder = {
-    param([int]$port)
-    $server = New-Object System.Net.Sockets.UdpClient($port, [System.Net.Sockets.AddressFamily]::InterNetwork)
-    $from = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
-    $deadline = [Environment]::TickCount64 + 60000
-    try {
-        while ([Environment]::TickCount64 -lt $deadline) {
-            if ($server.Available -le 0) { Start-Sleep -Milliseconds 20; continue }
-            $data = $server.Receive([ref]$from)
-            if ($data.Length -lt 20) { continue }
-            $resp = New-Object byte[] 32
-            $resp[0] = 0x01; $resp[1] = 0x01      # Binding Success Response
-            $resp[2] = 0x00; $resp[3] = 0x0C      # 속성 12바이트
-            $resp[4] = 0x21; $resp[5] = 0x12; $resp[6] = 0xA4; $resp[7] = 0x42
-            [Array]::Copy($data, 8, $resp, 8, 12) # 트랜잭션 ID 를 되비춘다
-            $resp[20] = 0x00; $resp[21] = 0x20    # XOR-MAPPED-ADDRESS
-            $resp[22] = 0x00; $resp[23] = 0x08
-            $resp[24] = 0x00; $resp[25] = 0x01    # family IPv4
-            $xport = $from.Port -bxor 0x2112
-            $resp[26] = [byte](($xport -shr 8) -band 0xFF)
-            $resp[27] = [byte]($xport -band 0xFF)
-            $addr = $from.Address.GetAddressBytes()
-            $resp[28] = [byte]($addr[0] -bxor 0x21)
-            $resp[29] = [byte]($addr[1] -bxor 0x12)
-            $resp[30] = [byte]($addr[2] -bxor 0xA4)
-            $resp[31] = [byte]($addr[3] -bxor 0x42)
-            [void]$server.Send($resp, $resp.Length, $from)
-        }
-    } finally {
-        $server.Close()
-    }
 }
 
 function Check([string]$what, [bool]$ok) {
@@ -253,50 +225,14 @@ try {
     $m = Wait-ForLine $p4.err 'counter name=tx_err_send value=1'
     Check 'the failed send raised tx_err_send' ($null -ne $m)
 
-    # --- STUN (roadmap.md Phase 2 검증) ---------------------------------------
-    #
-    # 공개 서버를 부르지 않는다. 응답하지 않는 로컬 주소로 실패 경로를, 이 스크립트가
-    # 띄우는 응답기로 성공 경로를 본다.
-
-    # 응답 없는 서버 둘에 질의하면 마감 뒤 실패가 로그에 남고 프로세스는 살아 있다.
-    # 상한은 5s x ceil(2 / 2) = 5s 다 (protocol.md 11장 타이머).
-    $m = Wait-ForLine $p1.err 'session\.failed code=STUN_DISCOVERY_FAILED' 15000
-    Check 'a silent STUN server list ends in STUN_DISCOVERY_FAILED' ($null -ne $m)
-    Check 'the process survives the STUN failure' (-not $p1.proc.HasExited)
-
-    # 목록이 하나면 기동 시 경고를 내고, 두 서버의 응답이 나올 수 없으므로 바로 실패다
-    # (architecture.md 3.5 기동 입력).
-    $p5 = Start-Client 'p5' @('--stun', '127.0.0.1:9')
-    $procs['p5'] = $p5
-    $m = Wait-ForLine $p5.err 'WARN stun\.config reason=single_server'
-    Check 'a one-entry STUN list warns at startup' ($null -ne $m)
-    $m = Wait-ForLine $p5.err 'session\.failed code=STUN_DISCOVERY_FAILED' 3000
-    Check 'a one-entry STUN list fails without waiting for the deadline' ($null -ne $m)
-
-    # 성공 경로. 응답기 둘을 띄우고 그 둘에 질의한다.
-    $portA = Get-FreeUdpPort
-    $portB = Get-FreeUdpPort
-    $jobs += Start-Job -ScriptBlock $responder -ArgumentList $portA
-    $jobs += Start-Job -ScriptBlock $responder -ArgumentList $portB
-    # 응답기가 bind 를 마칠 시간을 준다. 늦어도 클라이언트의 재시도(500ms, 1s, 2s)가 덮는다.
-    Start-Sleep -Milliseconds 1500
-
-    $p6 = Start-Client 'p6' @('--stun', "127.0.0.1:$portA", '--stun', "127.0.0.1:$portB")
-    $procs['p6'] = $p6
-    $port6 = Get-LocalPort $p6
-    $m = Wait-ForLine $p6.err "stun\.result server=127\.0\.0\.1:$portA mapped=127\.0\.0\.1:$port6" 15000
-    Check 'the first STUN server reports the mapped endpoint' ($null -ne $m)
-    $m = Wait-ForLine $p6.err "stun\.result server=127\.0\.0\.1:$portB mapped=127\.0\.0\.1:$port6" 15000
-    Check 'the second STUN server reports the mapped endpoint' ($null -ne $m)
-    # 두 서버가 답했으므로 실패 줄이 없다.
-    $text = Read-Log $p6.err
-    Check 'two answers mean no STUN failure' (-not ($text -match 'session\.failed'))
+    # Phase 2 의 STUN 확인은 scripts/lobby-check.ps1 로 옮겼다. 통합 뒤 STUN 은 기동 시가 아니라 host 나
+    # join 시도마다 돈다 (control_plane.md 8.4). 그래서 제어 서버가 있어야 밟을 수 있다.
 
     # quit 으로 정상 종료하고 종료 코드가 0 이다.
-    foreach ($key in @('p6', 'p5', 'p4', 'p3', 'p2', 'p1')) {
+    foreach ($key in @('p4', 'p3', 'p2', 'p1')) {
         Send-Command $procs[$key] 'quit'
     }
-    foreach ($key in @('p6', 'p5', 'p4', 'p3', 'p2', 'p1')) {
+    foreach ($key in @('p4', 'p3', 'p2', 'p1')) {
         $exited = $procs[$key].proc.WaitForExit(5000)
         Check "$key exited after quit" $exited
         if ($exited) {
@@ -307,10 +243,6 @@ try {
     foreach ($client in $procs.Values) {
         if (-not $client.proc.HasExited) { $client.proc.Kill() }
         $client.writer.Dispose()
-    }
-    foreach ($job in $jobs) {
-        Stop-Job -Job $job -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
     Get-EventSubscriber | Unregister-Event -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

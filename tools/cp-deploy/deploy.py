@@ -177,6 +177,9 @@ rollback() {
     return
   fi
   if [ "$HAD_ENV" = 1 ] && [ "$HAD_UNIT" = 1 ] && [ -n "$PREV" ]; then
+    # 실패한 릴리스가 Restart=always 로 거듭 재시작하는 동안 systemd 의 시작 횟수 제한에 걸린다. 그대로
+    # restart 하면 "Start request repeated too quickly" 로 거부된다(실측). 먼저 실패 상태를 지운다.
+    sudo systemctl reset-failed "$SERVICE"
     if sudo systemctl restart "$SERVICE" && started >/dev/null; then
       echo "앞 상태로 되돌렸고 서버가 떴다" >&2
     else
@@ -289,6 +292,7 @@ sudo ln -sfn "$REL" "$BASE/current.new"
 sudo mv -T "$BASE/current.new" "$BASE/current"
 sudo systemctl daemon-reload
 sudo systemctl enable --quiet "$SERVICE"
+sudo systemctl reset-failed "$SERVICE" || true  # 앞 실패로 시작 횟수 제한에 걸려 있을 수 있다
 sudo systemctl restart "$SERVICE"
 started
 SUCCESS=1

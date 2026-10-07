@@ -62,6 +62,22 @@ python tools/cp-deploy/verify.py --host <Elastic IP> [--players 4] [--concurrent
 - `--soak SECONDS` 는 용량 확인용 부하다. 방 하나에 플레이어 넷이 0.5초마다 `get_peers` 를 부르고
   호스트가 5초마다 `host_report` 를 부르는 상태를 그 시간 동안 유지한다. 끝에 그 구간을 UTC 로 낸다.
   CloudWatch 의 테이블 지표를 그 구간으로 본다(`roadmap.md` Phase 3 검증의 배포 묶음)
+- CloudWatch 지표는 인스턴스에서 읽는다. 역할에 `cloudwatch:GetMetricStatistics` 가 있다
+  (`control_plane.md` 7.6). 실제로 돌린 명령의 모양은 아래다. 소비 용량 지표는 이대로 시각과 지표
+  이름만 바꾼다
+
+  ```text
+  aws cloudwatch get-metric-statistics --region <리전> --namespace AWS/DynamoDB \
+    --metric-name ConsumedReadCapacityUnits --dimensions Name=TableName,Value=<테이블> \
+    --start-time <UTC 시작> --end-time <UTC 끝> --period 60 --statistics Sum --output json
+  ```
+
+- `ThrottledRequests` 는 차원이 `TableName` 과 `Operation` 둘이다. `TableName` 하나로 읽으면 스로틀이
+  있어도 빈 결과가 나온다. `--dimensions Name=TableName,Value=<테이블> Name=Operation,Value=Query` 처럼
+  연산마다 읽는다. 테이블 단위로는 `ReadThrottleEvents` 와 `WriteThrottleEvents` 를 읽는다
+- 사건 수를 세는 지표는 사건이 없는 분에 데이터점이 없다. 빈 결과를 0 으로 읽기 전에 같은 차원의 다른
+  지표(예: `SuccessfulRequestLatency` 의 `SampleCount`)로 질의가 맞는지 대조한다
+
 - 왕복 시간은 이 기기에서 리전까지의 네트워크를 포함한다. 서버 쪽 시간은 journal 의
   `http.request` 줄의 `ms` 다
 

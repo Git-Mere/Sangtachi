@@ -6,8 +6,11 @@
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/timer.hpp"
 
+#include "../log_capture.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,6 +31,7 @@ using sangtachi::Counters;
 using sangtachi::Millis;
 using sangtachi::TimerSet;
 using sangtachi::TimerTick;
+using sangtachi::testing::LogCapture;
 using sangtachi::network::Endpoint;
 using sangtachi::network::kStunDeadlineMs;
 using sangtachi::network::kStunHeaderSize;
@@ -658,4 +662,192 @@ TEST_CASE("stun_client: duplicates are removed before the two-entry check", "[st
     REQUIRE_FALSE(client.start(0));
     REQUIRE(client.phase() == StunPhase::Failed);
     REQUIRE(sends == 0);  // 한 목적지뿐이라 묻지 않는다
+}
+
+TEST_CASE("stun_client: a list of exactly two succeeds when both answer", "[stun_client]") {
+    // 목록이 넷이면 두 번째 응답 때 자리 하나에 서버 2 가 떠 있어 "질의 중인 것이 없다" 가
+    // 성립하지 않는다. 둘이면 두 번째 응답으로 남은 서버도 떠 있는 질의도 없어진다. 그
+    // 순간 "목록 소진" 을 "응답 둘" 보다 먼저 보면 성공이 실패로 뒤집힌다 (refill 의 순서).
+    Harness h(2);
+    REQUIRE(h.client().start(0));
+
+    h.advance_to(10);
+    h.deliver(success_response(h.transaction_of(0), kMapped));
+    REQUIRE(h.client().phase() == StunPhase::Running);
+
+    h.deliver(success_response(h.transaction_of(1), Endpoint(0xC6336407u, 51001)));
+    REQUIRE(h.client().phase() == StunPhase::Succeeded);
+    REQUIRE(h.client().mappings().size() == 2);
+    REQUIRE(h.timers.size() == 0);
+}
+
+// ---------------------------------------------------------------------------
+// 진단 로그. 반환값도 카운터도 남기지 않는 경로가 있어서 줄 자체를 본다 (log.hpp 의 LogSink).
+// 줄 전체를 비교한다. 필드 이름과 값이 그대로여야 사람이 그 줄로 원인을 찾는다.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("stun_client: a deadline logs stun.timeout once for that server", "[stun_client][log]") {
+    LogCapture log;
+    Harness h(4);
+    REQUIRE(h.client().start(0));
+
+    h.advance_to(100);
+    h.deliver(success_response(h.transaction_of(0), kMapped));  // 서버 0 은 응답으로 끝난다
+
+    h.advance_to(kStunDeadlineMs - 1);
+    REQUIRE(log.with_event("stun.timeout").empty());
+
+    h.advance_to(kStunDeadlineMs);
+    // 서버 1 만 마감에 걸렸다. 응답으로 끝난 서버 0 의 줄은 없다.
+    REQUIRE(log.with_event("stun.timeout") ==
+            std::vector<std::string>{"WARN stun.timeout server=stun1.example:3478"});
+}
+
+TEST_CASE("stun_client: a pending answer that fails validation logs stun.rejected",
+          "[stun_client][log]") {
+    LogCapture log;
+    Harness h(2);
+    REQUIRE(h.client().start(0));
+    h.advance_to(100);
+
+    h.deliver(ipv6_family_response(h.transaction_of(0)));
+    REQUIRE(log.with_event("stun.rejected") ==
+            std::vector<std::string>{
+                "WARN stun.rejected server=stun0.example:3478 reason=mapped_address_family"});
+
+    // 대기 중인 자리를 찾기 전에 걸린 것은 이 줄을 내지 않는다. 어느 서버의 것인지 모른다.
+    TransactionId other{};
+    other[0] = std::byte{0xAB};
+    h.deliver(success_response(other, kMapped));
+    auto bad_cookie = success_response(h.transaction_of(1), kMapped);
+    bad_cookie[4] = std::byte{0x00};
+    h.deliver(bad_cookie);
+    REQUIRE(log.with_event("stun.rejected").size() == 1);
+    REQUIRE(h.counters.value(Counter::DropStunParse) == 3);
+}
+
+TEST_CASE("stun_client: an error response logs stun.error with its code", "[stun_client][log]") {
+    LogCapture log;
+    Harness h(3);
+    REQUIRE(h.client().start(0));
+    h.advance_to(100);
+
+    h.deliver(error_response(h.transaction_of(0), 4, 20));  // 420
+    REQUIRE(log.with_event("stun.error") ==
+            std::vector<std::string>{"WARN stun.error server=stun0.example:3478 code=420"});
+    REQUIRE(log.with_event("stun.result").empty());
+}
+
+TEST_CASE("stun_client: an error response without ERROR-CODE logs a dash", "[stun_client][log]") {
+    LogCapture log;
+    Harness h(3);
+    REQUIRE(h.client().start(0));
+
+    std::vector<std::byte> bare;
+    write_header(bare, 0x0111, 0, h.transaction_of(1));  // 속성이 없는 오류 응답
+    h.deliver(bare);
+    REQUIRE(log.with_event("stun.error") ==
+            std::vector<std::string>{"WARN stun.error server=stun1.example:3478 code=-"});
+}
+
+TEST_CASE("stun_client: resolving logs stun.unresolved and stun.duplicate per dropped entry",
+          "[stun_client][log]") {
+    const auto resolver = [](std::string_view host, std::uint16_t port) -> std::optional<Endpoint> {
+        if (host == "dead.example") {
+            return std::nullopt;
+        }
+        return Endpoint(0xCB007101u, port);  // 살아 있는 이름은 전부 한 주소다
+    };
+    const StunServerName list[] = {
+        {"dead.example", 3478}, {"one.example", 19302}, {"two.example", 19302},
+        {"three.example", 19302}};
+
+    LogCapture log;
+    const auto out = resolve_stun_servers(list, resolver);
+    REQUIRE(out.size() == 1);
+
+    REQUIRE(log.with_event("stun.unresolved") ==
+            std::vector<std::string>{"WARN stun.unresolved server=dead.example:3478"});
+    // 뺄 때마다 한 줄이다. same_as 는 남긴 첫 항목이다.
+    REQUIRE(log.with_event("stun.duplicate") ==
+            std::vector<std::string>{
+                "WARN stun.duplicate server=two.example:19302 same_as=one.example:19302 "
+                "endpoint=203.0.113.1:19302",
+                "WARN stun.duplicate server=three.example:19302 same_as=one.example:19302 "
+                "endpoint=203.0.113.1:19302"});
+    REQUIRE(log.lines.size() == 3);
+}
+
+TEST_CASE("stun_client: a timer name already taken logs timer.rejected", "[stun_client][log]") {
+    // 이름이 겹치면 add_once 가 거절한다 (timer.hpp). 조용히 넘기면 그 재시도나 마감이
+    // 영영 오지 않는다. 겹침을 밖에서 만든다.
+    LogCapture log;
+    Harness h(2);
+    REQUIRE(h.timers.add_once("stun.retry.0", 60000, 0));
+    REQUIRE(h.timers.add_once("stun.deadline.1", 60000, 0));
+
+    REQUIRE(h.client().start(0));
+    REQUIRE(log.with_event("timer.rejected") ==
+            std::vector<std::string>{"WARN timer.rejected name=stun.retry.0",
+                                     "WARN timer.rejected name=stun.deadline.1"});
+}
+
+TEST_CASE("stun_client: after the stage ends only a stranger counts as a drop",
+          "[stun_client]") {
+    // protocol.md 13장의 세는 표. 단계가 끝난 뒤에는 대기 중인 자리가 없다. 그때 온 응답이
+    // **우리가 보낸 트랜잭션**이면 정상 경로라 세지 않고, 아니면 부른 적 없는 응답이라 센다.
+    // 공개 서버 관측에서 성공 뒤 세 번째 서버의 응답이 이 자리로 왔다 (앞 줄의 경우).
+    LogCapture log;
+    Harness h(4);
+    REQUIRE(h.client().start(0));
+    h.advance_to(10);
+    h.deliver(success_response(h.transaction_of(0), kMapped));
+    const TransactionId reaped = h.transaction_of(2);  // 응답 하나로 빈 자리를 받은 서버 2
+    h.deliver(success_response(h.transaction_of(1), kMapped));
+    REQUIRE(h.client().phase() == StunPhase::Succeeded);
+
+    h.deliver(success_response(reaped, kMapped));  // 성공이 거둔 자리의 늦은 응답
+    REQUIRE(h.counters.value(Counter::DropStunParse) == 0);
+
+    TransactionId stranger{};
+    stranger[0] = std::byte{0xEE};
+    h.deliver(success_response(stranger, kMapped));
+    REQUIRE(h.counters.value(Counter::DropStunParse) == 1);
+
+    std::array<std::byte, 8> runt{};  // 트랜잭션 ID 를 읽을 수 없는 것도 같은 행이다
+    h.deliver(runt);
+    REQUIRE(h.counters.value(Counter::DropStunParse) == 2);
+
+    // 끝난 단계는 그대로다. 관측도 줄도 늘지 않는다.
+    REQUIRE(h.client().phase() == StunPhase::Succeeded);
+    REQUIRE(h.client().mappings().size() == 2);
+    REQUIRE(log.with_event("stun.result").size() == 2);
+    REQUIRE(log.with_event("stun.rejected").empty());
+
+    // 실패로 끝난 단계도 같다. 마감으로 끝난 자리의 응답은 세지 않고 남의 것은 센다.
+    Harness failed(2);
+    REQUIRE(failed.client().start(0));
+    failed.advance_to(kStunDeadlineMs);
+    REQUIRE(failed.client().phase() == StunPhase::Failed);
+    failed.deliver(success_response(failed.transaction_of(0), kMapped));
+    REQUIRE(failed.counters.value(Counter::DropStunParse) == 0);
+    failed.deliver(success_response(stranger, kMapped));
+    REQUIRE(failed.counters.value(Counter::DropStunParse) == 1);
+    REQUIRE(failed.client().mappings().empty());
+}
+
+TEST_CASE("stun_client: a stage ended by the random source keeps nothing open", "[stun_client]") {
+    // 두 번째 자리에서 난수가 실패하면 첫 자리는 이미 요청을 보냈다. fail() 이 그 자리를 거둬야
+    // 끝난 단계가 그 응답을 받아들이지 않는다. on_datagram 은 단계가 끝나도 일찍 돌아가지
+    // 않으므로 이 정리가 그 자리를 지키는 유일한 것이다.
+    LogCapture log;
+    Harness h(4, 2);
+    REQUIRE_FALSE(h.client().start(0));
+    REQUIRE(h.sent.size() == 1);
+
+    h.deliver(success_response(h.transaction_of(0), kMapped));
+    REQUIRE(h.client().phase() == StunPhase::Failed);
+    REQUIRE(h.client().mappings().empty());
+    REQUIRE(log.with_event("stun.result").empty());
+    REQUIRE(h.counters.value(Counter::DropStunParse) == 0);  // 거둔 자리의 응답이다
 }

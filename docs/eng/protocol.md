@@ -1528,10 +1528,26 @@ Of RFC 5389, only the following is implemented.
 
 | What came in | Counted | Why |
 |-----------|:---:|-----|
+| The transaction of a slot already finished in this attempt (a response was received, the deadline passed, or it was reaped when the stage ended) | **No** | Once a retransmission has been sent, receiving several responses is normal. A request still in flight on another slot at the moment the stage succeeded was also sent by us. If a normal path raises a drop counter, that counter cannot be read |
 | The transaction of a pending slot, but it failed the validation above | Yes | The response that slot was waiting for arrived unusable |
 | There is no pending slot at all (before querying, after the stage ends) | Yes | It is a STUN response we never asked for |
 | There are slots, but it is not the transaction of any of them | Yes | Same reason. We never asked for that transaction. A response too short to read the transaction ID from also belongs here |
-| The transaction of a slot already finished (a response was received or the deadline passed) | **No** | Once a retransmission has been sent, receiving several responses is normal. If a normal path raises a drop counter, that counter cannot be read |
+
+**The table is read from the top and the first matching row applies.** A transaction of a finished
+slot that arrives after the stage ends matches both the first and the third row, and the first row wins.
+
+**Finished slots are remembered for one attempt. They are not remembered across attempts.** The memory is
+cleared at one of two times.
+
+- If the attempt ends before STUN ends (`FAIL`, `leave`), it is cleared right then. "When an attempt
+  ends" in chapter 11 Timers also ends the STUN transactions in progress
+- If the attempt ends after STUN ends, the memory stays into the lobby and is cleared **when the next
+  attempt's STUN starts**
+
+A response of an earlier attempt that arrives after the memory is cleared does not match the first row
+and is counted. Remembering beyond the attempt would need its own cap or expiry for that list, and there
+is no basis for choosing one. What is lost is only that the counter may rise by a few right after an
+attempt is restarted quickly.
 
 What is caught at the classification stage is not this counter. A datagram with a wrong magic cookie is
 not classified as STUN and goes to `drop_unclassified` of chapter 7 Receive Classification.

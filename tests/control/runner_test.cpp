@@ -350,3 +350,57 @@ TEST_CASE("control_runner: host_report is interpreted with the echoed self peer 
     rig.runner->on_timer("control.host_report");
     REQUIRE(rig.submitted.size() == submitted_before);
 }
+
+TEST_CASE("control_runner: finished STUN slots are remembered until the next STUN starts",
+          "[control][runner]") {
+    // protocol.md 13장 세는 표의 기억 범위. STUN 이 끝난 뒤 시도가 끝나면 기억이 로비까지 남고,
+    // 다음 시도의 STUN 이 시작될 때 지운다. 지운 뒤 온 앞 시도의 응답은 센다.
+    Rig rig;
+    rig.command(LobbyCommandKind::kHost);
+    rig.reply(Op::kCreateRoom, respond(kIssued));
+    REQUIRE(rig.sent.size() == 2);
+    const Endpoint mapped(0xC6336401u, 40000);
+    const auto first = sangtachi::network::peek_transaction_id(rig.sent[0].bytes);
+    REQUIRE(first.has_value());
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto id = sangtachi::network::peek_transaction_id(rig.sent[i].bytes);
+        REQUIRE(id.has_value());
+        rig.runner->on_stun_datagram(rig.sent[i].to, stun_success(*id, mapped));
+    }
+    REQUIRE(rig.submitted.back().op == Op::kRegisterCandidate);
+
+    rig.command(LobbyCommandKind::kLeave);
+    // 로비에서 온 앞 시도의 재전송 응답. 끝난 자리의 트랜잭션이다.
+    rig.runner->on_stun_datagram(rig.sent[0].to, stun_success(*first, mapped));
+    REQUIRE(rig.counters.value(Counter::DropStunParse) == 0);
+
+    // 버려진 register_candidate 의 응답이 와야 다음 host 를 받는다 (concurrency.md 8장).
+    rig.reply(Op::kRegisterCandidate, respond("{\"accepted\":1,\"rejected\":0,\"ok\":true}"));
+    rig.command(LobbyCommandKind::kHost);
+    // 다음 시도는 시작했지만 STUN 은 아직이다. 기억이 남아 있다.
+    rig.runner->on_stun_datagram(rig.sent[0].to, stun_success(*first, mapped));
+    REQUIRE(rig.counters.value(Counter::DropStunParse) == 0);
+
+    rig.reply(Op::kCreateRoom, respond(kIssued));
+    REQUIRE(rig.sent.size() == 4);  // 다음 시도의 STUN 이 시작됐다
+
+    rig.runner->on_stun_datagram(rig.sent[0].to, stun_success(*first, mapped));
+    REQUIRE(rig.counters.value(Counter::DropStunParse) == 1);
+}
+
+TEST_CASE("control_runner: leaving during STUN forgets that attempt's transactions",
+          "[control][runner]") {
+    // STUN 이 끝나기 전에 시도가 끝나면 기억을 그 자리에서 지운다 (protocol.md 13장, 11장
+    // "시도가 끝나면"). 그 뒤 온 응답은 센다.
+    Rig rig;
+    rig.command(LobbyCommandKind::kHost);
+    rig.reply(Op::kCreateRoom, respond(kIssued));
+    const auto first = sangtachi::network::peek_transaction_id(rig.sent[0].bytes);
+    REQUIRE(first.has_value());
+
+    rig.command(LobbyCommandKind::kLeave);
+    REQUIRE(rig.runner->stun() == nullptr);
+    rig.runner->on_stun_datagram(rig.sent[0].to,
+                                 stun_success(*first, Endpoint(0xC6336401u, 40000)));
+    REQUIRE(rig.counters.value(Counter::DropStunParse) == 1);
+}

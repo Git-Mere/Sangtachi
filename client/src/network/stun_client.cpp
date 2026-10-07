@@ -342,9 +342,9 @@ void StunClient::on_timer(std::string_view timer_name, Millis now) {
 }
 
 void StunClient::on_datagram(const Endpoint& from, std::span<const std::byte> payload, Millis now) {
-    if (done()) {
-        return;
-    }
+    // **단계가 끝났어도 일찍 돌아가지 않는다.** 끝난 단계에는 대기 중인 자리가 없으므로 아래
+    // 판정이 그대로 protocol.md 13장의 세는 표가 된다. 끝난 자리의 트랜잭션이면 세지 않고,
+    // 그 밖의 것은 부른 적 없는 응답이라 센다. 여기서 돌아가면 뒤쪽도 세지 않게 된다.
     (void)from;  // 응답은 트랜잭션 ID 로만 잇는다 (헤더의 표)
 
     const auto peeked = peek_transaction_id(payload);

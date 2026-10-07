@@ -1,11 +1,14 @@
 #include "sangtachi/log.hpp"
 
+#include "log_capture.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
@@ -103,4 +106,28 @@ TEST_CASE("log: the guarantee is byte level, not unicode level", "[log]") {
     REQUIRE(got.find('\n') == std::string::npos);
     REQUIRE(got.find('\r') == std::string::npos);
     REQUIRE(got.find(' ') == std::string::npos);
+}
+
+TEST_CASE("log: an installed sink receives the line", "[log]") {
+    // 시험이 진단 로그를 보는 자리다 (log.hpp 의 LogSink). 줄바꿈 없는 한 줄을 받는다.
+    // 받는 곳이 없을 때의 표준 오류 경로는 cli-check, e2e, lobby-check 가 실제 프로세스의
+    // 표준 오류를 읽어 본다. 이 파일은 그것을 다시 보지 않는다.
+    sangtachi::testing::LogCapture capture;
+    const LogField fields[] = {field("server", std::string_view("a b"))};
+    sangtachi::emit(LogLevel::Warn, "stun.timeout", fields);
+
+    REQUIRE(capture.lines == std::vector<std::string>{"WARN stun.timeout server=a_b"});
+    REQUIRE(capture.with_event("stun.timeout").size() == 1);
+    REQUIRE(capture.with_event("stun").empty());  // 이벤트 키는 앞머리가 아니라 통째로 본다
+}
+
+TEST_CASE("log: removing a sink restores the one before it", "[log]") {
+    sangtachi::testing::LogCapture outer;
+    {
+        sangtachi::testing::LogCapture inner;
+        sangtachi::emit(LogLevel::Info, "inner", {});
+        REQUIRE(inner.lines.size() == 1);
+    }
+    sangtachi::emit(LogLevel::Info, "outer", {});
+    REQUIRE(outer.lines == std::vector<std::string>{"INFO outer"});
 }

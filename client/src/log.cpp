@@ -1,5 +1,6 @@
 #include "sangtachi/log.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <span>
@@ -7,6 +8,12 @@
 #include <string_view>
 
 namespace sangtachi {
+namespace {
+
+// 시험이 설치하는 받는 곳 (log.hpp). 제품 경로에서는 늘 비어 있다.
+std::atomic<LogSink*> g_sink{nullptr};
+
+}  // namespace
 
 std::string_view to_token(LogLevel level) noexcept {
     switch (level) {
@@ -58,8 +65,16 @@ std::string format_line(LogLevel level, std::string_view event,
     return line;
 }
 
+LogSink* set_log_sink(LogSink* sink) noexcept {
+    return g_sink.exchange(sink);
+}
+
 void emit(LogLevel level, std::string_view event, std::span<const LogField> fields) {
     std::string line = format_line(level, event, fields);
+    if (LogSink* sink = g_sink.load()) {
+        sink->write(line);
+        return;
+    }
     line.push_back('\n');
     // 한 번의 쓰기로 낸다. 두 번에 나누면 다른 스레드의 줄이 사이에 끼어들 수 있다.
     std::fwrite(line.data(), 1, line.size(), stderr);

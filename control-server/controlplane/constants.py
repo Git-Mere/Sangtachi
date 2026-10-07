@@ -26,5 +26,8 @@ MAX_INFLIGHT = 32
 MAX_REJECTING = 64
 LINGER_S = 1
 LINGER_MAX_BYTES = 8192
+DDB_CONNECT_TIMEOUT_S = 1
+DDB_READ_TIMEOUT_S = 1
+DDB_MAX_ATTEMPTS = 1
 
 OPS = ("create_room", "join_room", "register_candidate", "get_peers", "host_report")

@@ -209,8 +209,8 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
 - Python 제어 서버를 AWS EC2에 배포. systemd 서비스, 보안 그룹 TCP 8000. **배포 절차를 실제로
   한 번 돌린 뒤 도구로 넣고 문서는 가리킨다** (`control_plane.md` 7.6). 배포 환경과 계정 쪽
   확인 결과도 그 절에 있다
-  - 배포한 테이블에서 저장소 호출의 지연을 재고, 서버가 DynamoDB 를 부를 때의 시간 제한과 재시도
-    횟수를 정한다 (`control_plane.md` 10장). 그 전까지는 `boto3` 기본값이다
+  - 배포 도구는 `tools/cp-deploy/` 다. 서버가 DynamoDB 를 부를 때의 시간 제한과 재시도 횟수는
+    `control_plane.md` 7.6 설정과 배포가 갖는다
 - 방 생성 구현 (`create_room`, 멱등성 nonce)
 - 방 참가 구현 (`join_room`. 형식은 하나다. 재참가는 없다)
 - 가상 IP 할당 (`VIP#` 조건부 쓰기 선점)

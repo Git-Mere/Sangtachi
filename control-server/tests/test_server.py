@@ -818,7 +818,12 @@ def _free_port() -> int:
 
 
 class Blackhole:
-    """연결을 받고 아무것도 답하지 않는 TCP 서버. boto3 호출이 여기서 막힌다."""
+    """연결을 받고 응답을 아주 천천히 흘리는 TCP 서버. boto3 호출이 여기서 막힌다.
+
+    서버는 DynamoDB 호출에 1초 read 시간 제한을 건다(control_plane.md 7.6). 아무것도 보내지 않으면 1초 뒤
+    호출이 끝나 '막힌 dispatch' 가 성립하지 않는다. 그래서 헤더를 보낸 뒤 본문을 0.3초에 한 바이트씩 흘려
+    읽기마다의 시간 제한이 걸리지 않게 한다.
+    """
 
     def __init__(self):
         self.sock = socket.socket()
@@ -826,6 +831,7 @@ class Blackhole:
         self.sock.listen()
         self.port = self.sock.getsockname()[1]
         self.accepted: list[socket.socket] = []
+        self.closed = threading.Event()
         self.thread = threading.Thread(target=self._accept, daemon=True)
         self.thread.start()
 
@@ -836,8 +842,20 @@ class Blackhole:
             except OSError:
                 return
             self.accepted.append(conn)
+            threading.Thread(target=self._drip, args=(conn,), daemon=True).start()
+
+    def _drip(self, conn):
+        try:
+            conn.recv(65536)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-amz-json-1.0\r\n"
+                         b"Content-Length: 1000000\r\n\r\n")
+            while not self.closed.wait(0.3):
+                conn.sendall(b" ")
+        except OSError:
+            return
 
     def close(self):
+        self.closed.set()
         self.sock.close()
         for c in self.accepted:
             c.close()
@@ -896,7 +914,7 @@ def test_process_stops_without_waiting_for_dispatch(tmp_path):
     """7.6: 멈춤 신호 뒤 처리 중인 boto3 호출을 기다리지 않고 끝난다. 끝나기 전에 카운터 전량을 낸다.
 
     python -m controlplane 을 서브프로세스로 띄운다. 저장소 엔드포인트는 연결을 받고 답하지 않는 Blackhole 이라
-    create_room 의 dispatch 가 boto3 의 읽기 시간 제한(60초) 동안 막힌다. 자격 증명은 aws_isolation 이 넣은 가짜 값이다.
+    create_room 의 dispatch 가 응답 본문을 기다리며 막힌다. 자격 증명은 aws_isolation 이 넣은 가짜 값이다.
     """
     hole = Blackhole()
     env = dict(os.environ, SANGTACHI_CP_TABLE="t-stop", AWS_REGION="local-only",

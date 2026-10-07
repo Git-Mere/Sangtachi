@@ -116,9 +116,15 @@ def build_store(environ: Mapping[str, str]):
     """Store.from_env. 설정 검사를 통과한 뒤에도 클라이언트 생성이 값을 담은 예외를 낼 수 있다(boto3 의 리전, 엔드포인트
     오류). 어떤 예외든 값 없는 고정 문구의 ConfigError 로 바꾼다. 다음에 검사의 구멍이 또 있어도 값이 새지 않는다."""
     from .store import Store  # 실패하면 ConfigError 가 아니다. main 의 경계가 기동 실패로 받는다
+    from botocore.config import Config
 
+    from .constants import DDB_CONNECT_TIMEOUT_S, DDB_MAX_ATTEMPTS, DDB_READ_TIMEOUT_S
+
+    # control_plane.md 7.6 DynamoDB 호출. 재시도는 클라이언트의 몫이라(8.3) SDK 는 한 번만 보낸다.
+    config = Config(connect_timeout=DDB_CONNECT_TIMEOUT_S, read_timeout=DDB_READ_TIMEOUT_S,
+                    retries={"mode": "standard", "total_max_attempts": DDB_MAX_ATTEMPTS})
     try:
-        return Store.from_env(environ)
+        return Store.from_env(environ, config=config)
     except Exception:
         raise ConfigError(STORE_FAILED) from None
 

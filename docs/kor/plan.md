@@ -16,8 +16,9 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | EC2 에 배포하고 `roadmap.md` Phase 3 검증의 "배포" 묶음을 돌린다. 배포 절차는 실제로 한 번 돌린 뒤 도구로 넣는다 | 권한(`ConditionCheckItem`)과 용량 계산이 재지 않은 값이다. 트랜잭션 충돌 재시도는 DynamoDB local 이 충돌을 내지 않아 배포 테이블에서만 볼 수 있다. DynamoDB 호출의 시간 제한과 재시도 횟수도 여기서 정한다(`control_plane.md` 10장) |
-| 2 | 클라이언트의 `[control]` 스레드, 로비 명령, `FAIL` 줄 | `roadmap.md` Phase 3 작업의 클라이언트 쪽이다 |
+| 1 | 새 호출 설정을 `tools/cp-deploy/deploy.py` 로 다시 배포하고, 일부러 기동에 실패하는 릴리스로 되돌리기 경로를 한 번 돌린다 | 배포한 것은 `2cc0eef` 이고 호출 설정은 그 뒤 커밋이다. 되돌리기는 아직 돌려 보지 않은 절차다(`CLAUDE.md` 규칙 6) |
+| 2 | CloudWatch 용량 확인. 저장소 소유자가 콘솔에서 UTC 2026-10-07 02:45 ~ 02:49 의 테이블 지표를 본다 | 서버 역할에 CloudWatch 읽기 권한이 없다. 판정 기준은 `roadmap.md` Phase 3 검증의 배포 묶음 |
+| 3 | 클라이언트의 `[control]` 스레드, 로비 명령, `FAIL` 줄 | `roadmap.md` Phase 3 작업의 클라이언트 쪽이다 |
 
 **AWS 쪽 실제 값은 `deploy/aws.local.md` 에 있다.** 계정, 리전, Elastic IP, 인스턴스, 역할, 테이블
 이름이다. 공개 레포라 `.gitignore` 가 막고 이 기기에만 있다. SSH 키도 레포 루트에 ignore 된 채

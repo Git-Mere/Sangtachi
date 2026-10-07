@@ -60,6 +60,8 @@ PACKAGE = "controlplane"
 MUTANT_DIR = CP_ROOT / "tests" / "mutants"
 MUTANT_KEYS = frozenset({"id", "path", "old", "new", "kills", "why"})
 TIMEOUT_S = 120
+# 원본 시험은 kills 의 파일 전체를 한 번에 돌린다. --store 로 2분을 넘는다(실측 약 140초).
+BASELINE_TIMEOUT_S = 900
 _ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _REPORT = re.compile(r"^(FAILED|ERROR) (\S+?)(?: - .*)?$")
 _PASSED = re.compile(r"^PASSED (\S+)$")
@@ -223,13 +225,13 @@ def judge(exit_code: int | None, output: str, kills: tuple[str, ...]) -> Outcome
 
 
 def run_pytest(src: Path, targets: list[str], flags: list[str] | tuple[str, ...] = (),
-               report: str = "-rfE") -> tuple[int | None, str]:
+               report: str = "-rfE", timeout_s: float = TIMEOUT_S) -> tuple[int | None, str]:
     env = dict(os.environ, CP_SRC=str(src), PYTHONDONTWRITEBYTECODE="1")
     cmd = [sys.executable, "-m", "pytest", "-q", report, "--no-header", "-p", "no:cacheprovider", *flags,
            *targets]
     try:
         proc = subprocess.run(cmd, cwd=CP_ROOT, env=env, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=TIMEOUT_S)
+                              encoding="utf-8", errors="replace", timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:
         return None, (exc.stdout or "") if isinstance(exc.stdout, str) else ""
     return proc.returncode, proc.stdout + proc.stderr
@@ -263,7 +265,9 @@ def baseline(mutants: list[Mutant], flags: list[str] | tuple[str, ...] = ()) -> 
     files = sorted({k.split("::", 1)[0] for m in mutants for k in m.kills})
     with tempfile.TemporaryDirectory(prefix="cp-baseline-") as tmp:
         copy_package(Path(tmp))
-        code, out = run_pytest(Path(tmp), files, flags, report="-rA")
+        code, out = run_pytest(Path(tmp), files, flags, report="-rA", timeout_s=BASELINE_TIMEOUT_S)
+    if code is None:
+        return False, out + f"\n원본 시험이 {BASELINE_TIMEOUT_S}초 안에 끝나지 않았다"
     return code == 0, out
 
 

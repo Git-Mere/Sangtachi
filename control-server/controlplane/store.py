@@ -473,15 +473,26 @@ class Store:
             ConditionExpression=_REGISTER_IF, ExpressionAttributeValues=self._values({":list": candidates,
                                                                                   ":t": peer_token})))
 
-    def release_peer(self, room_id: str, peer_id: int, virtual_ip: str, host_peer_id: int) -> bool:
-        """host_report 회수 (departed). PEER#, 그 VIP#, 그 쌍의 PAIR# 를 지운다. 이미 없던 대상이면 False."""
+    def release_peer(self, room_id: str, peer_id: int, virtual_ip: str, host_peer_id: int,
+                     client_nonce: str | None = None) -> bool:
+        """host_report 회수 (departed). PEER#, 그 VIP#, 그 쌍의 PAIR#, 그 피어의 NONCE# 를 지운다.
+        이미 없던 대상이면 False.
+
+        NONCE# 는 서버 회수와 같이 조건 없는 delete 다. 그래서 회수된 피어가 같은 nonce 로 다시 오면 새
+        참가다. client_nonce 가 None 이면 부르는 쪽이 PEER# 의 client_nonce 를 읽지 못한 것이다. 그때는
+        NONCE# 만 건너뛰고 나머지는 지운다 (디렉터 결정. 피어를 남기는 것보다 낫다).
+        """
         sk = peer_sk(peer_id)
         items = [
             self._delete(room_id, sk, _IF_EXISTS),
             self._delete(room_id, vip_sk(virtual_ip)),
             self._delete(room_id, ops.pair_sk(host_peer_id, peer_id)),
         ]
-        return self._transact("release_peer", sk, items, (_PEER, _OTHER, _OTHER), _DELETE_PRIORITY) is None
+        layout = (_PEER, _OTHER, _OTHER)
+        if client_nonce is not None:
+            items.append(self._delete(nonce_pk(client_nonce), NONCE_SK))
+            layout = (*layout, _OTHER)
+        return self._transact("release_peer", sk, items, layout, _DELETE_PRIORITY) is None
 
     def reclaim_peer(self, room_id: str, peer_id: int, virtual_ip: str, client_nonce: str, now_ms: int) -> bool:
         """host_report 서버 회수. PEER#, 그 VIP#, 그 NONCE# 를 지운다. 조건이 실패하면 False

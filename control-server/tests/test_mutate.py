@@ -198,10 +198,26 @@ class TestRunPytest:
     def test_baseline_asks_for_pass_lines(self, monkeypatch, tmp_path):
         seen = {}
 
-        def fake_run_pytest(src, targets, flags=(), report="-rfE"):
+        def fake_run_pytest(src, targets, flags=(), report="-rfE", timeout_s=mutate.TIMEOUT_S):
             seen.update(flags=list(flags), report=report)
             return 0, ""
         monkeypatch.setattr(mutate, "run_pytest", fake_run_pytest)
         monkeypatch.setattr(mutate, "copy_package", lambda dest: None)
         mutate.baseline([Mutant("m", "controlplane/x.py", "a", "b", (K1,), "w")], ["--store"])
         assert seen == {"flags": ["--store"], "report": "-rA"}
+
+
+class TestBaselineTimeout:
+    def test_baseline_uses_its_own_timeout_and_says_so(self, monkeypatch):
+        # 원본 시험은 파일 전체라 변이 한 번보다 길다. 같은 상한을 쓰면 정상 원본이 '통과 못함' 으로 보인다.
+        seen = {}
+
+        def fake(src, targets, flags=(), report="-rfE", timeout_s=mutate.TIMEOUT_S):
+            seen["timeout_s"] = timeout_s
+            return None, "....."
+
+        monkeypatch.setattr(mutate, "run_pytest", fake)
+        ok, out = mutate.baseline([Mutant("m", "controlplane/x.py", "a", "b", (K1,), "w")])
+        assert not ok
+        assert seen["timeout_s"] == mutate.BASELINE_TIMEOUT_S > mutate.TIMEOUT_S
+        assert "끝나지 않았다" in out

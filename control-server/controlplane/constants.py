@@ -23,5 +23,8 @@ RATE_LIMIT_BUCKET = 10
 RATE_LIMIT_REFILL_PER_MIN = 10
 MAX_RATE_ENTRIES = 4096
 MAX_INFLIGHT = 32
+MAX_REJECTING = 64
+LINGER_S = 1
+LINGER_MAX_BYTES = 8192
 
 OPS = ("create_room", "join_room", "register_candidate", "get_peers", "host_report")

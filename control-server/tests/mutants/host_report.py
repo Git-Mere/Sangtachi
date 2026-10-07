@@ -1,11 +1,22 @@
 """4.6 host_report 표의 변이. 시험은 tests/test_host_report.py.
 
-확인 경합 표와 서버 회수 표의 store 행은 skip 이라 여기서 떨어뜨릴 수 없다. 저장소 계층이 생기면
-조건부 쓰기를 지우는 변이를 store.py 에 붙인다.
+확인 경합 표와 서버 회수 표의 store 행(needs="store")을 지키는 변이는 이 목록의 뒤쪽에 있다. --store 로
+돌린다. ops.Service 의 변이와 store.py 의 조건식 변이가 섞여 있다. 저장소 계층의 나머지 변이는
+tests/mutants/store.py, 연산의 나머지 변이는 tests/mutants/ops.py 다.
 """
 
 T = "tests/test_host_report.py::"
 P = "controlplane/ops.py"
+ST = "controlplane/store.py"
+
+
+def race(row):
+    return T + f"test_confirm_race[{row}]"
+
+
+def reclaim(row):
+    return T + f"test_reclaim_store[{row}]"
+
 
 MUTANTS = [
     {"id": "reclaim-boundary-strict", "path": P,
@@ -116,4 +127,71 @@ MUTANTS = [
      "old": "return isinstance(value, int) and not isinstance(value, bool)", "new": "return isinstance(value, int)",
      "kills": [T + "test_reclaim_read[peer-id-bool]", T + "test_reclaim_read[joined-at-bool]"],
      "why": "bool 을 정수로 읽는다. joined_at_ms=True 가 1ms 로 읽혀 회수된다"},
+
+    # ---------------------------------------------------------------- store 행 (확인 경합 표, 서버 회수 표)
+    {"id": "confirm-unconditional-write", "path": P,
+     "old": ("            if not confirm_allowed(host, other, view.pairs.get(pair_sk(host_id, target))):\n"
+             "                continue\n"
+             "            result = self.store.confirm_pair(room_id, host_id, target, self._now_ms(), self._mono_ns(),\n"
+             "                                             self._boot_id(), view.room[\"expires_at_ms\"])\n"),
+     "new": ("            self.store.client.put_item(TableName=self.store.table, Item=self.store._values({\n"
+             "                \"pk\": room_id, \"sk\": pair_sk(host_id, target), \"ready_at_wall_ms\": self._now_ms(),\n"
+             "                \"ready_at_mono_ns\": self._mono_ns(), \"ready_boot_id\": self._boot_id(),\n"
+             "                \"punch_delay_ms\": PUNCH_DELAY_MS, \"ttl\": storage.ttl_for(view.room[\"expires_at_ms\"])}))\n"
+             "            result = storage.CONFIRMED\n"),
+     "kills": [race("unconditional-write-impl"), race("h-confirm-then-p"), race("h-twice-same-p")],
+     "why": "확인 경합 표 마지막 행. 3번을 조건 없이 쓰는 구현은 후보 없는 쌍에도 PAIR# 를 쓴다"},
+    {"id": "confirm-no-precheck", "path": P,
+     "old": "if not confirm_allowed(host, other, view.pairs.get(pair_sk(host_id, target))):\n                continue",
+     "new": "if False:\n                continue",
+     "kills": [race("h-confirm-then-p"), race("h-twice-same-p")],
+     "why": "읽은 값으로 3번의 조건을 보지 않고 쓰기부터 시도한다. 조건이 실패해도 쓰기 용량을 쓴다 (6.3)"},
+    {"id": "confirm-pair-read-ignored", "path": P,
+     "old": "view.pairs.get(pair_sk(host_id, target))", "new": "None",
+     "kills": [race("h-twice-same-p")],
+     "why": "3번의 '그 쌍의 PAIR# 가 없으면' 을 보지 않는다. 이미 확인된 쌍에 쓰기를 다시 시도한다"},
+    {"id": "confirm-before-departed", "path": P,
+     "old": ("        self._release_departed(room_id, view, host_id, departed, released, removed)\n"
+             "        self._reclaim(room_id, view, host_id, now, {*departed, *released}, released, removed)\n"
+             "        confirmed = self._confirm(room_id, view, host, confirm, skip={*departed, *released})\n"),
+     "new": ("        confirmed = self._confirm(room_id, view, host, confirm, skip=set())\n"
+             "        self._release_departed(room_id, view, host_id, departed, released, removed)\n"
+             "        self._reclaim(room_id, view, host_id, now, {*departed, *released}, released, removed)\n"),
+     "kills": [race("departed-and-confirm-same-p")],
+     "why": "2번이 3번보다 먼저다. 끝난 세션을 준비 완료로 기록하고 pair.ready 를 낸다"},
+    {"id": "confirmed-includes-already", "path": P,
+     "old": "if result == storage.CONFIRMED:", "new": "if result in (storage.CONFIRMED, storage.ALREADY_CONFIRMED):",
+     "kills": [T + "test_confirm_race_concurrent_host_report"],
+     "why": "confirmed 는 이번 호출로 PAIR# 를 새로 쓴 상대다. pair.ready 가 쌍마다 한 번이어야 한다"},
+    {"id": "pair-ready-not-logged", "path": P,
+     "old": "log.emit(\"INFO\", \"pair.ready\",", "new": "(lambda *x, **y: None)(\"INFO\", \"pair.ready\",",
+     "kills": [race("p-then-h-confirm"), race("h-twice-same-p")],
+     "why": "7.5 pair.ready 를 내지 않는다. 준비 완료 1회 기록을 로그로 볼 수 없다"},
+    {"id": "response-stale-for-race", "path": P,
+     "old": "        others = [p for pid, p in after.peers.items() if pid != host_id]\n",
+     "new": "        after = view\n        others = [p for pid, p in after.peers.items() if pid != host_id]\n",
+     "kills": [race("p-then-h-confirm"), race("departed-and-confirm-same-p")],
+     "why": "5번 읽기가 쓰기 전의 것이다. 확인한 쌍이 ready: false 로, 회수한 피어가 peers 에 나간다"},
+    {"id": "reclaim-released-even-if-not", "path": P,
+     "old": "if self.store.reclaim_peer(room_id, target, vip, peer[\"client_nonce\"], now):",
+     "new": "if self.store.reclaim_peer(room_id, target, vip, peer[\"client_nonce\"], now) or True:",
+     "kills": [reclaim("registers-between-read-and-delete")],
+     "why": "삭제 조건이 실패했는데 released 에 담고 peer.released 를 낸다"},
+    {"id": "reclaim-skipped-by-ops", "path": P,
+     "old": "elif verdict == RECLAIM:", "new": "elif verdict == RECLAIM and False:",
+     "kills": [reclaim("join-retry-with-reclaimed-nonce")],
+     "why": "서버 회수를 하지 않는다. 회수된 피어의 nonce 가 남아 새 참가가 되지 않는다"},
+    {"id": "race-store-reclaim-ignores-candidates", "path": ST,
+     "old": "(attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff",
+     "new": "(attribute_not_exists(candidates) OR size(candidates) >= :zero) AND joined_at_ms <= :cutoff",
+     "kills": [reclaim("registers-between-read-and-delete")],
+     "why": "서버 회수 표 registers-between-read-and-delete. 후보가 비었는지를 삭제 조건에 넣지 않는 구현이 이 행에서 걸린다"},
+    {"id": "race-store-reclaim-keeps-nonce", "path": ST,
+     "old": "            self._delete(nonce_pk(client_nonce), NONCE_SK),\n", "new": "",
+     "kills": [reclaim("join-retry-with-reclaimed-nonce")],
+     "why": "회수할 때 NONCE# 를 지우지 않는다. 같은 nonce 의 join_room 이 새 참가가 아니게 된다"},
+{"id": "confirm-revisits-released", "path": P,
+     "old": "            if target in skip:\n                continue  # 2번이 이겼다\n", "new": "",
+     "kills": [race("departed-and-confirm-same-p")],
+     "why": "2번이 처리한 피어를 3번이 1번의 낡은 값으로 다시 판정한다. 쓰기를 시도한다"},
 ]

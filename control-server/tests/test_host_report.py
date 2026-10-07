@@ -2,22 +2,24 @@
 
 표는 이 파일이 출처다. 행을 고치려면 여기를 고친다. 변이는 tests/mutants/host_report.py.
 
-needs="store" 인 행은 DynamoDB local 과 조건부 쓰기, 쓰기 직후 지연 주입이 있어야 돈다. 지금은
-그 계층이 없으므로 행만 옮겨 두고 skip 한다. 저장소를 흉내 내지 않는다.
+needs="store" 인 행은 DynamoDB local 에서 ops.Service 로 돈다 (--store). 순서는 store.on_write 의
+"before" 에서 다른 연산을 끼워 넣어 만든다. 하네스(Env)는 tests/test_ops.py 의 것을 쓴다.
 """
 
 import pytest
 
-from controlplane.constants import JOIN_REGISTER_GRACE_S
+from controlplane.constants import JOIN_REGISTER_GRACE_S, PUNCH_DELAY_MS
 from controlplane.ops import KEEP, RECLAIM, SKIP, confirm_allowed, reclaim_verdict
+from test_ops import CAND, CAND_H, NOW, code_of, logs, env, pair_of  # noqa: F401 - logs, env 는 픽스처다
 
-STORE_SKIP = "store.py 와 DynamoDB local 이 생기면 돈다 (plan 2단계). 지금은 표 행만 옮겨 두었다"
 
-
-def params(table):
+def params(table, needs=None):
+    """needs 가 주어지면 그 표시의 행만, 아니면 표시 없는 행만 낸다."""
     out = []
     for c in table:
-        marks = [pytest.mark.store, pytest.mark.skip(reason=STORE_SKIP)] if c.get("needs") == "store" else []
+        if c.get("needs") != needs:
+            continue
+        marks = [pytest.mark.store] if c.get("needs") == "store" else []
         out.append(pytest.param(c, id=c["id"], marks=marks))
     return out
 
@@ -54,9 +56,87 @@ CONFIRM_RACE = [
 ]
 
 
-@pytest.mark.parametrize("case", params(CONFIRM_RACE))
-def test_confirm_race(case):
-    pytest.fail("store 시험이 아직 없다")  # pragma: no cover
+def _pair_lines(env):
+    return env.events("pair.ready")
+
+
+@pytest.mark.parametrize("case", params(CONFIRM_RACE, "store"))
+def test_confirm_race(env, case):
+    rid = case["id"]
+    host = env.create()
+    player = env.join(host)
+    env.register(host, cands=CAND_H)
+    pid = player["peer_id"]
+    if rid == "p-then-h-confirm":
+        env.register(player)
+        result = env.report(host, confirm=[pid])
+        assert result["confirmed"] == [pid]
+        assert result["peers"][0]["ready"] is True          # 5번 읽기가 본 것. 호스트는 펀치로 간다
+    elif rid == "h-confirm-then-p":
+        env.writes.clear()
+        result = env.report(host, confirm=[pid])
+        assert result["confirmed"] == [] and result["peers"][0]["ready"] is False
+        assert env.labels("confirm_pair") == []              # 3번의 조건이 안 맞으면 쓰기를 시도하지 않는다
+        env.register(player)
+        assert pair_of(env, host, host, player) is None
+        assert _pair_lines(env) == []
+        assert env.report(host, confirm=[pid])["confirmed"] == [pid]   # 다음 주기에 다시 confirm
+        assert len(_pair_lines(env)) == 1
+        return
+    elif rid == "h-without-confirm":
+        env.register(player)
+        result = env.report(host)
+        assert result["confirmed"] == []
+        assert result["peers"] == [{"peer_id": pid, "virtual_ip": player["virtual_ip"], "ready": False}]
+    elif rid == "h-twice-same-p":
+        env.register(player)
+        first = env.report(host, confirm=[pid])
+        before = pair_of(env, host, host, player)
+        env.clock.now += 5_000
+        env.clock.mono += 5_000_000_000
+        second = env.report(host, confirm=[pid])
+        assert first["confirmed"] == [pid] and second["confirmed"] == []
+        assert pair_of(env, host, host, player) == before
+        assert len(env.labels("confirm_pair")) == 1   # 3번. PAIR# 가 이미 있으면 쓰기를 시도하지 않는다
+    elif rid == "departed-and-confirm-same-p":
+        env.register(player)
+        env.writes.clear()
+        result = env.report(host, departed=[pid], confirm=[pid])
+        assert result["released"] == [pid] and result["confirmed"] == []
+        assert env.labels("confirm_pair") == []   # 회수가 이긴다. 3번이 그 피어를 다시 판정하지 않는다
+        assert result["peers"] == []                          # 5번 읽기: P 없음
+    elif rid == "unconditional-write-impl":
+        # 후보 없는 상대를 confirm 한다. 조건 없이 쓰는 구현은 여기서 PAIR# 를 쓰고 pair.ready 를 낸다.
+        result = env.report(host, confirm=[pid])
+        assert result["confirmed"] == []
+        assert pair_of(env, host, host, player) is None
+        assert _pair_lines(env) == []
+        return
+    else:
+        pytest.fail(f"모르는 행 {rid}")
+    writes = case["pair_writes"]
+    assert len(_pair_lines(env)) == writes
+    assert (pair_of(env, host, host, player) is not None) is (writes == 1 and rid != "departed-and-confirm-same-p")
+    if writes:
+        assert _pair_lines(env) == [f"INFO pair.ready host_peer_id={host['peer_id']} peer_id={pid} "
+                                    f"punch_delay_ms={PUNCH_DELAY_MS}"]
+
+
+@pytest.mark.store
+def test_confirm_race_concurrent_host_report(env):
+    """h-twice-same-p 의 경합 판. 두 확인이 둘 다 PAIR# 없음을 읽은 뒤 쓴다. 저장소 조건이 하나만 남긴다."""
+    host = env.create()
+    player = env.join(host)
+    env.register(host, cands=CAND_H)
+    env.register(player)
+    inner = {}
+    env.once("confirm_pair", lambda: inner.update(env.report(host, confirm=[player["peer_id"]])))
+    outer = env.report(host, confirm=[player["peer_id"]])
+    assert inner["confirmed"] == [player["peer_id"]] and outer["confirmed"] == []
+    assert outer["peers"][0]["ready"] is True
+    assert len(_pair_lines(env)) == 1
+    assert env.labels("confirm_pair").count(f"PAIR#{min(host['peer_id'], player['peer_id'])}-"
+                                            f"{max(host['peer_id'], player['peer_id'])}") == 2
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +226,39 @@ RECLAIM_CASES = [
 @pytest.mark.parametrize("case", params(RECLAIM_CASES))
 def test_reclaim(case):
     assert reclaim_verdict(case["peer"], HOST_ID, case["now"]) == (case["expect"], case["reason"])
+
+
+@pytest.mark.parametrize("case", params(RECLAIM_CASES, "store"))
+def test_reclaim_store(env, case):
+    rid = case["id"]
+    host = env.create()
+    nonce = env.nonce()
+    player = env.join(host, nonce)
+    pid = player["peer_id"]
+    env.clock.now = NOW + G + 1   # 유예가 지났다 (now > J + G)
+    if rid == "registers-between-read-and-delete":
+        # 1번에서 후보 없음을 읽은 뒤, 서버 회수의 삭제 직전에 플레이어가 등록한다.
+        env.once("reclaim_peer", lambda: env.register(player))
+        result = env.report(host)
+        assert result["released"] == []
+        assert env.labels("reclaim_peer") == [f"PEER#{pid}"]   # 지우려 했고 조건이 막았다
+        assert env.raw(host["room_id"], f"PEER#{pid}")["candidates"] == CAND
+        assert env.raw(f"NONCE#{nonce}", "NONCE") is not None
+        assert env.events("peer.released") == []
+        assert [p["peer_id"] for p in result["peers"]] == [pid]
+    elif rid == "join-retry-with-reclaimed-nonce":
+        result = env.report(host)
+        assert result["released"] == [pid]
+        assert env.events("peer.released") == [
+            f"INFO peer.released peer_id={pid} virtual_ip={player['virtual_ip']} by=server"]
+        assert env.raw(f"NONCE#{nonce}", "NONCE") is None
+        again = env.join(host, nonce)
+        assert again["peer_id"] != pid and again["peer_token"] != player["peer_token"]
+        assert again["virtual_ip"] == "10.100.0.2"           # 2.5 배정 순서. 비었으므로 같은 값이 나온다
+        assert env.raw(f"NONCE#{nonce}", "NONCE")["peer_id"] == again["peer_id"]
+        assert code_of(lambda: env.register(player)) == "unauthorized"
+    else:
+        pytest.fail(f"모르는 행 {rid}")
 
 
 # ---------------------------------------------------------------------------

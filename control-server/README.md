@@ -5,9 +5,8 @@ Sangtachi 제어 서버. 설계의 출처는 [`docs/kor/control_plane.md`](../do
 
 ## 지금 있는 것
 
-`controlplane/` 에는 케이스 표가 판정하는 순수한 부분과 저장소 계층(`store.py`)이 있다. 수락
-루프와 `ops.dispatch` 는 아직 없다. 그래서 `test_host_report.py` 의 `needs="store"` 8행은
-`--store` 를 줘도 건너뛴다.
+`controlplane/` 에 서버 전체가 있다. 수락 루프(`server.py`), 연산(`ops.py`), 저장소 계층
+(`store.py`), 진입점(`__main__.py`)이다. 배포 절차는 아직 없다(`control_plane.md` 7.6).
 
 | 파일 | 무엇 |
 |------|------|
@@ -39,8 +38,10 @@ py -3.14 -m venv .venv
 - `mutate.py` 를 `--store` 없이 돌리면 저장소 변이의 행이 원본에서 건너뛰어지므로 판정하지 않고
   멈춘다(종료 코드 2). 저장소 변이가 없는 표만 줄 때는 `--store` 없이 돈다
 - 변이마다 pytest 를 새 프로세스로 띄우고, 그 변이의 `kills` 행만 원본과 변이로 한 번씩 돌린다.
-  pytest 실행 한 번에 상한 120초가 걸려 있다
-- `-j N` 으로 N 개씩 동시에 돈다. 기본값 8. 전체(323건)가 `--store -j 8` 로 약 3분 걸렸다
+  그 pytest 실행 한 번에 상한 120초가 걸려 있다
+- 변이를 넣기 전에 kills 의 파일 전체를 원본으로 한 번 돌린다. 이 실행만 상한이 900초다.
+  `--store` 로 약 140초 걸린다
+- `-j N` 으로 N 개씩 동시에 돈다. 기본값 8. 전체(524건)가 `--store -j 8` 로 약 7분 걸렸다
 - DynamoDB local 은 테이블 생성이 동시에 몰리면 `InternalFailure` 를 낸다. 시험 하네스의 관리용
   클라이언트가 재시도로 받는다
 
@@ -72,3 +73,22 @@ docker stop sangtachi-ddb
   `control_plane.md` 7.6 설정과 배포에 있다
 
 저장소 시험을 돌리는 방법은 위 "시험" 절에 있다.
+
+## 로컬에서 서버 띄우기
+
+위 DynamoDB local 이 떠 있고 테이블이 있어야 한다. 테이블은 `control_plane.md` 6.2 의 키 둘(`pk`,
+`sk`)과 TTL 속성 `ttl` 로 만든다. 아래는 실제로 쓴 환경 변수와 값이다. Git Bash 에서
+`control-server/` 를 현재 폴더로 두고 띄웠다.
+
+```text
+export AWS_ACCESS_KEY_ID=fakeLocalOnly AWS_SECRET_ACCESS_KEY=fakeLocalOnly
+export AWS_REGION=us-west-2 AWS_EC2_METADATA_DISABLED=true
+export SANGTACHI_CP_TABLE=cpE2E SANGTACHI_CP_ENDPOINT=http://127.0.0.1:8001 SANGTACHI_CP_PORT=18000
+.venv/Scripts/python -m controlplane
+```
+
+- 가짜 키는 `SANGTACHI_CP_ENDPOINT` 를 루프백으로 줄 때만 쓴다. 이 변수를 빼면 요청이 실제 AWS 로
+  간다
+- DynamoDB local 은 액세스 키 ID 에 영문자와 숫자만 받는다
+- 첫 줄로 `INFO server.started bind=0.0.0.0 port=18000` 이 나온다
+- `curl` 로 연산 다섯을 차례로 불러 응답과 로그를 확인했다. 로그에 방 코드, 토큰, nonce 가 없었다

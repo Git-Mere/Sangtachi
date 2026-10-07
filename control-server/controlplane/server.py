@@ -13,20 +13,28 @@ import json
 import re
 import time
 from collections import Counter
+from contextlib import AbstractAsyncContextManager
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Callable
+from typing import Callable, Mapping
 
 from .constants import (
     MAX_BODY_BYTES,
     MAX_HEADER_BYTES,
+    MAX_INFLIGHT,
+    MAX_REJECTING,
+    LINGER_MAX_BYTES,
+    LINGER_S,
     MAX_RATE_ENTRIES,
     OPS,
     RATE_LIMIT_BUCKET,
     RATE_LIMIT_REFILL_PER_MIN,
     SERVER_READ_TIMEOUT_S,
 )
+from .clock import FALLBACK_COUNTER
 from .errors import OpError
+from . import log
 
 
 @dataclass(frozen=True)
@@ -279,10 +287,12 @@ async def handle_request(
     dispatch: Dispatch,
     counters: Counter,
     read_timeout_s: float = SERVER_READ_TIMEOUT_S,
+    seen: dict | None = None,
 ) -> bytes | None:
     """연결 하나의 요청을 읽고 응답 바이트를 돌려준다. None 은 응답 없이 닫는다는 뜻이다.
 
     dispatch 는 연산 필드 dict 를 돌려주거나 OpError 를 던진다. 블로킹이므로 스레드로 보낸다.
+    seen 을 주면 파싱이 끝난 요청의 연산 이름을 seen["op"] 에 적는다 (7.5 http.request 의 op).
     """
     try:
         try:
@@ -294,6 +304,8 @@ async def handle_request(
             return None
         except Closed:
             return None
+        if seen is not None:
+            seen["op"] = req.op
         if rate.exhausted(src):
             counters["rate_limited"] += 1
             return error_response(OpError("rate_limited"))
@@ -307,3 +319,179 @@ async def handle_request(
     except Exception:
         counters["internal_error"] += 1
         return error_response(OpError("internal"))  # 예외 내용을 본문에 싣지 않는다
+
+
+# ---------------------------------------------------------------- 7.2 수락 루프, 7.5 로그와 카운터
+
+BIND_HOST = "0.0.0.0"  # control_plane.md 3.2 주소 표. IPv4 전체. 127.0.0.1 이면 밖에서 닿지 않는다 (windows-prereq.md 6절)
+COUNTER_PERIOD_S = 60  # 7.5 "60초마다"
+# 7.5 카운터 여섯. 이 순서로 찍는다. elapsed_wall_fallback 은 ops 쪽(7.4 시계)이 센다.
+COUNTER_NAMES = ("http_read_timeout", "internal_error", "rate_limited", "rate_table_full", FALLBACK_COUNTER,
+                 "unavailable")
+_STATUS_LINE = re.compile(rb"HTTP/1\.1 ([0-9]{3}) ")
+
+
+def _status_and_error(out: bytes) -> tuple[int, str]:
+    """response() 가 만든 바이트에서 (상태, 오류 코드). 성공이면 오류 코드는 '-' 다 (7.5)."""
+    status = int(_STATUS_LINE.match(out).group(1))
+    if status == 200:
+        return status, "-"
+    return status, json.loads(out.partition(_HEAD_END)[2])["error"]
+
+
+class Server:
+    """한 프로세스, 이벤트 루프 하나, 스레드 풀 하나 (7.2). 속도 제한 표와 카운터를 여기 하나만 둔다.
+
+    dispatch 는 7.2 "ops.dispatch 의 계약" 이다. service_counters 는 ops 쪽 카운터의 사본을 돌려주는 함수
+    (ops.Service.counters) 이고 elapsed_wall_fallback 을 거기서 읽는다. 함수가 없거나 그 키가 없으면 0 이다.
+    clock 은 http.request 의 ms 를 재는 초 단위
+    단조 시계다. 시간 값과 상한은 시험이 줄이려고 주입한다.
+
+    요청을 다 읽지 않은 채 답하는 경로(503, 그리고 3.3 파싱 실패)는 응답 뒤에 lingering close 를 한다
+    (RFC 9112 9.6). 쓰기 쪽을 먼저 닫고, 남은 입력을 linger_s 동안 LINGER_MAX_BYTES 까지 읽어 버린 뒤 닫는다.
+    읽지 않은 입력이 남은 채 닫으면 OS 가 RST 를 보내고, 상대는 이미 받은 응답을 읽기 전에 연결 오류를 받는다.
+
+    503 으로 거절하는 연결은 inflight 밖이다. 그 수를 max_rejecting 으로 막는다. 거절 중인 연결이 그만큼이면
+    새 연결은 응답 없이 끊고(abort) unavailable 을 올린다.
+
+    dispatch 는 이 Server 의 스레드 풀(max_inflight 개)에서 돈다. serve 가 그 풀을 이벤트 루프의 기본 실행기로
+    건다. handle_request 의 asyncio.to_thread 가 그 풀로 간다.
+    """
+
+    def __init__(
+        self,
+        dispatch: Dispatch,
+        *,
+        service_counters: Callable[[], Mapping[str, int]] | None = None,
+        read_timeout_s: float = SERVER_READ_TIMEOUT_S,
+        write_timeout_s: float = SERVER_READ_TIMEOUT_S,  # 3.4 "응답 송신에도 같은 5초"
+        max_inflight: int = MAX_INFLIGHT,
+        max_rejecting: int = MAX_REJECTING,
+        linger_s: float = LINGER_S,
+        timeout: Callable[[float], AbstractAsyncContextManager] = asyncio.timeout,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.dispatch = dispatch
+        self.counters: Counter = Counter()
+        self.rate = RateTable(counters=self.counters)
+        self.service_counters = service_counters
+        self.read_timeout_s = read_timeout_s
+        self.write_timeout_s = write_timeout_s
+        self.max_inflight = max_inflight
+        self.max_rejecting = max_rejecting
+        self.pool = ThreadPoolExecutor(max_workers=max_inflight or 1, thread_name_prefix="cp-dispatch")
+        self.linger_s = linger_s
+        self._timeout = timeout  # 링거의 시간 제한 장치. 시험이 넘긴 값을 보려고 주입한다
+        self._clock = clock
+        self.inflight = 0
+        self.rejecting = 0
+        self.listening = False  # 리슨이 성공했는가. 기동 실패와 그 뒤의 실패를 가른다 (__main__)
+
+    # ------------------------------------------------------------ 카운터
+
+    def counter_values(self) -> dict[str, int]:
+        """7.5 카운터 여섯의 현재 값. 0 인 것도 넣는다."""
+        ext = self.service_counters() if self.service_counters is not None else {}
+        out = {}
+        for name in COUNTER_NAMES:
+            out[name] = ext.get(name, 0) if name == FALLBACK_COUNTER else self.counters[name]
+        return out
+
+    def emit_counters(self) -> None:
+        for name, value in self.counter_values().items():
+            log.emit("INFO", "counter", name=name, value=value)
+
+    async def _tick(self, period_s: float) -> None:
+        while True:
+            await asyncio.sleep(period_s)
+            self.emit_counters()
+
+    # ------------------------------------------------------------ 연결 하나
+
+    async def on_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        start = self._clock()
+        peer = writer.get_extra_info("peername")
+        src = peer[0] if isinstance(peer, tuple) and peer else "-"
+        try:
+            if self.inflight >= self.max_inflight:
+                # 수락 직후, 파싱 전이다. 요청을 읽지 않고 저장소를 건드리지 않는다 (7.2).
+                self.counters["unavailable"] += 1
+                if self.rejecting >= self.max_rejecting:
+                    writer.transport.abort()  # 거절할 자리도 없다. 응답 없이 끊는다
+                    return
+                self.rejecting += 1
+                try:
+                    if await self._answer(writer, error_response(OpError("unavailable")), "-", src, start):
+                        await self._linger(reader, writer)
+                finally:
+                    self.rejecting -= 1
+                return
+            self.inflight += 1
+            try:
+                seen: dict = {}
+                out = await handle_request(reader, src, rate=self.rate, dispatch=self.dispatch,
+                                           counters=self.counters, read_timeout_s=self.read_timeout_s, seen=seen)
+                if out is not None and await self._answer(writer, out, seen.get("op", "-"), src, start):
+                    if "op" not in seen:  # 파싱이 끝나지 않았다. 요청 바이트가 남아 있을 수 있다
+                        await self._linger(reader, writer)
+            finally:
+                self.inflight -= 1
+        finally:
+            writer.close()
+
+    async def _answer(self, writer: asyncio.StreamWriter, out: bytes, op: str, src: str, start: float) -> bool:
+        """응답을 보내고 http.request 한 줄을 남긴다. 송신에 write_timeout_s 를 건다 (3.4).
+
+        시간 안에 다 못 보냈거나 상대가 끊었으면 남은 바이트를 버리고 연결을 끊는다. close 는 버퍼를 다
+        보낼 때까지 연결을 붙들고 있으므로 abort 를 쓴다. 줄에는 연산 이름, 상태, 오류 코드, 출발지,
+        경과만 싣는다. 요청 바이트는 싣지 않는다 (7.5). 다 보냈으면 True.
+        """
+        writer.write(out)
+        sent = True
+        try:
+            await asyncio.wait_for(writer.drain(), self.write_timeout_s)
+        except (TimeoutError, OSError):
+            writer.transport.abort()
+            sent = False
+        status, error = _status_and_error(out)
+        ms = int((self._clock() - start) * 1000)
+        log.emit("INFO", "http.request", op=op, status=status, error=error, src=src, ms=ms)
+        return sent
+
+    async def _linger(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """lingering close. 상대가 닫거나, linger_s 가 지나거나, LINGER_MAX_BYTES 를 읽으면 끝난다."""
+        left = LINGER_MAX_BYTES
+        try:
+            writer.write_eof()
+            async with self._timeout(self.linger_s):
+                while left > 0:
+                    chunk = await reader.read(left)
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+        except (TimeoutError, OSError):
+            pass
+
+    # ------------------------------------------------------------ 수락 루프
+
+    async def serve(self, host: str, port: int, stop: asyncio.Event, *,
+                    counter_period_s: float = COUNTER_PERIOD_S,
+                    on_ready: Callable[[int], None] | None = None) -> None:
+        """stop 이 켜지거나 이 태스크가 취소될 때까지 받는다. 끝날 때 카운터 전량을 한 번 더 낸다.
+
+        on_ready 는 bind 한 포트를 받는다. port 0 으로 띄운 시험이 쓴다.
+        """
+        asyncio.get_running_loop().set_default_executor(self.pool)
+        srv = await asyncio.start_server(self.on_connection, host, port)
+        bound = srv.sockets[0].getsockname()[1]
+        self.listening = True
+        log.emit("INFO", "server.started", bind=host, port=bound)
+        ticker = asyncio.create_task(self._tick(counter_period_s))
+        try:
+            if on_ready is not None:
+                on_ready(bound)
+            await stop.wait()
+        finally:
+            ticker.cancel()
+            srv.close()
+            self.emit_counters()

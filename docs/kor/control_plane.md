@@ -124,7 +124,8 @@ ABCDEFGHJKLMNPQRSTUVWXYZ23456789      (32자. I, O, 0, 1 을 뺐다)
 
 - `secrets.randbits(32)` 로 뽑고 0 이면 다시 뽑는다
 - 방 안 유일성은 `PEER#<peer_id>` 항목의 조건부 쓰기(6.3)가 보장한다
-- 충돌하면 다시 뽑고 시도 상한은 `MAX_PEER_ID_ATTEMPTS`(4)다
+- 충돌하면 다시 뽑고 시도 상한은 `MAX_PEER_ID_ATTEMPTS`(4)다. 상한은 요청 하나에 하나다. `join_room`
+  이 풀의 다음 주소로 넘어가도 새로 주지 않는다
 
 순차 할당을 쓰지 않는다. 근거는 아래 "왜 이렇게 정했나" 에 있다.
 
@@ -201,6 +202,9 @@ RATE_LIMIT_BUCKET         = 10          # 출발지별 실패 예산 (6.4)
 RATE_LIMIT_REFILL_PER_MIN = 10          # 분당 보충 (6.4)
 MAX_RATE_ENTRIES          = 4096        # 속도 제한 표 상한 (6.4)
 MAX_INFLIGHT              = 32          # 동시 처리 요청 상한 (7.2)
+LINGER_S                  = 1           # 다 읽지 않은 요청에 답한 뒤 남은 입력을 버리며 기다리는 상한 (3.4)
+LINGER_MAX_BYTES          = 8192        # 그동안 버리는 바이트 상한 (3.4)
+MAX_REJECTING             = 64          # 503 으로 거절하는 중인 연결의 상한 (7.2)
 ```
 
 `MAX_CANDIDATES` 와 `PUNCH_DELAY_MS` 는 [`protocol.md`](protocol.md) 가 소유하는 값의
@@ -332,7 +336,14 @@ Connection: close\r\n
 
 ### 3.4 서버 쪽 시간 제한
 
-연결 수락부터 요청 한 건을 다 읽기까지 `SERVER_READ_TIMEOUT_S`(5초)다. 넘기면 응답 없이 닫고 `http_read_timeout` 을 올린다. 응답 송신에도 같은 5초를 건다.
+연결 수락부터 요청 한 건을 다 읽기까지 `SERVER_READ_TIMEOUT_S`(5초)다. 넘기면 응답 없이 닫고 `http_read_timeout` 을 올린다. 응답 송신에도 같은 5초를 건다. 송신이 그 안에 끝나지 않으면 남은 바이트를 버리고 연결을 끊는다(abort). 카운터는 없다.
+
+**요청을 다 읽지 않은 채 답하는 경로는 바로 닫지 않는다.** `503`, `413`, `431` 과 그 밖의 파싱 실패가 그렇다. 응답을 보낸 뒤 쓰기 쪽을 먼저 닫고, 남은 입력을 `LINGER_S`(1초) 또는 `LINGER_MAX_BYTES`(8192) 까지 읽어 버린 다음 닫는다.
+
+> **왜.** 읽지 않은 바이트가 수신 버퍼에 남은 채 닫으면 OS 가 RST 를 보내고, 클라이언트는 이미 도착한 응답을 읽기 전에 연결 재설정 오류를 받을 수 있다. RFC 9112 의 9.6 절이 같은 문제를 다룬다. 개발 기기(Windows)에서 쟀다. 이 처리 없이 닫으면 `503` 과 `413` 을 20번씩 보내 20번 모두 응답 대신 연결 재설정을 받고, 이 처리가 있으면 20번 모두 응답을 받는다.
+
+- 파싱 실패 뒤의 이 대기는 처리 중 요청 수(7.2 의 `MAX_INFLIGHT`)에 들어 그 자리를 최대 `LINGER_S` 더 차지한다. `503` 뒤의 대기는 자리를 차지하지 않는다. 그 연결은 처음부터 자리를 받지 못했다
+- 정상 응답과 송신 시간 초과로 끊은 연결에는 이 대기가 없다
 
 **막는 것과 막지 못하는 것을 구분해 적는다.** 이 값이 막는 것은 한 연결의 점유 시간이다.
 
@@ -473,6 +484,12 @@ Connection: close\r\n
 `NONCE#` 항목이 근거다. 다른 `client_nonce` 로 오면 새 참가이고, 풀의 주소가 전부
 선점됐으면 `room_full` 이다.
 
+- `NONCE#` 가 가리키는 `PEER#` 가 없으면 처음 발급한 것을 줄 수 없다. 판정 불가이고 `internal`
+  이다. 회수는 `PEER#` 와 `NONCE#` 를 함께 지우므로(4.6) 정상 경로에서는 생기지 않는다
+- `NONCE#` 는 있는데 방이 TTL 로 먼저 지워졌으면 5.1 방의 (없음) 이므로 `room_not_found` 다
+- `NONCE#` 는 연산을 가리지 않는다. `create_room` 의 nonce 를 같은 방의 `join_room` 에 주면 저장된
+  기록(그 피어의 것)을 돌려준다. 반대도 같다. 다른 방이면 `bad_request` 다(6.3 취소 사유 1번)
+
 > **왜.** 응답을 잃은 클라이언트가 nonce 를 바꿔 재시도하면 자기 자신이 방을 채운다. 그래서
 > 2.4 `client_nonce` 가 한 참가에 한 값이라고 정했다.
 
@@ -584,7 +601,11 @@ Connection: close\r\n
 ### 4.5 get_peers
 
 **플레이어가 부른다.** 호스트는 부르지 않는다. 호스트가 같은 정보를 4.6 `host_report` 의
-응답으로 받기 때문이다.
+응답으로 받기 때문이다. 호스트가 불러도 오류가 아니다. 4.6 `host_report` 응답의 `peers` 처럼 자신을
+뺀 피어 전부를 준다.
+
+- `peers` 원소의 순서는 정하지 않는다. 클라이언트는 순서에 기대지 않는다
+- 플레이어가 불렀는데 방에 호스트의 `PEER#` 가 없으면 판정 불가이고 `internal` 이다
 
 클라이언트가 [`protocol.md`](protocol.md) 11장 타이머의 간격(500ms)과 마감(60s)으로
 폴링한다. **간격과 마감은 그 문서가 소유한다.** 여기에 숫자를 다시 적지 않는다.
@@ -714,9 +735,10 @@ Connection: close\r\n
 **처리 순서를 못박는다.** 한 요청 안에서 아래 순서로 돈다.
 
 1. 호출자 판정. 어긋나면 `unauthorized` 로 끝난다
-2. `departed` 의 각 `peer_id` 에 대해 `PEER#` 와 그 피어의 `VIP#`, 그리고 그 피어가 낀
-   `PAIR#` 를 지운다(6.3). 이어서 서버 회수 대상도 `PEER#` 와 `VIP#` 를 지운다. 대상은 아래
-   "서버 회수" 가 정한다
+2. `departed` 의 각 `peer_id` 에 대해 `PEER#` 와 그 피어의 `VIP#`, 그 피어가 낀 `PAIR#`, 그
+   피어의 `NONCE#` 를 지운다(6.3). 이어서 서버 회수 대상도 `PEER#` 와 `VIP#` 를 지운다. 대상은 아래
+   "서버 회수" 가 정한다. `departed` 에 든 피어는 서버 회수가 다시 판정하지 않는다. 그 피어의
+   회수는 호스트의 것이고 로그의 `by` 가 `host` 다
 3. `confirm` 의 각 `peer_id` 에 대해, 그 피어와 호출자가 **둘 다 후보를 1개 이상** 갖고 있고
    그 쌍의 `PAIR#` 가 없으면 조건부 쓰기로 만든다. 항목에 `ready_at_*` 과
    `punch_delay_ms = PUNCH_DELAY_MS` 를 넣는다(6.3)
@@ -769,6 +791,16 @@ Connection: close\r\n
 > 둘 있다. `--stun` 으로 목록을 길게 주면 STUN 상한이 는다. 그리고 회당 9초는 8.2 의 요청 한 건
 > 상한인데, 그 표가 적은 대로 송수신 제한이 연산별이라 실제로는 더 길 수 있다. 어느 쪽이든 위
 > `unauthorized` 경로로 끝난다.
+
+**호출자 자신의 `peer_id` 가 `departed` 나 `confirm` 에 있으면 그 원소를 건너뛴다.** 지우지도
+쓰지도 않고 `released` 와 `confirmed` 에 담지 않는다. 그대로 처리하면 호스트가 자기 자리를 지우고,
+확인은 같은 항목에 ConditionCheck 둘을 넣어 DynamoDB 가 요청 전체를 거부한다.
+
+**5번의 다시 읽기에서 읽을 수 없는 `PEER#` 가 나오면 `internal` 이다.** 6.3 항목의 형 규칙이다.
+4번 갱신은 이미 끝났으므로 임대는 산다. 그 항목이 남아 있는 동안 호스트는 매 주기 `internal` 을
+받는다. `departed` 나 `confirm` 의 대상이 읽을 수 없는 `PEER#` 일 때와 호출자의 `PEER#` 를 읽을 수
+없을 때도 `internal` 이다. 예외는 `departed` 대상의 `client_nonce` 하나다. 그것만 읽을 수 없으면
+6.3 항목의 회수 행대로 `NONCE#` 만 빼고 지운다.
 
 **2번이 3번보다 먼저다.** 같은 요청에 `departed` 와 `confirm` 이 같은 `peer_id` 를 담으면
 회수가 이긴다. 끝난 세션을 준비 완료로 기록하면 그 자리가 다시 찬다.
@@ -1034,7 +1066,7 @@ Connection: close\r\n
 | `create_room` | 트랜잭션: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NONCE#` put | **네 put 전부 `attribute_not_exists(pk)`** 다. `ROOM` 실패는 `room_id` 충돌 → 재추첨(2.1). `NONCE#` 실패는 동시에 같은 nonce 가 들어온 것이므로 다시 읽어 그 결과를 돌려준다. `PEER#`·`VIP#` 는 `ROOM` 이 없으면 있을 수 없으므로 실패가 나면 저장소가 앞선 방의 항목을 일부만 지운 상태다. 그때는 `internal` 이고 재추첨하지 않는다 |
 | `join_room` 새 참가 | 풀의 주소마다 트랜잭션: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `PEER#<peer_id>` put, `NONCE#` put | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 사전 읽기와 쓰기 사이에 방이 만료되거나 삭제되는 경합을 막는다. `VIP#` 와 `PEER#` 와 `NONCE#` 각각 `attribute_not_exists(pk)`. 실패 처리는 아래 취소 사유 표 |
 | `register_candidate` | `PEER#` update: `candidates = :list` | `attribute_exists(pk) AND peer_token = :t`. 실패는 `unauthorized` 다. 토큰 검사 뒤 그 피어가 회수된 경우다(4.6 서버 회수) |
-| `host_report` 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, 그 피어가 낀 `PAIR#` delete | **`PEER#` 에만 `attribute_exists(pk)` 를 건다.** 그 조건이 실패하면 이미 없던 대상이고 `released` 에 담지 않는다(4.6). 나머지 둘은 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 그 회수가 통째로 취소된다 |
+| `host_report` 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, 그 피어가 낀 `PAIR#` delete, `NONCE#<그 피어의 client_nonce>` delete | **`PEER#` 에만 `attribute_exists(pk)` 를 건다.** 그 조건이 실패하면 이미 없던 대상이고 `released` 에 담지 않는다(4.6). 나머지는 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 그 회수가 통째로 취소된다. `client_nonce` 를 읽을 수 없으면 `NONCE#` 만 빼고 지운다 |
 | `host_report` 서버 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, `NONCE#<그 피어의 client_nonce>` delete | `PEER#` 에 `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff`. `:cutoff` 는 `now - JOIN_REGISTER_GRACE_S * 1000` 이다. 조건이 실패하면 그 사이 등록했거나 이미 없는 것이므로 `released` 에 담지 않는다. 후보가 없던 피어는 `PAIR#` 가 있을 수 없으므로 지우지 않는다 |
 | `host_report` 확인 | 쌍마다 트랜잭션: `PEER#<호스트>` **ConditionCheck**, `PEER#<상대>` **ConditionCheck**, `PAIR#<lo>-<hi>` put | 두 ConditionCheck 는 각각 `attribute_exists(pk) AND size(candidates) > :zero` 다. put 은 `attribute_not_exists(pk)`. **양쪽 후보 조건을 저장소 조건으로 건다.** 읽고 나서 쓰기 전에 상대가 회수되거나 후보가 비워지는 경합이 있다. put 조건만 실패하면 이미 확인된 쌍이므로 오류가 아니다(4.6) |
 | `host_report` 갱신 | `ROOM` update(`expires_at_ms = :new`, `ttl = :new_ttl`) 하나를 먼저 쓴다. 그것이 성공하면 그 방의 나머지 항목마다 `ttl = :new_ttl` update 를 따로 쓴다. 트랜잭션으로 묶지 않는다 | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 실패는 `room_expired` 이고 나머지를 쓰지 않는다. **나머지 항목은 각각 `attribute_exists(pk)`** 다. 조건이 실패하면 그 사이 지워진 항목이므로 무시한다. 항목 목록은 이 요청의 첫 `Query` 결과에서 2번이 지운 항목을 뺀 것이다 |
@@ -1099,6 +1131,8 @@ Connection: close\r\n
   `joined`)다. 4.6 서버 회수의 삭제 조건이 `attribute_not_exists(candidates)` 를 빈 것으로 보는
   것과 같다
 - 4.6 서버 회수의 판정은 요청을 끝내지 않고 그 피어만 건너뛴다
+- 4.6 `host_report` 의 `departed` 회수에서 대상의 `client_nonce` 만 읽을 수 없으면 `NONCE#` 만 빼고
+  지운다
 
 방 파티션에서 위 항목 표에 없는 `sk` 가 나오면 판정 불가이고 `internal` 이다.
 
@@ -1219,6 +1253,7 @@ Connection: close\r\n
 | `store.py` | `boto3` 호출 전부. 6.3 항목의 조건식이 **이 파일에만** 있다 | `boto3` |
 | `errors.py` | 4.1 공통 봉투의 오류 코드와 HTTP 상태 | 없음 |
 | `constants.py` | 2.6 상수 | 없음 |
+| `log.py` | 7.5 로그 줄. 이벤트와 필드를 허용 목록으로 받는다 | 없음 |
 
 **`ipaddress` 모듈로 후보를 판정하지 않는다.**
 
@@ -1256,7 +1291,7 @@ on_connection(reader, writer):
             counters.rate_limited += 1
             respond(429, rate_limited); return
         try:
-            fields = await to_thread(ops.dispatch, req)   # boto3 는 블로킹이다. 스레드로 보낸다
+            fields = await to_thread(ops.dispatch, req)   # boto3 는 블로킹이다. 기본 실행기로 건 전용 풀이다
         except OpError as e:
             if e.code in {room_not_found, room_expired, unauthorized}:
                 rate.spend(src)                           # 6.4 속도 제한이 세는 셋
@@ -1280,13 +1315,20 @@ on_connection(reader, writer):
 판정해 오류 코드로 바꾼다. 그 밖의 `boto3` 오류(스로틀, 연결 실패, 시간 초과)는 예외로 올라와 포괄
 처리가 답하고 `internal_error` 를 올린다. 응답은 같고 카운터만 다르다.
 
-**`boto3` 호출은 블로킹으로 취급한다.** `asyncio.to_thread` 로 보낸다.
+**`boto3` 호출은 블로킹으로 취급한다.** `MAX_INFLIGHT` 개짜리 전용 스레드 풀로 보낸다. 서버가 그
+풀을 만들어 이벤트 루프의 기본 실행기로 건다. 종료 때 처리 중인 호출을 기다리지 않으려면(7.6
+종료) 그 풀을 프로세스가 직접 쥐고 있어야 한다. 종료는 카운터를 내고 출력을 비운 뒤 풀을 기다리지
+않고 프로세스를 끝낸다.
 
 - 이벤트 루프 스레드에서 직접 부르면 DynamoDB 응답 지연 동안 다른 연결의 수락과 파싱이
   멈춘다
 - 동시 처리 상한 `MAX_INFLIGHT`(32)는 그 스레드 풀이 무한히 자라는 것과, 저장소가 느려질 때
   대기 요청이 쌓여 메모리를 먹는 것을 막는다. 넘치면 `unavailable` 이고 클라이언트는 8.3
   오류 분류와 재시도의 규칙대로 재시도한다
+
+**거절하는 연결도 상한이 있다.** 자리가 없어 `503` 으로 거절하는 연결은 처리 중 요청 수에
+들지 않지만, 응답을 보내고 3.4 서버 쪽 시간 제한의 대기를 마칠 때까지 남는다. 그런 연결이 `MAX_REJECTING`(64)
+개면 새 연결은 응답 없이 바로 끊고 `unavailable` 을 올린다.
 
 **한 프로세스, 이벤트 루프 하나, 스레드 풀 하나다.** 멀티프로세스를 두지 않는다.
 
@@ -1309,6 +1351,10 @@ on_connection(reader, writer):
 8. 연산 본체 (조건부 쓰기)
 9. 응답 조립
 ```
+
+**시각은 요청을 시작할 때 한 번 읽는다.** 만료, 회수, 갱신의 판정이 모두 같은 `now` 를 쓴다.
+예외는 `PAIR#` 의 `ready_at_*` 세 값과 응답의 `elapsed_since_ready_ms` 다. 단조 시계와 벽시계가 같은
+순간을 가리켜야 하므로 쓰거나 계산하는 그 시점에 읽는다(7.4).
 
 **형식 검사가 저장소 읽기보다 먼저다.** 그래야 `bad_request` 가 저장소 비용을 쓰지 않고,
 속도 제한(6.4)이 형식 오류를 세지 않아도 추측 공격이 저장소에 닿지 않는다.
@@ -1385,12 +1431,19 @@ elapsed_since_ready_ms(room):
 | `room.created` | `peer_id`, `virtual_ip` | 가상 IP 배정 검증. `room_id` 는 싣지 않는다 |
 | `pair.ready` | `host_peer_id`, `peer_id` (쌍의 상대), `punch_delay_ms` | 준비 완료 1회 기록 검증. 쌍마다 **정확히 한 번** 나와야 한다. 방이 둘 이상인 로그에서 줄을 가르려면 두 `peer_id` 가 있어야 한다 |
 | `peer.released` | `peer_id`, `virtual_ip`, `by`(`host` 또는 `server`) | 자리 회수 검증 (4.6). 회수된 주소가 다시 `vip.claimed` 에 나오는 것으로 재배정을 본다. `by` 가 호스트 통지와 서버 회수를 가른다 |
-| `peer.reclaim_skipped` | `peer_id`, `reason` | 서버 회수가 판정할 수 없어 건너뛴 피어. `reason` 의 값은 4.6 서버 회수의 판정 순서 표가 정한다. 수준은 `WARN` 이다 |
+| `peer.reclaim_skipped` | `peer_id`, `reason` | 서버 회수가 판정할 수 없어 건너뛴 피어. `reason` 의 값은 4.6 서버 회수의 판정 순서 표가 정한다. `peer_id` 를 읽을 수 없으면 `-` 다. 수준은 `WARN` 이다 |
 | `room.renewed` | `host_peer_id`, `expires_in_s` | 임대 갱신 검증 (5.1). 호스트가 신호를 멈춘 뒤 이 줄이 끊기는 것을 본다 |
-| `vip.claimed` | `virtual_ip`, `peer_id` | 동시 참가 중복 배정 검증 |
+| `vip.claimed` | `virtual_ip`, `peer_id` | 동시 참가 중복 배정 검증. `join_room` 의 선점에만 낸다. 호스트의 `10.100.0.1` 은 `room.created` 가 싣는다 |
+| `server.started` | `bind`, `port` | 기동 확인. 리슨이 성공한 뒤 한 번 낸다. [`windows-prereq.md`](windows-prereq.md) 6절 제어 평면 EC2 의 bind 확인과 같은 값이다 |
 | `counter` | `name`, `value` | 아래 카운터 |
 
 카운터는 `http_read_timeout`, `internal_error`, `rate_limited`, `rate_table_full`, `elapsed_wall_fallback`, `unavailable` 이다. 종료 시와 60초마다 전량을 낸다. 값이 0 인 것도 낸다.
+
+- 수준은 `peer.reclaim_skipped` 만 `WARN` 이고 나머지는 `INFO` 다
+- `http.request` 는 답한 요청마다 한 줄이다. `ms` 는 수락부터 송신이 끝날 때까지를 밀리초로 내림한
+  값이다. `op` 는 요청을 끝까지 읽어 다섯 연산 가운데 하나로 판정한 경우에만 싣고, 그 밖에는 `-` 다
+- 이벤트와 필드는 `log.py` 가 이 표를 허용 목록으로 갖는다. 표에 없는 이름은 줄을 만들지 않고
+  오류다
 
 **`room_id` 를 로그에 싣지 않는 것을 다시 적는다.** `http.request` 의 `op` 와 `status` 만으로 Phase 3 검증은 충분하다. 어느 방인지가 필요한 진단은 `peer_id` 로 한다. `peer_id` 는 방 안에서만 뜻이 있어 그것만으로는 참가할 수 없다.
 
@@ -1400,7 +1453,7 @@ elapsed_since_ready_ms(room):
 
 | 변수 | 뜻 | 기본값 |
 |------|-----|--------|
-| `SANGTACHI_CP_PORT` | bind 포트 | `8000` |
+| `SANGTACHI_CP_PORT` | bind 포트. `[1-9][0-9]{0,4}` 전체 일치이고 65535 이하. 빈 값은 오류다 | `8000` |
 | `SANGTACHI_CP_TABLE` | DynamoDB 테이블 이름 | 없음. **필수** |
 | `AWS_REGION` | 리전 | 없음. 필수. `boto3` 표준 변수 |
 | `SANGTACHI_CP_ENDPOINT` | DynamoDB 엔드포인트 URL 덮어쓰기. 로컬 시험용 | 없음. 없으면 리전 기본 |
@@ -1416,7 +1469,15 @@ elapsed_since_ready_ms(room):
 > **왜.** 액세스 키를 받는 변수를 두면 누군가 그것을 쓴다.
 
 배포는 **systemd 서비스 하나**다. `Restart=always`. 재시작 복원 절차가 없으므로(6.1)
-재시작이 싸다. 보안 그룹은 인바운드 TCP 8000 을 연다. 텔레메트리 서비스의 포트는 이 문서
+재시작이 싸다. 필수 변수가 없거나 형식이 틀리면 종료 코드 2 로 바로 끝난다. 리슨이나 신호 처리
+설정처럼 설정 검사 뒤의 기동이 실패하면 종료 코드 1 이다. 어느 쪽이든 고정 문구 한 줄만 내고
+변수 값과 예외 추적은 내지 않는다. 기동 실패의 문구에는 이름 하나만 붙인다. OS 오류면 그 오류
+이름(예: `EADDRINUSE`, 모르는 번호면 `OSError`)이고, 그 밖의 예외면 예외 클래스 이름이다. 이 규칙은
+리슨에 성공하기 전까지의 실패에 적용한다. 리슨 뒤의 예외는 그대로 올라간다.
+
+**종료.** `SIGINT` 나 `SIGTERM` 을 받으면 리슨을 닫고 카운터를 낸 뒤 끝난다. 처리 중인 요청은
+기다리지 않는다. 그 요청의 결과는 종료 때의 카운터에서 빠질 수 있고, 클라이언트는 전송 오류를
+받아 8.3 오류 분류와 재시도대로 다시 보낸다. 보안 그룹은 인바운드 TCP 8000 을 연다. 텔레메트리 서비스의 포트는 이 문서
 범위 밖이고 [`roadmap.md`](roadmap.md) Phase 9 착수 전 항목이다.
 
 **배포 환경.** 아래는 실제 인스턴스와 테이블에서 확인한 값이다. 리전, 테이블 이름, 공인 주소,

@@ -47,6 +47,7 @@
 |------|------|------|
 | `tests/mutate.py` 의 시간 초과 | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
 | 표시 이름 구현 때 낡는 코드 주석과 시험 | `control-server/controlplane/store.py` 의 취소 사유 순서 주석(2번부터), `tests/mutants/store.py` 의 취소 사유 번호와 15개 항목 언급, `tests/test_store.py` 의 "네 put". `control_plane.md` 6.3 취소 사유 표에 `NAME#` 가 3번으로 들어가 번호가 하나씩 밀렸다 | `roadmap.md` Phase 4 의 표시 이름 작업 |
+| 수신 후보 위생의 자기 서브넷 행 | `client/src/control/ops.cpp` 의 `rejected_by_hygiene` 와 `sanitize_received_candidates` 에 그 행이 없고, `client/include/sangtachi/control/ops.hpp` 주석이 "서브넷 directed broadcast 는 판정하지 않는다", "4.4 의 서버 판정과 같은 대역이다" 로 적었다. 자기 서브넷 집합을 입력으로 받아야 한다 | `roadmap.md` Phase 4 의 로컬 후보 수집 작업 |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 
 ## 문서 부채
@@ -59,9 +60,9 @@
 | 중복 주장 링크화 미완 | 살아 있는 문서 여덟에서 같은 주장이 두 곳에 있는 자리를 링크로 바꾸는 작업이 중간에 멈춰 있다 (규칙 5). `git stash list` 로 확인하고 `git stash pop` 으로 잇는다. **스타 토폴로지 반영이 같은 문서를 크게 고쳤으므로 그대로 적용되지 않는다.** 충돌을 풀면서 잇는다 |
 | `IDLE` 정의의 긴장 | [`protocol.md`](protocol.md) 9.4.1 종료 상태 폐기는 `IDLE` 이면 상대 `peer_id` 도 모른다고 전제하는데, 9.1 상태는 `IDLE` 을 "아직 상대 후보를 받지 못함" 으로 정의한다. `get_peers` 가 `peer_id` 는 주고 후보는 아직 비어 있는 구간에서 둘이 갈린다. 어느 문서도 그 구간에서 세션이 `peer_id` 를 기억하는지 정하지 않았다. 9.1 이나 9.4.1 에 한 줄이 필요하다 |
 | 종료 세션 객체의 수명 | [`protocol.md`](protocol.md) 5.6 `CLOSE` 는 받은 쪽 세션을 `CLOSED` 로 남겨 늦은 패킷을 `drop_terminal_state` 로 세게 한다. [`concurrency.md`](concurrency.md) 7장 종료는 끝난 세션을 목록에서 지운다. 같은 장 로비 표의 `drop_unknown_peer` 는 뒤쪽을 전제한다. Phase 4 의 세션 구현 전에 정한다 |
-| 자기 서브넷 집합의 전달 | [`protocol.md`](protocol.md) 10.1 은 로컬 후보와 자기 서브넷 집합을 `register_candidate` 직전의 같은 수집에서 만든다. 그 집합을 7장 출발지 위생이 수신 루프에서 쓴다. 어느 스레드가 수집하고 수신 루프가 그 집합을 어떻게 받는지는 [`concurrency.md`](concurrency.md) 가 정하지 않았다. Phase 4 의 수집 구현 전에 정한다 |
+| 자기 서브넷 집합의 전달 | [`protocol.md`](protocol.md) 10.1 은 로컬 후보와 자기 서브넷 집합을 `register_candidate` 직전의 같은 수집에서 만든다. 그 집합을 두 곳이 쓴다. 7장 출발지 위생(수신 루프)과 10.1 수신 후보 위생의 자기 서브넷 행(받은 후보를 다루는 곳)이다. 어느 스레드가 수집하고 두 곳이 그 집합을 어떻게 받는지는 [`concurrency.md`](concurrency.md) 가 정하지 않았다. Phase 4 의 수집 구현 전에 정한다 |
 | Phase 8 제목 | `## Phase 8: Minecraft 검증` 인데 목표가 GUI 시연을 포함한다. 제목 문자열에 기대는 자리는 `roadmap.md` 의 한국어와 영어 제목 줄 둘뿐이고 `#phase-8` 앵커는 없다. 바꿀지는 정하지 않았다 |
-| 후보 위생의 대역 | 서버는 [`protocol.md`](protocol.md) 10.1 목록 그대로 거부한다. `0.0.0.0/8` 의 나머지와 `240.0.0.0/4` 는 저장한다(`control_plane.md` 4.4). 그 목록을 허용 목록으로 바꿀지, 두 대역을 더할지는 정하지 않았다. 바꾸면 10.1 이 먼저이고 클라이언트 쪽 위생도 같이 바뀐다 |
+| 후보 위생의 대역 | 서버는 [`protocol.md`](protocol.md) 10.1 목록에서 클라이언트만 하는 자기 서브넷 행을 뺀 그대로 거부한다. `0.0.0.0/8` 의 나머지와 `240.0.0.0/4` 는 저장한다(`control_plane.md` 4.4). 그 목록을 허용 목록으로 바꿀지, 두 대역을 더할지는 정하지 않았다. 바꾸면 10.1 이 먼저이고 클라이언트 쪽 위생도 같이 바뀐다 |
 | 헤더 이름 가운데 공백 | `control_plane.md` 3.3 의 헤더 줄 문법은 이름과 콜론 사이의 공백만 거부한다. `X Foo: bar` 처럼 이름 가운데 공백이 있는 줄은 표 밖 헤더로 무시된다. 거부할지는 정하지 않았다 |
 | 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md), [`concurrency.md`](concurrency.md), [`architecture.md`](architecture.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 넷 많다.** `endpoint_learned`, `drop_roster_name`, `record_write_failed` 는 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
 

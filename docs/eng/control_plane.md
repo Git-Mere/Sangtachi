@@ -688,7 +688,8 @@ Candidate element:
 | `kind` | `"local"` or `"reflexive"` | The two kinds from [`protocol.md`](protocol.md) 10.1 Candidate Collection and Hygiene. The server only stores and delivers it. It is not used in any decision |
 
 **Hygiene.** The server applies the rules of `protocol.md` 10.1 Candidate Collection and Hygiene
-(section 14 contract 5). The client also applies the same rules again to the list it receives.
+(section 14 contract 5). The client also applies the same rules again to the list it receives, and adds the
+own-subnet row that only the client applies.
 Regardless of trusting the server, both sides do the format check.
 That section owns the rules themselves. The case table that expands those rules **for server input**
 is `CANDIDATE_CASES` in [`test_candidates.py`](../../control-server/tests/test_candidates.py). The two
@@ -735,7 +736,7 @@ table of `protocol.md` 10.1 Candidate Collection and Hygiene.
 - On a duplicate, the element that came first is kept. Its `kind` is also kept
 - Unknown keys inside a candidate element are ignored. Only `ip`, `port`, and `kind` are stored
 
-**The bands the server decides are exactly the list of 10.1.** Broadcast is only `255.255.255.255`,
+**The bands the server decides are exactly the list of 10.1 minus the own-subnet row.** Broadcast is only `255.255.255.255`,
 and unspecified is only `0.0.0.0`. Loopback is the whole of `127.0.0.0/8`.
 
 - The server does not receive the peer's prefix length (10.1), so it cannot decide a subnet's

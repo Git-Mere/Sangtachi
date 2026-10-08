@@ -126,7 +126,7 @@ ORDER_CASES = [
          note="위생 거부 대상(루프백)이어도 port 가 범위 밖이면 요청 전체 bad_request 다. 형 검사가 위생보다 먼저다"),
 ]
 
-# 출처: control_plane.md 4.4 의 "서버가 판정하는 대역은 10.1 의 목록 그대로다" 문단.
+# 출처: control_plane.md 4.4 의 "서버가 판정하는 대역은 10.1 의 목록에서 자기 서브넷 행을 뺀 그대로다" 문단.
 BAND_CASES = [
     dict(id="loopback-127-8", send=[GOOD, C("127.1.2.3", 51000, "local")], expect=(1, 1),
          stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기",

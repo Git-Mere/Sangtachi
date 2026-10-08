@@ -716,14 +716,15 @@ The round-trip test and the failure-code test below are started and ended with t
 **Receive hygiene and caps.**
 
 - Continuously sending to a non-responding candidate does not kill the receive loop via `WSAECONNRESET`
-- Local candidate decision and registered list (`protocol.md` 10.1 Candidate Collection and Hygiene). Run
-  every row of that section's two case tables
+- Local candidate decision, registered list, and the own-subnet row of received candidate hygiene
+  (`protocol.md` 10.1 Candidate Collection and Hygiene). Run every row of that section's three case tables
   - The decision function must be able to take the interface enumeration and route lookup by injection
     instead of from the OS. Failures of both lookups are injected too
-  - Four mutants each `FAIL`. Removing 53 from the `IfType` exclusion list, reducing the active check to
-    `OperStatus` alone, removing the own-Wintun identifier rule, and moving the cap cut before sorting
-  - That section's own-subnet set is the input to the directed broadcast row of source hygiene (a) below.
-    That row is run with this set injected
+  - Five mutants each `FAIL`. Removing 53 from the `IfType` exclusion list, reducing the active check to
+    `OperStatus` alone, removing the own-Wintun identifier rule, moving the cap cut before sorting, and
+    removing the own-subnet row of received candidate hygiene
+  - That section's own-subnet set is the input to the directed broadcast row of source hygiene (a) below
+    and to the own-subnet row of received candidate hygiene. Both decisions are run with this set injected
 - Check source hygiene (`protocol.md` 7) at two layers
   - (a) Run that section's case table as-is against the **verdict function.** Multicast, limited
     broadcast, the directed broadcast of one's own subnet, unspecified, and port 0 are rejected, and

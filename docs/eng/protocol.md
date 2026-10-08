@@ -1153,7 +1153,7 @@ step 6). Neither changes until the next collection.
 
 **Residual risk.** The subnet of an interface that appears or changes address between collections is not
 in the own-subnet set until the next collection. Meanwhile broadcast sources from that subnet pass Chapter
-7. Replies to such a source are bound by the common unverified-destination budget of the 9.4 Transition
+7, and a received candidate with that address passes hygiene. Replies to such a source are bound by the common unverified-destination budget of the 9.4 Transition
 Table. However, if that address is an approved candidate or `peer_endpoint`, it is outside the budget and
 not bound. Recollecting on interface change notifications is not in v1.
 
@@ -1199,7 +1199,8 @@ enumeration order.
 > `MAX_CANDIDATES`, the default-route LAN candidate is kept next. The former are used across different
 > networks, the latter on the same LAN.
 
-**Own-subnet set.** The set used by the own-subnet directed broadcast decision in Chapter 7.
+**Own-subnet set.** The set used by the own-subnet directed broadcast decision in Chapter 7 and by the
+own-subnet row of received candidate hygiene below.
 
 - Its elements are the addresses that passed the active stage, with their prefix lengths. **The
   exclude stage does not apply.** Subnets of interfaces excluded from candidates are included too
@@ -1271,6 +1272,7 @@ candidates, and the parenthesis is that candidate's interface.
 | At most `MAX_CANDIDATES` (8). Discard the excess | An unbounded list means unbounded transmission |
 | Reject broadcast, multicast (`224.0.0.0/4`), unspecified (`0.0.0.0`), and loopback (`127.0.0.0/8`) addresses | Reflection and amplification prevention |
 | Reject port 0 | |
+| Reject broadcast addresses blocked by the own-subnet set. Client only | Amplification prevention. `HELLO` to that address reaches our whole LAN. [ADR 0018](decisions/0018-reject-own-subnet-broadcast-in-received-candidates.md) |
 | Deduplicate | |
 
 As stated in Chapter 2, without these rules the client becomes a reflection tool that sends a packet every 200ms to a third party chosen by the attacker.
@@ -1280,8 +1282,22 @@ As stated in Chapter 2, without these rules the client becomes a reflection tool
 - The type check is the job of [`control_plane.md`](control_plane.md) 3.5 Checks the Client Makes. If even one candidate
   has the wrong type, the whole response is a transport error
 - For a duplicate, the element that came first is kept
-- Broadcast is only `255.255.255.255`. The peer's prefix is unknown, so subnet directed broadcast is
-  not judged. It is the same range as the server's judgement (`control_plane.md` 4.4 register_candidate)
+- The broadcast row is only `255.255.255.255`. Subnet directed broadcast is checked only by the own-subnet
+  row below
+- The own-subnet row is judged with the own-subnet set at the time of receipt. A directed broadcast of
+  the peer's subnet is not judged, since the peer's prefix is unknown
+- The server does not apply the own-subnet row. It has no set to judge with. The remaining bands are the
+  same as the server's judgement (`control_plane.md` 4.4 register_candidate)
+
+**Own-subnet row case table.** With the own-subnet set `{192.168.0.10/24}`.
+
+| Received candidate | Result | Implementation caught |
+|---|---|---|
+| `192.168.0.255:5000` | Reject | One without the own-subnet row |
+| `192.168.0.254:5000` | Pass | One that rejects the whole subnet |
+| `192.168.0.10:5000` | Pass | One that rejects our own address. It can be another process on the same machine |
+| `192.168.1.255:5000` | Pass | One that takes the netmask too wide. A remote subnet's broadcast is not judged |
+| `192.168.0.255:5000` with an empty set | Pass | One that rejects `.255` without the set |
 
 > **Why the cap is last.** Cutting first lets candidates that will be filtered out take up slots, and usable candidates are dropped.
 
@@ -1766,7 +1782,7 @@ Everything below has to be in the code in Phase 4. Phase 4 is the stage that imp
 - [ ] The `a != b` condition of `is_newer`
 - [ ] Per-session-attempt `session_epoch`, CSPRNG and 0 avoidance, 2-minute retired list and the `MAX_RETIRED_EPOCHS` cap. **What goes on the retired list is the peer's epoch** (4.3)
 - [ ] CSPRNG nonce, fixed per attempt, 2-minute retired list. Probe nonces in a separate table
-- [ ] 10.1 local candidate decision, order and cap of the registered list, own-subnet set (input to the Chapter 7 decision), every candidate hygiene rule. Run every row of that section's two case tables
+- [ ] 10.1 local candidate decision, order and cap of the registered list, own-subnet set (input to the Chapter 7 decision and received candidate hygiene), every candidate hygiene rule. Run every row of that section's three case tables
 - [ ] 10.2 relative-time rendezvous
 - [ ] 10.4 endpoint learning (advancing packets only, addresses outside the candidate set after path validation), `MAX_PROBE_PATHS` cap and 1 validation `HELLO`
 - [ ] The dual flags of 9.2 `CONNECTED` Condition, `sent_ack` only after `sendto` success

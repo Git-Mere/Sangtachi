@@ -78,7 +78,9 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `peer/peer` | Peer identifier, virtual IP, candidate endpoint list | None |
 | `peer/hole_punch` | Simultaneous bidirectional send, retry, success decision, failure reason classification | None |
 | `peer/session` | Handshake, keepalive, connection state machine, RTT measurement | None |
+| `peer/epoch` | `session_epoch` generation, attempt nonces, retired lists (`protocol.md` 4.3, 5.1). The random source is injected and defaults to `platform/random`. Used by `peer/session` | None |
 | `tunnel/packet` | Tunnel header serialization/deserialization, corrupt packet validation | None |
+| `tunnel/replay` | `sequence` comparison and the acceptance window (`protocol.md` 4.4, 4.5). Used by `tunnel/tunnel` | None |
 | `tunnel/tunnel` | Dispatch by packet type, encapsulation/decapsulation, sequence management | None |
 | `tunnel/router` | Virtual IP -> peer session mapping, destination decision | None |
 | `adapter/wintun_adapter` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper) | **Wintun (approved)**, IP Helper |
@@ -1132,8 +1134,8 @@ Sangtachi/
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
 |   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve
 |   |   +-- network/     endpoint, stun, stun_client
-|   |   +-- peer/        peer, hole_punch, session
-|   |   +-- tunnel/      packet, tunnel, router
+|   |   +-- peer/        peer, hole_punch, session, epoch
+|   |   +-- tunnel/      packet, tunnel, router, replay
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
 |   |   +-- ui/          main_window

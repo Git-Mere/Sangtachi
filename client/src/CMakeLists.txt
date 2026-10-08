@@ -20,6 +20,8 @@ target_sources(sangtachi_core PRIVATE
     network/endpoint.cpp
     network/stun.cpp
     network/stun_client.cpp
+    peer/epoch.cpp
+    tunnel/replay.cpp
 )
 
 # 플랫폼 원본. OS 헤더(windows.h, winsock2.h, bcrypt.h ...)를 포함하는 원본은 전부

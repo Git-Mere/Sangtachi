@@ -76,7 +76,9 @@
 | `peer/peer` | 피어 식별자, 가상 IP, 후보 엔드포인트 목록 | 없음 |
 | `peer/hole_punch` | 양방향 동시 송신, 재시도, 성공 판정, 실패 사유 분류 | 없음 |
 | `peer/session` | 핸드셰이크, keepalive, 연결 상태 머신, RTT 측정 | 없음 |
+| `peer/epoch` | `session_epoch` 생성, 시도 nonce, 폐기 목록 (`protocol.md` 4.3, 5.1). 난수원은 주입받고 기본은 `platform/random` 이다. `peer/session` 이 쓴다 | 없음 |
 | `tunnel/packet` | 터널 헤더 직렬화/역직렬화, 손상 패킷 검증 | 없음 |
+| `tunnel/replay` | `sequence` 비교와 수용 창 (`protocol.md` 4.4, 4.5). `tunnel/tunnel` 이 쓴다 | 없음 |
 | `tunnel/tunnel` | 패킷 타입별 디스패치, 캡슐화/역캡슐화, 시퀀스 관리 | 없음 |
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
 | `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
@@ -1011,8 +1013,8 @@ Sangtachi/
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
 |   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve
 |   |   +-- network/     endpoint, stun, stun_client
-|   |   +-- peer/        peer, hole_punch, session
-|   |   +-- tunnel/      packet, tunnel, router
+|   |   +-- peer/        peer, hole_punch, session, epoch
+|   |   +-- tunnel/      packet, tunnel, router, replay
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
 |   |   +-- ui/          main_window

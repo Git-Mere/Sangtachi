@@ -1653,7 +1653,16 @@ Why the idle timeout is **50s** and not 45s: a keepalive is sent once immediatel
 and the timeout race at the same instant. 50s tolerates 3 losses and leaves room to recover on the
 fourth.
 
-15s and 50s are initial values. If measurements of mapping lifetime lead to an adjustment, this document is updated.
+**The `KEEPALIVE` interval keeps `interval × 3 < smallest measured lifetime`.** The lifetime is the
+filter+mapping lifetime of that path measured by [`tools/nat-lifetime`](../../tools/nat-lifetime/README.md),
+and the smallest is the smallest lower bound among the measured networks. If a network breaks this rule, the
+interval and the idle timeout are decided again and this document is updated. The idle timeout follows from the
+interval for the reason above.
+
+> **Why 3.** Even if two in a row are lost, the gap does not exceed `3 × interval` and the path survives. A
+> keepalive lost after passing our NAT has already refreshed that NAT, so this calculation is conservative.
+> The measurement and the basis of this rule are owned by
+> [ADR 0019](decisions/0019-measure-mapping-lifetime-with-a-separate-tool.md).
 
 ---
 

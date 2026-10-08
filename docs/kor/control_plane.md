@@ -41,7 +41,7 @@
 |---------|--------------|
 | 방 생성과 참가 | 게임 트래픽 중계. 데이터 경로에 있지 않다 (NFR-1) |
 | 가상 IP 배정 | 지표 수집. 텔레메트리 서비스가 맡는다 ([`architecture.md`](architecture.md) 3.4, [ADR 0003](decisions/0003-텔레메트리-서비스-분리.md)) |
-| 후보 엔드포인트 저장과 전달 | **UDP 소켓을 열지 않는다.** NAT 매핑 수명 측정에 쓰는 EC2 쪽 UDP probe 송신기는 제어 서버의 기능이 아니라 별개 도구다. 그 도구의 소속과 절차는 [`roadmap.md`](roadmap.md) Phase 4 착수 전 항목이 갖는다 |
+| 후보 엔드포인트 저장과 전달 | **UDP 소켓을 열지 않는다.** NAT 매핑 수명 측정에 쓰는 EC2 쪽 UDP probe 송신기는 제어 서버의 기능이 아니라 별개 도구다. 그 도구는 [`tools/nat-lifetime`](../../tools/nat-lifetime/README.md) 이고 측정 시점은 [`roadmap.md`](roadmap.md) Phase 4 착수 전 항목이 갖는다 |
 | 랑데부 기준점(`punch_delay_ms`, `elapsed_since_ready_ms`) 제공 | NAT 유형 판정, 홀펀칭 결과 판정. 클라이언트가 한다 |
 | 호스트의 통지로 자리 회수, 후보 없이 떠난 참가자의 서버 회수 (4.6 `host_report`) | 세션 재시도 개시. 누가 언제 재시도하는지는 미정이고 [`protocol.md`](protocol.md) 10.4 엔드포인트 학습이 그렇게 적었다 |
 | 호스트의 신호로 방 임대 갱신 (4.6, 5.1) | **터널 생존 판정.** 임대가 끊겨도 이미 수립된 터널은 그대로 간다 ([`spec.md`](spec.md) NFR-3) |

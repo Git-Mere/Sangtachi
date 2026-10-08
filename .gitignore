@@ -48,4 +48,5 @@ tools/nat-probe/results/**
 tools/nat-probe/records/**
 !tools/nat-probe/results/.gitkeep
 !tools/nat-probe/records/.gitkeep
+tools/nat-lifetime/results/**
 .commitmsg

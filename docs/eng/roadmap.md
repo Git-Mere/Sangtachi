@@ -486,30 +486,21 @@ code (`architecture.md` 3.5 Startup Inputs).
 **To be decided before starting.** Two items. Implementation of those places does not begin before
 they are decided
 
-- **Before starting, redesign the keepalive mapping-lifetime measurement procedure**
+- **Before starting, measure the keepalive mapping lifetime**
 
-  - The form where EC2 sends a UDP probe to the client's public endpoint cannot be used. The client
-    has never sent UDP to EC2 (the control plane is TCP), so that probe is unsolicited inbound
-  - The part that creates the idle interval stays as is. Stop **all** UDP transmission on that socket,
-    including `PING` and `DATA`. A test that turns off only keepalive is invalid because game and
-    `PING` traffic refresh the mapping
-  - Three things must be redefined. The transmission that opens the path just before idle, the probe
-    format and the EC2-side sending tool, and how the client records arrival time
-  - Also write down that the quantity measured is not "mapping lifetime" but "filter+mapping lifetime
-    of that path"
-  - The EC2-side sender is not a control server feature. Neither the control plane nor the telemetry
-    service opens UDP ([`control_plane.md`](control_plane.md) 1.1 What It Does and Does Not Do), so
-    this sender is a separate tool under `tools/` and is started on EC2 only when measuring. It is of
-    the same kind as `tools/nat-probe`
-  - The probe format is a matter for the chapter 7 classification in
-    [`protocol.md`](protocol.md), so it is decided by fixing that document. The 15 seconds and 50
-    seconds in chapter 11 are initial values until then
+  - Measure with [`tools/nat-lifetime`](../../tools/nat-lifetime/README.md). That README owns the
+    procedure, wire format, and verdict table, and [ADR 0019](decisions/0019-measure-mapping-lifetime-with-a-separate-tool.md)
+    owns why this method was chosen
+  - The quantity measured is not "mapping lifetime" but "filter+mapping lifetime of that path"
+  - The responder is not a control server feature. Neither the control plane nor the telemetry service
+    opens UDP ([`control_plane.md`](control_plane.md) 1.1 What It Does and Does Not Do), so it is started
+    on EC2 only when measuring
+  - The rule that carries results into values is owned by [`protocol.md`](protocol.md) chapter 11 Timers. Both
+    home networks used for the demo are measured. If a network breaks the rule, that chapter is changed
 
-  > **Why.** The measurement in [`windows-prereq.md`](windows-prereq.md) 2 (all 6 unsolicited inbound
-  > cases blocked) and the measurement in `protocol.md` 10.4 Endpoint Learning (all 3 pairs blocked
-  > even when only the source port differs) predict zero arrivals. Then "the mapping expired" cannot
-  > be distinguished from "the filter was closed from the start", so the mapping lifetime is misjudged
-  > as 0.
+  > **Why.** A probe that EC2 sends to the client first is unsolicited inbound, so it is blocked as
+  > measured in [`windows-prereq.md`](windows-prereq.md) 2, and "the mapping expired" cannot be
+  > distinguished from "the filter was closed from the start", so the lifetime is misjudged as 0.
 
 - **Before starting, re-measure with `tools/nat-probe`.** Confirm that the verdict "a direct
   connection is established" still holds. If conditions have changed, this is the point where there

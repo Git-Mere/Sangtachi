@@ -483,7 +483,7 @@ code (`architecture.md` 3.5 Startup Inputs).
 
 ### Tasks
 
-**To be decided before starting.** Four items. Implementation of those places does not begin before
+**To be decided before starting.** Three items. Implementation of those places does not begin before
 they are decided
 
 - **Before starting, redesign the keepalive mapping-lifetime measurement procedure**
@@ -532,12 +532,6 @@ they are decided
     ([ADR 0006](decisions/0006-star-topology-no-relay.md))
   - This measurement decides whether to judge the risk of the host NAT before the room is created and
     warn the person (ADR 0006). If it goes in, first fix what that verdict takes as input
-- **Before starting, fix the path and line format of the local record file.**
-  [`architecture.md`](architecture.md) 9 has only 4 contracts and no format. **M-6 cannot be judged
-  until it is fixed.** Do not decide it in code; fix that document first
-  - Also decide how an attempt aborted by `leave` is written to the record. The establishment line
-    of chapter 9 requires a result code for every attempt, but a user's abort is not a failure code
-    of FR-13
 
 **Implementation.** Follow the `protocol.md` 15 implementation checklist as written. This Phase is
 implementation, not design.
@@ -594,7 +588,7 @@ implementation, not design.
     so requests for that room become `internal` (the type rule of `control_plane.md` 6.3). The
     deploy is treated as ending every room from before it. It is not rolled out during a
     demonstration or a measurement
-- Write the connection result (success or an FR-13 failure code) and RTT to the **local record file.** Not uploaded to the control plane (M-6)
+- Write the connection result (success or an FR-13 failure code) and RTT to the **local record file.** Not uploaded to the control plane (M-6). The path, line format, and definition of an attempt are in [`architecture.md`](architecture.md) chapter 9 Local Record File
 
 > **The protocol is already fixed.** Implementation cannot start without a fixed wire protocol. That
 > is why `protocol.md` was written as the final version before implementation began. Phase 4 does not
@@ -926,12 +920,32 @@ The round-trip test and the failure-code test below are started and ended with t
 **Records and failure codes.**
 
 - The line count of the local record file matches whether `CONNECTED` was reached (M-6,
-  `architecture.md` 9)
-  - **An attempt that failed to establish has one establishment line; an attempt that reached
+  `architecture.md` chapter 9 Local Record File. "That section" below means this section)
+  - **An attempt that did not reach `CONNECTED` has one establishment line; an attempt that reached
     `CONNECTED` has two lines, establishment and termination.** On failure the FR-13 code is written
   - RTT is normally empty when there is no sample. The establishment line is usually empty because
     `PING` has not run yet, and the termination line carries the last sample. An empty value is not
     judged as failure
+  - The line count is counted separately for each row of that section's "What Counts as One
+    Attempt" table. If two players join a host, both pairs are made to start punching, only one
+    is connected, and then everything ends, the host file has two attempts and three lines. If one
+    player leaves before ready, that pair is not a host-side attempt. A host that created a room and saw nobody come has no lines
+  - A `leave` during establishment makes one establishment line with `result=ABORTED`. An
+    implementation that writes no line and one that writes a failure code are caught here
+  - A `CLOSE` from the other side is injected through the receive path during establishment. If
+    `reason` is `0x01` it is `ABORTED`; if `0x03`, `PEER_FAILED`. An implementation that writes both
+    as the same value is caught here
+  - Every line has nine fields in the order of that section's table, and an empty value is `-`
+  - Units are checked by injecting values into the function that builds the line. An RTT of 23410
+    microseconds is `rtt_us=23410`, and a setup time of 2410 milliseconds is `setup_ms=2410`. An
+    implementation that writes milliseconds into the microseconds field is caught here
+  - The verdict uses only runs that fall under that section's "runs that can be judged"
+  - Two processes on the same machine create different files. The PID in each file name is that
+    process's own
+  - Create a new executable folder without a `records` folder, make it impossible to create
+    subfolders and files in that folder, then start. That is a startup failure
+  - Injecting a write failure raises `record_write_failed`, no lines for later attempts appear in
+    the file, and the tunnel continues
 - On hole punching failure, `HOLE_PUNCH_TIMEOUT` is recorded and the `FAIL` line appears. **The
   process does not end.** The player goes to the lobby and the host stays in the room
   (`concurrency.md` chapter 7 Lobby)

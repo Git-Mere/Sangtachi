@@ -16,7 +16,7 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 4 착수 전 결정 넷. 다음은 로컬 기록 파일의 경로와 줄 형식이다 | `roadmap.md` Phase 4 작업 머리. 호스트 쪽 `FAIL` 줄 결정은 [ADR 0015](decisions/0015-멤버를-표시-이름으로-가리킨다.md) 로 닫았다 |
+| 1 | Phase 4 착수 전 결정 셋. 다음은 로컬 후보 판정 기준이다 | `roadmap.md` Phase 4 작업 머리. 호스트 쪽 `FAIL` 줄은 [ADR 0015](decisions/0015-멤버를-표시-이름으로-가리킨다.md), 로컬 기록 파일은 [ADR 0016](decisions/0016-로컬-기록-파일의-경로와-줄-형식.md) 로 닫았다 |
 | 2 | 문서 부채의 `IDLE` 정의와 종료 세션 객체의 수명 | Phase 4 세션 구현 전에 정해야 한다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
@@ -62,7 +62,7 @@
 | Phase 8 제목 | `## Phase 8: Minecraft 검증` 인데 목표가 GUI 시연을 포함한다. 제목 문자열에 기대는 자리는 `roadmap.md` 의 한국어와 영어 제목 줄 둘뿐이고 `#phase-8` 앵커는 없다. 바꿀지는 정하지 않았다 |
 | 후보 위생의 대역 | 서버는 [`protocol.md`](protocol.md) 10.1 목록 그대로 거부한다. `0.0.0.0/8` 의 나머지와 `240.0.0.0/4` 는 저장한다(`control_plane.md` 4.4). 그 목록을 허용 목록으로 바꿀지, 두 대역을 더할지는 정하지 않았다. 바꾸면 10.1 이 먼저이고 클라이언트 쪽 위생도 같이 바뀐다 |
 | 헤더 이름 가운데 공백 | `control_plane.md` 3.3 의 헤더 줄 문법은 이름과 콜론 사이의 공백만 거부한다. `X Foo: bar` 처럼 이름 가운데 공백이 있는 줄은 표 밖 헤더로 무시된다. 거부할지는 정하지 않았다 |
-| 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md) 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 셋 많다.** `endpoint_learned` 와 `drop_roster_name` 은 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
+| 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md), [`concurrency.md`](concurrency.md), [`architecture.md`](architecture.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 넷 많다.** `endpoint_learned`, `drop_roster_name`, `record_write_failed` 는 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
 
 ## 세션을 시작할 때
 

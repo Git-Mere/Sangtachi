@@ -457,7 +457,7 @@ keepalive가 나가지 않아 NAT 매핑이 만료된다. 원격 서비스 장�
 |---|---------|
 | 1 | 종료 이벤트 신호 (아직 안 됐으면) |
 | 2 | [`protocol.md`](protocol.md) 5.6 `CLOSE` 가 정한 대상 세션마다 `CLOSE` 1회 송신. 대상과 reason 값은 그 절이 정한다. 여기에 조건을 다시 적지 않는다 |
-| 3 | **아직 끝나지 않은 세션이 `CONNECTED`에 도달했었다면 로컬 기록 파일에 종료 줄을 쓴다** ([`architecture.md`](architecture.md) 9장. 이미 종료 상태라 그 줄을 쓴 세션은 다시 쓰지 않는다) |
+| 3 | **로컬 기록 파일에 끝나지 않은 시도의 줄을 쓴다** ([`architecture.md`](architecture.md) 9장). `CONNECTED`에 도달했던 세션은 종료 줄 `CLOSED`, 수립 중이던 시도는 수립 줄 `ABORTED` 다. 이미 종료 상태라 그 줄을 쓴 세션은 다시 쓰지 않는다 |
 | 4 | **카운터 전량을 `counter` 이벤트로 낸다** (`architecture.md` 9장) |
 | 5 | 어댑터 세션 종료 |
 | 6 | 어댑터/주소/라우트 정리 |

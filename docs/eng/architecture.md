@@ -764,7 +764,7 @@ multi-destination test is needed in addition, and that is outside the initial sc
 | Metric | Collection point | Use |
 |------|-----------|------|
 | Connection success/failure + failure stage | At the end of session establishment | Reliability analysis |
-| Connection establishment time | STUN start ~ `CONNECTED` | Perceived-latency analysis |
+| Connection establishment time | From the start point to `CONNECTED`. The start point is set by setup time in the local record file below | Perceived-latency analysis |
 | RTT | Periodic `PING`/`PONG` measurement | Latency analysis |
 | Packet loss rate | Count of gaps in `sequence` | Quality analysis |
 | Jitter | Deviation between consecutive RTTs | Quality analysis |
@@ -786,8 +786,8 @@ requires, not control plane storage. The contract has four items.
 
 | Item | Contract |
 |------|------|
-| Content | Per connection attempt, the result (success or a failure code from `spec.md` FR-13) and RTT. **RTT is left empty for attempts where it could not be measured** |
-| Timing | Twice. One line **when establishment ends** (success or failure), and one more line when the session ends |
+| Content | Per connection attempt, the result (success, a failure code from `spec.md` FR-13, or an abort or a failure notice from the other side; the result values below) and RTT, plus the setup time of a successful establishment. **RTT is left empty for attempts where it could not be measured** |
+| Timing | Twice. One line **when establishment ends** (success, failure, and abort alike), and one more line when the session ends |
 | Method | Append-only. Earlier lines are not modified |
 | Independence | Does not depend on the telemetry queue or the upload path. The record is written even when the control plane and the telemetry service are **both** absent |
 
@@ -801,8 +801,8 @@ it is dropped as `drop_unmatched_pong`.
 matching procedure. So attempts that ended before then (`STUN_DISCOVERY_FAILED`,
 `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`) have no value.
 
-**What is absent is not written as 0.** Write it empty, and decide the notation for empty
-together with the line format.
+**What is absent is not written as 0.** Write it empty. The notation is set by the line format
+below.
 
 > **Why.** 0ms looks like a measured value and pollutes the Phase 9 aggregation.
 
@@ -822,31 +822,192 @@ that is where the value goes.
 > **Why.** The establishment line is not delayed until the first sample, because if the process
 > dies in between, no record is left at all.
 
-- **Establishment line**: written for every attempt. The result code (success or failure). RTT
-  is written if a sample exists at that moment, empty otherwise
+- **Establishment line**: written for every attempt. The result is a result value of the line
+  format below. RTT is written if a sample exists at that moment, empty otherwise
 - **End line**: **written only for attempts that reached `CONNECTED`.** The end code and the
-  last RTT sample, empty if none. The end code is `CLOSED` or one of the failure codes in
-  `spec.md` FR-13
+  last RTT sample, empty if none. The end code is the end-line one among the result values of
+  the line format below
   - `TUNNEL_DROPPED` is the common case. If renegotiation goes back to before `CONNECTED` and
     then the punch deadline is hit, `HOLE_PUNCH_TIMEOUT` or `PEER_HANDSHAKE_FAILED` comes to
     the end line (`protocol.md` 9.5 Renegotiation, 9.6 Failure Transitions). Pinning the code
     set to two values leaves nothing to write in that case
 
-**An attempt that failed establishment has one line.** `STUN_DISCOVERY_FAILED`,
-`CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, and `PEER_HANDSHAKE_FAILED` never
-reached `CONNECTED`, so there is no session to end. The establishment line is that attempt's
+**An attempt that failed establishment or was aborted has one line.** `STUN_DISCOVERY_FAILED`,
+`CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, and `ABORTED` and
+`PEER_FAILED` below never reached `CONNECTED`, so there is no session to end. The establishment line is that attempt's
 last line. **Whether it got there can be read from the line count.** One line means it ended
 before establishment; two lines mean it connected and then ended.
 
-How the two lines are tied to one attempt is decided together with the line format. **One
-process records several attempts.** Leaving a room returns to the lobby and allows joining again
-([`concurrency.md`](concurrency.md) chapter 7 Lobby), so the line needs an attempt identifier
-to be able to pick out the lines of one attempt. The file is append-only and is not reopened per
-attempt.
+**One process records several attempts.** Leaving a room returns to the lobby and allows joining
+again ([`concurrency.md`](concurrency.md) chapter 7 Lobby), so every line has an attempt number.
+The two lines of one attempt are tied together by that number. The file is append-only and is not
+reopened per attempt.
 
-**The path and line format are not yet decided.** They are decided in this document. Not
-arbitrarily in code. When they have to be decided is owned by [`roadmap.md`](roadmap.md).
+#### Path
 
+**It is `records\` under the folder that holds the executable. Each process creates one new
+file.**
+
+```text
+<executable folder>\records\<UTC startup time>-<PID>.log
+e.g. C:\Sangtachi\records\20261007T123456Z-4812.log
+```
+
+- The executable folder is the path of the running executable as returned by the OS
+  (`GetModuleFileNameW`) with its last component removed. Links are not resolved and the path is
+  not normalized; it is used as received. The current working folder is not used
+- The path is handled with wide-character APIs. A path containing Korean is used as is. If the
+  full path cannot be obtained (including truncation because the buffer is too small), it is the
+  same as the open failure below
+- If the `records` folder does not exist, it is created
+- The startup time is UTC in the form `YYYYMMDDTHHMMSSZ`. The PID is decimal
+- If a file with the same name already exists, no new file is created and it is a startup failure.
+  The record of another process is not overwritten or appended to
+- Files are not deleted or rotated. Accumulated files are deleted by a person
+- There is no startup argument that changes the path
+
+**It is opened at startup after the argument check and before `[loop]` starts.** After opening,
+one `record.open` line is written to the log (the fixed key table in Log Output below). That line
+carries only the file name, because the full path can contain spaces and would break under the log
+value rule. A test finds the file from the executable folder and the PID.
+
+> **Why a new file per process.** There are tests that start several processes on one machine.
+> Sharing one file would need a guarantee that concurrent appends do not interleave, and that has
+> not been confirmed.
+
+> **Why next to the executable.** The repository owner decided it ([ADR 0016](decisions/0016-local-record-file-path-and-line-format.md)). It is easy for a person to find. The cost is that the
+> executable folder must be writable. That precondition is owned by
+> [`windows-prereq.md`](windows-prereq.md) section 4 Distribution packaging.
+
+#### Line Format
+
+**A line is `<name>=<value>` pairs joined by a single space.** The fields and their order are fixed
+by the table below, and both kinds of line use the same fields. The file is UTF-8, and in practice
+only ASCII appears. A line ends with a single LF.
+
+| Order | Field | Value |
+|:--:|------|-----|
+| 1 | `v` | Format version. Currently `1` |
+| 2 | `kind` | `establish` (establishment line) or `end` (end line) |
+| 3 | `ts` | The time the line was written. UTC wall clock in milliseconds. Of the form `2026-10-07T12:34:56.789Z` |
+| 4 | `attempt` | Attempt number. See "Attempt number" below |
+| 5 | `role` | `host` or `player` |
+| 6 | `peer` | The counterpart's `peer_id` in decimal. See "Counterpart" below |
+| 7 | `result` | See "Result values" below |
+| 8 | `rtt_us` | The last RTT sample. Integer microseconds |
+| 9 | `setup_ms` | Setup time. Integer milliseconds. See "Setup time" below |
+
+**An absent value is `-`.** Neither an empty string nor `0` is used. 0 is a measured value.
+
+```text
+v=1 kind=establish ts=2026-10-07T12:34:56.789Z attempt=1 role=player peer=3021551877 result=OK rtt_us=- setup_ms=2410
+v=1 kind=end ts=2026-10-07T13:02:10.004Z attempt=1 role=player peer=3021551877 result=CLOSED rtt_us=23410 setup_ms=-
+v=1 kind=establish ts=2026-10-07T13:05:01.120Z attempt=2 role=player peer=- result=STUN_DISCOVERY_FAILED rtt_us=- setup_ms=-
+```
+
+> **Why RTT is written in microseconds.** RTT on the same LAN is below 1ms. Rounded down to integer
+> milliseconds it becomes 0, which mixes a measured value with the rule that an absent value is not
+> written as 0.
+
+> **Why the name is not written.** This file is the input to the M-6 verdict. The verdict uses
+> `peer_id`, a machine identifier. The display name is for display only ([`spec.md`](spec.md) FR-16).
+
+**Result values.**
+
+| Line | `result` |
+|----|----------|
+| Establishment line | `OK`, a failure code from `spec.md` FR-13, `ABORTED`, or `PEER_FAILED` |
+| End line | `CLOSED`, a failure code from FR-13, or `PEER_FAILED` |
+
+`ABORTED` and `PEER_FAILED` are not failure codes of FR-13. This side did not observe a failure; it gave
+up, or it received a notice from the other side that the attempt ended.
+
+**An attempt ended by the other side's `CLOSE` is split by that `reason`** ([`protocol.md`](protocol.md) 5.6 CLOSE).
+
+| `reason` | Establishment line (before `CONNECTED`) | End line (after `CONNECTED`) |
+|----------|--------------------------|--------------------------|
+| `0x00` graceful shutdown, `0x01` user cancel | `ABORTED` | `CLOSED` |
+| `0x02` configuration error, `0x03` establishment failure | `PEER_FAILED` | `PEER_FAILED` |
+
+**An attempt this side gave up uses the same two values.** If it ends by `leave`, or the shutdown event
+(`quit`, closing the window, Ctrl+C; `concurrency.md` chapter 7 Shutdown), it is `ABORTED` before
+`CONNECTED` and `CLOSED` after.
+
+An attempt that reached `CONNECTED` even once ends with an end line, even if it was renegotiating
+afterwards.
+
+> **Why have `ABORTED`.** Writing no line makes an exception to the rule "an establishment line for
+> every attempt". Writing a failure code aggregates a person giving up as a NAT failure.
+
+> **Why have `PEER_FAILED` separately.** `protocol.md` 5.6 split `reason` so that Phase 9 counts a person
+> turning it off (`0x01`) and a failure (`0x03`) separately. Writing both as one `ABORTED` makes that
+> distinction disappear from this file. The cause code of the failure is in the other side's record file.
+
+**Attempt number.** Assigned from 1, incrementing by one, when the establishment line is written.
+The end line uses the number of that session's establishment line. Files are separate per
+process, so it is unique within a file.
+
+**Counterpart.** If the `peer_id` of the attempt's counterpart has already been received, it is
+that value; if the attempt ended before that, it is `-`. A player knows the host's `peer_id` once it
+has received even one `get_peers` response. That response carries `peer_id` even before ready
+([`control_plane.md`](control_plane.md) 4.5 get_peers).
+
+**Setup time.** It has a value only when the `result` of the establishment line is `OK`. It is
+measured with a monotonic clock from the start point to the moment that session entered
+`CONNECTED`. The end line is always `-`.
+
+| Side | Start point |
+|----|----|
+| Player | The start of the STUN stage of that attempt (step 5 of `control_plane.md` 8.4 From Launch to Punch) |
+| Host | When that player first appeared in `peers` of a `host_report` response |
+
+> **Why the host's start point differs.** The host's STUN runs once when the room is created, and
+> players come in at any time after that. Measuring the host side from STUN would mix the time a
+> person waited for someone to join into the setup time. So the values of the two sides are not
+> compared with each other.
+
+#### What Counts as One Attempt
+
+**An attempt is one session, or one join or room creation that ended before a session existed.**
+The line-count verdict follows this table.
+
+| Case | Lines |
+|------|----|
+| A player connects and later ends | Establishment `OK`; the end line takes an end-line value from the result-value table above |
+| A player's STUN, join, or polling failure (including `name_taken` and `room_full`) | One establishment line. Failure code |
+| A player's punch or handshake failure | One establishment line. Failure code |
+| A host failure before the room is set up (`create_room`, STUN, `register_candidate`) | One establishment line. `peer=-`. The room is set up when `register_candidate` succeeds (`concurrency.md` chapter 7 Lobby) |
+| One host pair | Each pair is counted separately. Four players means four attempts. A pair's attempt comes into being when that pair is ready and punching starts |
+| A player seen by the host disappears from `peers` before ready (reclaim) | No host-side line. It is before the pair's attempt exists. That attempt remains in that player's record |
+| The host created a room and nobody came | No line. There was no connection attempt |
+| The host's room ended on the server and the session continues | No line. It is neither establishment nor end of a session. The end line is written when the session ends later |
+| An attempt that never reached `CONNECTED` is given up by this side or ended by the other side's `CLOSE` | One establishment line. `ABORTED` or `PEER_FAILED` per the result value table above. The host writes one line for each pair that was establishing at that moment, and one line with `peer=-` if the room was not yet set up |
+| Given up during renegotiation after reaching `CONNECTED`, or ended by the other side's `CLOSE` | End line. `CLOSED` or `PEER_FAILED` per the result value table above |
+| After connecting, renegotiation hits the punch deadline | The same attempt. That failure code in the end line |
+| The process is killed forcibly | Only the lines already written remain |
+
+#### Writing and Failure
+
+- **Each line is written to the OS immediately.** It is not accumulated in the runtime library's
+  buffer. That way the written lines survive even if the process dies. No call that flushes the
+  disk cache is made. Power loss is not covered
+- The writer is `[loop]` (`concurrency.md` chapter 5 State Ownership). With two lines per attempt,
+  the time it blocks the loop is small
+- **If the folder or file cannot be created at startup, it is a startup failure.** One `ERROR` line
+  is written and the process exits with a nonzero exit code. A run without a record cannot be judged
+  by M-6
+- **One line is one write call.** Everything up to the trailing LF is handed over at once
+- **If a write fails while running, the tunnel is left as is.** One `WARN` line, and the counter
+  `record_write_failed` is incremented. A partial write is also a failure. **After that nothing
+  more is written to that file.** Appending the next line where half a line remains would join two
+  lines into one. It is not reopened in the same process
+- The reader drops a last line that does not end with LF
+
+**The runs that can be judged are fixed.** The M-6 verdict by line count applies only to a run in
+which the process ended by `quit` or closing the window, went through the whole shutdown procedure
+(`concurrency.md` chapter 7 Shutdown), and has `record_write_failed` at 0. Any other run cannot be
+judged and is neither pass nor fail. For a process killed forcibly or a run with a write failure,
+the written lines are not all of its attempts.
 
 ### Log Output
 
@@ -899,8 +1060,9 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (remote candidates as `ip:port` joined by commas) | `spec.md` M-3, Phase 3 `get_peers` verification |
 | `timer.tick` | `name`, `elapsed_ms` (milliseconds actually elapsed since the previous expiry) | Phase 1 drain budget, Phase 3 `[loop]` survival while the control plane is dead |
 | `rx.raw` | `from`, `len`, `sha256` | Phase 1 raw send/receive comparison (3.5) |
+| `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
 
-Events not listed here may be added freely. **Only these ten keys and their field names do not
+Events not listed here may be added freely. **Only these eleven keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
 **`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From

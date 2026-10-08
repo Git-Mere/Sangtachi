@@ -327,6 +327,13 @@ subsection states its reason and when it gets verified.
 Two runtimes ship with the distribution: Wintun, which opens the virtual adapter, and Qt, which
 draws the GUI.
 
+**The process must be able to write to the distribution folder.** The local record file is
+created in a `records` folder next to the executable, and failing to create it is a startup
+failure ([`architecture.md`](architecture.md) chapter 9 Local Record File). Placing it under
+`Program Files` breaks this condition when run without administrator rights. On this machine,
+`icacls "C:\Program Files"` gives `BUILTIN\Users` only `(RX)` and `(GR,GE)` on child items, with
+no write permission.
+
 ### Wintun DLL and signature
 
 **Reason it is unverified.** Wintun has not been brought in yet. That is Phase 6 work. The commands

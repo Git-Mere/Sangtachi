@@ -503,7 +503,7 @@ so before that (8) is `[telemetry]` only.
 |---|---------|
 | 1 | signal the shutdown event (if not already) |
 | 2 | send `CLOSE` once per target session as defined by [`protocol.md`](protocol.md) 5.6 `CLOSE`. That section defines the targets and reason values. The conditions are not restated here |
-| 3 | **if a session that has not ended yet had reached `CONNECTED`, write the end line to the local record file** ([`architecture.md`](architecture.md) chapter 9. A session already in a terminal state has written that line and does not write it again) |
+| 3 | **write the line of each unfinished attempt to the local record file** ([`architecture.md`](architecture.md) chapter 9). A session that had reached `CONNECTED` gets the end line `CLOSED`; an attempt that was still establishing gets the establishment line `ABORTED`. A session already in a terminal state has written that line and does not write it again |
 | 4 | **emit all counters as a `counter` event** (`architecture.md` chapter 9) |
 | 5 | end the adapter session |
 | 6 | clean up the adapter/address/route |

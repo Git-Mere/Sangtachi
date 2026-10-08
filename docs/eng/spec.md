@@ -264,15 +264,11 @@ confirms the path does not go through AWS.
 - In Phase 4 the verdict uses synthesized packets without Wintun. Carrying real application
   traffic is confirmed in T-3
 
-**M-6.** **It cannot be judged yet.** The path and line format of the record file are not
-decided. Until they are, the rules below have nothing to apply to. When they are decided is held
-by `roadmap.md` Phase 4 in its before-start items.
+**M-6.** The client writes the connection result (success, an FR-13 failure code, an abort, or a failure notice
+from the other side) and RTT to a local record file. The path, the line format, and what one attempt is are held by
+`architecture.md` chapter 9 Local Record File. Two things are subject to the verdict.
 
-Once decided, the verdict is this. The client writes the connection result (success or an FR-13
-failure code) and RTT to a local record file. The contract is in `architecture.md` chapter 9. Two
-things are subject to the verdict.
-
-- An attempt that fails to establish is one line; an attempt that reaches `CONNECTED` is two
+- An attempt that does not reach `CONNECTED` is one line; an attempt that reaches `CONNECTED` is two
   lines, an establishment line and a termination line
 - An empty RTT is normal when there is no sample. `PING` starts after `CONNECTED`, so the
   establishment line usually has no sample. An empty RTT is not judged a failure

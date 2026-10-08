@@ -305,6 +305,11 @@ function Invoke-NetQuerySafe([scriptblock]$Query) {
 
 배포물에 함께 넣는 런타임은 둘이다. 가상 어댑터를 여는 Wintun 과 GUI 를 그리는 Qt 다.
 
+**배포물 폴더에 그 프로세스가 쓸 수 있어야 한다.** 로컬 기록 파일이 실행 파일 옆 `records` 폴더에
+생기고, 만들지 못하면 기동 실패다([`architecture.md`](architecture.md) 9장 로컬 기록 파일). 관리자
+권한 없이 실행하는 경우 `Program Files` 아래에 두면 이 조건이 깨진다. 이 기기의 `icacls "C:\Program Files"`
+에서 `BUILTIN\Users` 는 `(RX)` 와 하위 항목의 `(GR,GE)` 뿐이고 쓰기 권한이 없다.
+
 ### Wintun DLL 과 서명
 
 **미검증 사유.** Wintun 을 아직 도입하지 않았다. Phase 6 작업이다. 아래 명령은 `wintun.dll`

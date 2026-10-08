@@ -468,6 +468,275 @@ cases.append(("run_punch: RTT 표본이 쌓인다",
               (_pr["rtt_ms"] or {}).get("samples", 0) >= 3, _pr["rtt_ms"]))
 
 
+# --- 다중 펀치 (host, players) -----------------------------------------------
+# 쌍 판정 표. run_punch 와 같은 규칙이다.
+for (ping, pong), want in {(0, 0): "failure", (1, 0): "one-way", (0, 1): "success",
+                           (3, 2): "success"}.items():
+    cases.append((f"link_result ping={ping} pong={pong}", np.link_result(ping, pong) == want,
+                  np.link_result(ping, pong)))
+
+for n in (0, np.MULTI_MAX_LINKS + 1):
+    try:
+        np.run_links([(None, ("127.0.0.1", 9))] * n, 0.1)
+        cases.append((f"run_links 쌍 {n}개 거부", False, "통과됨"))
+    except ValueError:
+        cases.append((f"run_links 쌍 {n}개 거부", True, None))
+
+
+def _udp():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    s.setblocking(False)
+    return s
+
+
+def _multi(players_live: int, players_dead: int, strangers: int, duration=1.0):
+    """호스트 소켓 하나와 플레이어 소켓 여럿. 살아 있는 플레이어는 한 run_links 로 함께 돈다
+    (players 모드와 같은 모양). 죽은 플레이어는 소켓만 있고 아무것도 보내지 않는다.
+    낯선 소켓은 호스트 목록에 없는데 호스트로 펀치한다."""
+    host = _udp()
+    live = [_udp() for _ in range(players_live)]
+    dead = [_udp() for _ in range(players_dead)]
+    strange = [_udp() for _ in range(strangers)]
+    out = {}
+
+    def run_players():
+        out["players"] = np.run_links([(s, host.getsockname()) for s in live], duration)
+
+    def run_strangers():
+        out["strangers"] = np.run_links([(s, host.getsockname()) for s in strange], duration)
+
+    ths = [_th.Thread(target=run_players)]
+    if strange:
+        ths.append(_th.Thread(target=run_strangers))
+    for t in ths:
+        t.start()
+    try:
+        out["host"] = np.run_links([(host, s.getsockname()) for s in live + dead], duration)
+    finally:
+        for t in ths:
+            t.join(timeout=5)
+        for s in [host] + live + dead + strange:
+            s.close()
+    return out
+
+
+_m = _multi(3, 0, 0)
+cases.append(("host: 세 상대 모두 success", _m["host"]["all_success"],
+              [x["result"] for x in _m["host"]["links"]]))
+cases.append(("players: 소켓 셋 모두 success", _m["players"]["all_success"],
+              [x["result"] for x in _m["players"]["links"]]))
+cases.append(("host: 출발지가 각 상대와 맞는다",
+              all(x["source_matches_expected"] for x in _m["host"]["links"]),
+              [x["inbound_sources"] for x in _m["host"]["links"]]))
+cases.append(("host: 쌍마다 PING 과 PONG 이 따로 쌓인다",
+              all(x["recv_ping"] >= 2 and x["recv_pong"] >= 2 for x in _m["host"]["links"]),
+              [(x["recv_ping"], x["recv_pong"]) for x in _m["host"]["links"]]))
+cases.append(("host: 귀속 없는 PING 이 없다", _m["host"]["unattributed_inbound"] == {},
+              _m["host"]["unattributed_inbound"]))
+
+_m = _multi(2, 1, 0)
+_r = [x["result"] for x in _m["host"]["links"]]
+cases.append(("host: 응답 없는 상대 하나만 failure", _r == ["success", "success", "failure"], _r))
+cases.append(("host: 응답 없는 상대에 수신이 잘못 붙지 않는다",
+              _m["host"]["links"][2]["recv_ping"] == 0 and _m["host"]["links"][2]["recv_pong"] == 0,
+              _m["host"]["links"][2]))
+cases.append(("host: 하나라도 실패면 all_success 아님", _m["host"]["all_success"] is False, None))
+
+_m = _multi(2, 0, 1)
+cases.append(("host: 목록 밖 출발지의 PING 은 귀속 없음으로만 센다",
+              len(_m["host"]["unattributed_inbound"]) == 1, _m["host"]["unattributed_inbound"]))
+cases.append(("host: 목록 밖 출발지가 다른 쌍의 수신에 붙지 않는다",
+              all(len(x["inbound_sources"]) == 1 for x in _m["host"]["links"]),
+              [x["inbound_sources"] for x in _m["host"]["links"]]))
+cases.append(("host: 목록 밖 상대에게도 PONG 은 돌려준다",
+              _m["strangers"]["links"][0]["recv_pong"] >= 1, _m["strangers"]["links"][0]["result"]))
+
+# 소켓을 쓰는 쌍이 하나면 출발지를 보지 않는다. run_punch 와 같다. 상대 NAT 이 다른 매핑을
+# 쓰면 예상과 다른 포트에서 오는 것이 정상이고 그것이 관측 대상이기 때문이다.
+_m = _multi(1, 0, 1)
+cases.append(("host: 쌍이 하나면 출발지로 거르지 않는다 (run_punch 와 같다)",
+              _m["host"]["unattributed_inbound"] == {}
+              and len(_m["host"]["links"][0]["inbound_sources"]) == 2,
+              _m["host"]["links"][0]["inbound_sources"]))
+
+
+def _forged_pong():
+    """세션이 다른 PONG 은 어느 쌍에도 세지 않는다."""
+    host = _udp()
+    peer = _udp()
+    stop = _th.Event()
+
+    def loop():
+        peer.settimeout(0.05)
+        while not stop.is_set():
+            try:
+                data, src = peer.recvfrom(2048)
+            except OSError:
+                continue
+            p = np.parse_punch(data)
+            if p and p[0] == np.PUNCH_PING:
+                _k, sess, seq, ts = p
+                peer.sendto(np.build_punch(np.PUNCH_PONG, sess ^ 1, seq, ts), src)
+
+    t = _th.Thread(target=loop, daemon=True)
+    t.start()
+    try:
+        return np.run_links([(host, peer.getsockname()), (host, ("127.0.0.1", 9))], 0.6)
+    finally:
+        stop.set(); t.join(timeout=1); host.close(); peer.close()
+
+_f = _forged_pong()
+cases.append(("run_links: 세션이 다른 PONG 은 세지 않는다",
+              all(x["recv_pong"] == 0 for x in _f["links"]) and _f["non_punch_datagrams"] >= 1,
+              [(x["recv_pong"], x["rejected_pong"]) for x in _f["links"]]))
+
+
+def _pong_variant(transform, two_socks=False, repeat=1, reply_from_other_port=False):
+    """상대가 PONG 을 바꿔 돌려준다. transform(sess, seq, ts, src, socks) -> (sess, seq, ts, dst)."""
+    a = _udp()
+    b = _udp() if two_socks else None
+    peer = _udp()
+    replier = _udp() if reply_from_other_port else peer
+    stop = _th.Event()
+    socks = [a] + ([b] if b else [])
+
+    def loop():
+        peer.settimeout(0.05)
+        while not stop.is_set():
+            try:
+                data, src = peer.recvfrom(2048)
+            except OSError:
+                continue
+            p = np.parse_punch(data)
+            if p and p[0] == np.PUNCH_PING:
+                _k, sess, seq, ts = p
+                sess, seq, ts, dst = transform(sess, seq, ts, src, socks)
+                for _ in range(repeat):
+                    replier.sendto(np.build_punch(np.PUNCH_PONG, sess, seq, ts), dst)
+
+    t = _th.Thread(target=loop, daemon=True)
+    t.start()
+    try:
+        return np.run_links([(s, peer.getsockname()) for s in socks], 0.6)
+    finally:
+        stop.set(); t.join(timeout=1)
+        for s in socks + [peer] + ([replier] if replier is not peer else []):
+            s.close()
+
+_v = _pong_variant(lambda sess, seq, ts, src, socks: (sess, seq, ts + 1, src))
+cases.append(("run_links: 타임스탬프가 다른 PONG 은 세지 않는다",
+              _v["links"][0]["recv_pong"] == 0 and _v["links"][0]["rejected_pong"] >= 1,
+              (_v["links"][0]["recv_pong"], _v["links"][0]["rejected_pong"])))
+
+
+def _other_sock(sess, seq, ts, src, socks):
+    # 받은 소켓이 아닌 다른 소켓으로 PONG 을 보낸다. 세션은 그대로다.
+    a, b = socks
+    other = b if src[1] == a.getsockname()[1] else a
+    return sess, seq, ts, other.getsockname()
+
+_v = _pong_variant(_other_sock, two_socks=True)
+cases.append(("run_links: 다른 소켓으로 온 PONG 은 세지 않는다",
+              all(x["recv_pong"] == 0 for x in _v["links"]),
+              [(x["recv_pong"], x["rejected_pong"]) for x in _v["links"]]))
+
+
+_same = lambda sess, seq, ts, src, socks: (sess, seq, ts, src)
+_v = _pong_variant(_same, repeat=2)
+_l = _v["links"][0]
+cases.append(("run_links: 같은 PONG 두 번은 한 번만 센다",
+              _l["recv_pong"] >= 1 and _l["recv_pong"] == _l["rtt_ms"]["samples"]
+              and _l["recv_pong"] <= _l["sent"] and _l["rejected_pong"] >= _l["recv_pong"],
+              (_l["sent"], _l["recv_pong"], _l["rejected_pong"])))
+
+_v = _pong_variant(_same, reply_from_other_port=True)
+_l = _v["links"][0]
+cases.append(("run_links: 다른 포트에서 온 PONG 도 세션이 맞으면 센다",
+              _l["result"] == "success" and _l["source_matches_expected"] is False,
+              (_l["result"], _l["inbound_sources"])))
+
+
+# --- 준비 중 매핑 갱신과 펀치 직전 확인 ----------------------------------------
+def _fake_stun(mapped=("203.0.113.7", 40000)):
+    """루프백 STUN 서버. 받은 요청의 트랜잭션 ID 로 고정된 매핑을 돌려준다."""
+    srv = _udp()
+    seen = []
+    stop = _th.Event()
+
+    def loop():
+        srv.settimeout(0.02)
+        while not stop.is_set():
+            try:
+                data, src = srv.recvfrom(2048)
+            except OSError:
+                continue
+            seen.append(src)
+            srv.sendto(resp(mapped_ip=mapped[0], mapped_port=mapped[1], txid=data[8:20]), src)
+
+    t = _th.Thread(target=loop, daemon=True)
+    t.start()
+
+    def close():
+        stop.set(); t.join(timeout=1); srv.close()
+    return srv.getsockname(), seen, close
+
+_addr, _seen, _close = _fake_stun()
+_s = _udp()
+try:
+    with np.MappingKeeper([(_s, _addr)], interval_s=0.05) as _k:
+        _t.sleep(0.3)
+    cases.append(("MappingKeeper: 준비 중 주기적으로 보낸다", _k.sent >= 3 and len(_seen) >= 3,
+                  (_k.sent, len(_seen))))
+    _n = len(_seen)
+    _t.sleep(0.2)
+    cases.append(("MappingKeeper: 끝나면 멈춘다", len(_seen) == _n, (_n, len(_seen))))
+    _ok = np.recheck_endpoint(_s, _addr, "203.0.113.7:40000")
+    cases.append(("recheck: 같으면 unchanged", _ok["unchanged"] is True, _ok))
+    _bad = np.recheck_endpoint(_s, _addr, "203.0.113.7:40001")
+    cases.append(("recheck: 다르면 unchanged 아님", _bad["unchanged"] is False, _bad))
+finally:
+    _s.close(); _close()
+
+_a1, _seen1, _c1 = _fake_stun()
+_a2, _seen2, _c2 = _fake_stun()
+_s1, _s2 = _udp(), _udp()
+try:
+    with np.MappingKeeper([(_s1, _a1), (_s2, _a2)], interval_s=0.05):
+        _t.sleep(0.3)
+    _p1 = {p for _h, p in _seen1}
+    _p2 = {p for _h, p in _seen2}
+    cases.append(("MappingKeeper: 소켓마다 자기 서버로 보낸다",
+                  _p1 == {_s1.getsockname()[1]} and _p2 == {_s2.getsockname()[1]}, (_p1, _p2)))
+finally:
+    _s1.close(); _s2.close(); _c1(); _c2()
+
+_a3, _seen3, _c3 = _fake_stun()
+_s3 = _udp()
+try:
+    _k3 = np.MappingKeeper(interval_s=0.05)
+    _k3.__enter__()
+    _t.sleep(0.2)
+    _before = len(_seen3)
+    _k3.add(_s3, _a3)
+    _t.sleep(0.3)
+    _k3.__exit__(None, None, None)
+    _k3.__exit__(None, None, None)
+    cases.append(("MappingKeeper: 돌던 중 더한 쌍도 살린다, 두 번 끝내도 된다",
+                  _before == 0 and len(_seen3) >= 3, (_before, len(_seen3))))
+finally:
+    _s3.close(); _c3()
+
+cases.append(("first_stun_server: 응답한 첫 서버",
+              np.first_stun_server({"servers": [
+                  {"ok": False, "resolved_ip": "192.0.2.1", "port": 1},
+                  {"ok": True, "resolved_ip": "192.0.2.2", "port": 3478}]}) == ("192.0.2.2", 3478),
+              None))
+cases.append(("first_stun_server: 없으면 None",
+              np.first_stun_server({"servers": [{"ok": False, "resolved_ip": None, "port": 1}]}) is None,
+              None))
+
+
 fail = 0
 for name, ok, detail in cases:
     print(("PASS  " if ok else "FAIL  ") + name)

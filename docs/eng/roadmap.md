@@ -508,6 +508,10 @@ they are decided
   - **Measure at the same time how one host behaves while punching four pairs at once.** The 22
     measurements today assume two parties and say nothing about the host side of a star topology
     ([ADR 0006](decisions/0006-star-topology-no-relay.md))
+    - The tools are `host` and `players` in `tools/nat-probe`. Its README owns the procedure and the
+      limits of the emulation
+    - Passing means three consecutive runs in which all four pairs on the host side are `success`. Only
+      runs that pass the pre-punch check count
   - This measurement decides whether to judge the risk of the host NAT before the room is created and
     warn the person (ADR 0006). If it goes in, first fix what that verdict takes as input
 

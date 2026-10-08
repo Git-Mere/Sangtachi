@@ -864,6 +864,157 @@ def run_punch(sock: socket.socket, peer: tuple, duration_s: float) -> dict:
     }
 
 
+
+# --- 다중 펀치 (host, players) ------------------------------------------------
+# 스타 토폴로지의 호스트는 소켓 하나로 여러 상대와 동시에 펀치한다(ADR 0006). run_punch 는
+# 상대 하나라 그것을 재지 못한다. 아래는 (소켓, 상대) 쌍 여러 개를 한 루프에서 돌린다.
+# 소켓을 여러 쌍이 나눠 쓸 수 있다(host). 쌍마다 소켓이 따로일 수도 있다(players).
+#
+# run_punch 는 그대로 둔다. 2자 실측 22건이 그 함수로 돌았고 시험이 그것을 덮는다.
+
+MULTI_MAX_LINKS = 8
+
+
+def link_result(recv_ping: int, recv_pong: int) -> str:
+    """쌍 하나의 판정. run_punch 와 같은 규칙이다."""
+    if recv_pong > 0:
+        return "success"
+    if recv_ping > 0:
+        return "one-way"
+    return "failure"
+
+
+def run_links(links: list, duration_s: float, interval_s: float = PUNCH_INTERVAL_S) -> dict:
+    """`links` 는 `(sock, peer)` 목록이다. 모든 쌍에 `interval_s` 마다 PING 을 보낸다.
+
+    어느 쌍의 것인지는 이렇게 가른다.
+
+      PONG  내가 그 쌍에 준 세션 값으로 가른다. 세션은 쌍마다 다르다. 출발지는 보지 않는다
+            (run_punch 와 같다). 시퀀스와 타임스탬프가 내가 보낸 PING 과 맞아야 센다
+      PING  그 소켓을 쓰는 쌍이 하나면 그 쌍이다(출발지를 보지 않는다. run_punch 와 같다).
+            여럿이면 출발지가 그 쌍의 상대와 같아야 한다. 아무 쌍과도 맞지 않으면
+            `unattributed_inbound` 에만 센다. 어느 쪽이든 받은 소켓으로 출발지에 PONG 을 돌려준다
+    """
+    if not 1 <= len(links) <= MULTI_MAX_LINKS:
+        raise ValueError(f"쌍은 1개 이상 {MULTI_MAX_LINKS}개 이하다")
+    socks = []
+    for sock, _ in links:
+        if all(sock is not s for s in socks):
+            socks.append(sock)
+    sessions = set()
+    state = []
+    for sock, peer in links:
+        session = secrets.randbits(32)
+        while session in sessions:
+            session = secrets.randbits(32)
+        sessions.add(session)
+        state.append({"sock": sock, "peer": peer, "session": session, "peer_session": None,
+                      "sent_pings": {}, "acked": set(), "sent": 0, "recv_ping": 0,
+                      "recv_pong": 0, "rejected_pong": 0, "first_inbound_ms": None,
+                      "rtts": [], "sources": {}})
+    by_session = {s["session"]: s for s in state}
+    per_sock = {id(sock): [s for s in state if s["sock"] is sock] for sock in socks}
+    unattributed: dict = {}
+    other = 0
+    next_phase = 0
+    start = time.monotonic()
+
+    def note_inbound(s, src):
+        key = f"{src[0]}:{src[1]}"
+        s["sources"][key] = s["sources"].get(key, 0) + 1
+        if s["first_inbound_ms"] is None:
+            s["first_inbound_ms"] = round((time.monotonic() - start) * 1000.0, 1)
+
+    try:
+        for event, payload in _timed_send_recv(socks, start, duration_s, interval_s):
+            if event == "send":
+                seq, ts = payload
+                for s in state:
+                    try:
+                        s["sock"].sendto(build_punch(PUNCH_PING, s["session"], seq, ts), s["peer"])
+                        s["sent_pings"][seq] = ts
+                        s["sent"] += 1
+                    except OSError:
+                        pass
+                continue
+
+            sock, data, src = payload
+            parsed = parse_punch(data)
+            if parsed is None:
+                other += 1
+                continue
+            kind, rsession, rseq, ts_ns = parsed
+            if kind not in (PUNCH_PING, PUNCH_PONG):
+                next_phase += 1
+                continue
+
+            if kind == PUNCH_PONG:
+                s = by_session.get(rsession)
+                if (s is None or s["sock"] is not sock or rseq not in s["sent_pings"]
+                        or s["sent_pings"][rseq] != ts_ns or rseq in s["acked"]):
+                    if s is not None:
+                        s["rejected_pong"] += 1
+                    else:
+                        other += 1
+                    continue
+                note_inbound(s, src)
+                s["acked"].add(rseq)
+                s["recv_pong"] += 1
+                s["rtts"].append((time.monotonic_ns() - ts_ns) / 1e6)
+                continue
+
+            # PING
+            on_sock = per_sock[id(sock)]
+            if len(on_sock) == 1:
+                s = on_sock[0]
+            else:
+                s = next((x for x in on_sock if x["peer"] == (src[0], src[1])), None)
+            if s is None:
+                key = f"{src[0]}:{src[1]}"
+                unattributed[key] = unattributed.get(key, 0) + 1
+            else:
+                note_inbound(s, src)
+                s["recv_ping"] += 1
+                if s["peer_session"] is None:
+                    s["peer_session"] = rsession
+            try:
+                sock.sendto(build_punch(PUNCH_PONG, rsession, rseq, ts_ns), src)
+            except OSError:
+                pass
+    except KeyboardInterrupt:
+        print("  중단됨")
+
+    out = []
+    for s in state:
+        expected = f"{s['peer'][0]}:{s['peer'][1]}"
+        rtts = s["rtts"]
+        out.append({
+            "peer_endpoint": expected,
+            "local_port": s["sock"].getsockname()[1],
+            "session": s["session"],
+            "peer_session": s["peer_session"],
+            "sent": s["sent"],
+            "recv_ping": s["recv_ping"],
+            "recv_pong": s["recv_pong"],
+            "rejected_pong": s["rejected_pong"],
+            "first_inbound_ms": s["first_inbound_ms"],
+            "rtt_ms": None if not rtts else {
+                "min": round(min(rtts), 2), "median": round(statistics.median(rtts), 2),
+                "max": round(max(rtts), 2), "samples": len(rtts)},
+            "inbound_sources": sorted(s["sources"]),
+            "source_matches_expected": (list(s["sources"]) == [expected]) if s["sources"] else False,
+            "result": link_result(s["recv_ping"], s["recv_pong"]),
+        })
+    return {
+        "duration_s": duration_s,
+        "links": out,
+        "all_success": all(x["result"] == "success" for x in out),
+        "unattributed_inbound": unattributed,
+        "non_punch_datagrams": other,
+        "next_phase_datagrams": next_phase,
+    }
+
+
 def unsolicited_verdict(recv: int, ack_recv: int, sent: int,
                        peer_ready: bool, peer_sent: int) -> tuple:
     """(상대가 단계를 돌았는가, 내 쪽 판정, 상대 쪽 판정).
@@ -1239,7 +1390,7 @@ def _new_record(args, local_ip: str, local_port: int) -> dict:
         "socket": {
             "local_ip": local_ip,
             "local_port": local_port,
-            "reused_for_punch": args.mode == "punch",
+            "reused_for_punch": args.mode in ("punch", "host"),
             "udp_connreset_disabled": _connreset_state["disabled"],
             "udp_connreset_detail": _connreset_state["detail"],
             "behind_nat": None,
@@ -1249,7 +1400,185 @@ def _new_record(args, local_ip: str, local_port: int) -> dict:
         "stun": None,
         "punch": None,
         "unsolicited": None,
+        "links": None,
+        "player_sockets": None,
+        "prepunch": None,
     }
+
+
+# 엔드포인트를 손으로 주고받는 동안 매핑이 만료되지 않게 한다. 실측한 가정망 하나는 유휴 60초 안에
+# 매핑이 끝났다(tools/nat-lifetime). 엔드포인트 넷을 입력하는 데는 그보다 오래 걸릴 수 있다.
+KEEP_MAPPING_INTERVAL_S = 10.0
+
+
+class MappingKeeper:
+    """준비하는 동안 소켓마다 STUN 서버로 Binding Request 를 주기적으로 보낸다. 응답은 기다리지 않는다.
+
+    `pairs` 는 `(sock, server)` 목록이다. 소켓마다 자기 엔드포인트를 알려 준 그 서버로 보낸다. 매핑이
+    목적지마다 다르면 다른 서버로 보내서는 알려 준 매핑이 살지 않는다.
+    늦게 온 응답은 다음 단계에서 STUN 이 아닌 데이터그램으로 버려진다(`non_punch_datagrams`).
+    """
+
+    def __init__(self, pairs=(), interval_s=KEEP_MAPPING_INTERVAL_S):
+        import threading
+        self.pairs = list(pairs)
+        self._lock = threading.Lock()
+        self.interval_s = interval_s
+        self.sent = 0
+        self.errors = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while not self._stop.wait(self.interval_s):
+            with self._lock:
+                pairs = list(self.pairs)
+            for s, server in pairs:
+                try:
+                    s.sendto(build_binding_request(secrets.token_bytes(12)), server)
+                    self.sent += 1
+                except OSError:
+                    self.errors += 1
+
+    def add(self, sock, server) -> None:
+        """돌고 있는 동안 쌍을 더한다. players 가 STUN 을 마친 소켓부터 바로 살려 두는 데 쓴다."""
+        with self._lock:
+            self.pairs.append((sock, server))
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=2)
+        return False
+
+
+def first_stun_server(stun: dict) -> "tuple | None":
+    """응답한 첫 서버의 주소. 준비 중 갱신과 펀치 직전 확인이 쓴다."""
+    for s in stun["servers"]:
+        if s["ok"] and s.get("resolved_ip"):
+            return (s["resolved_ip"], s["port"])
+    return None
+
+
+def recheck_endpoint(sock, server: tuple, announced: str) -> dict:
+    """펀치 직전에 같은 소켓의 공인 엔드포인트를 다시 본다. 알려 준 값과 다르면 그 회차는 판정에 쓰지 않는다."""
+    r = stun_query(sock, server[0], server[1], [])
+    now = None
+    if r["ok"]:
+        now = f"{r['mapped']['ip']}:{r['mapped']['port']}"
+    return {"announced": announced, "observed": now, "ok": r["ok"],
+            "unchanged": bool(r["ok"]) and now == announced}
+
+
+def _ask_endpoints(n: int, what: str = "상대") -> "list | None":
+    """엔드포인트를 하나씩 묻는다. 명령줄에 남기지 않기 위해서다(README `--peer` 경고)."""
+    peers = []
+    for i in range(n):
+        label = f"{what} {i + 1}/{n}" if n > 1 else what
+        text = input(f"  {label} 엔드포인트 (IP:PORT) > ")
+        try:
+            peer = parse_endpoint(text)
+        except (ValueError, OSError):
+            print("  [error] 상대 엔드포인트를 읽을 수 없다")
+            return None
+        if peer in peers:
+            print("  [error] 같은 엔드포인트를 두 번 넣었다")
+            return None
+        peers.append(peer)
+    return peers
+
+
+def _print_prepunch(pre: dict) -> None:
+    bad = [i for i, c in enumerate(pre["checks"], 1) if not c["unchanged"]]
+    if bad:
+        print(f"  [warn] 펀치 직전 공인 엔드포인트가 알려 준 값과 다르거나 확인되지 않았다: 소켓 {bad}")
+        print("         이 회차는 판정에 쓰지 않는다. 엔드포인트를 다시 주고받고 새로 돌린다")
+    else:
+        print("  펀치 직전 확인: 알려 준 엔드포인트 그대로다")
+
+
+def _print_links(res: dict) -> None:
+    print()
+    for i, x in enumerate(res["links"], 1):
+        print(f"  상대 {i}: {x['result']:<8} 송신 {x['sent']}, PING 수신 {x['recv_ping']}, "
+              f"PONG 수신 {x['recv_pong']}"
+              + ("" if x["source_matches_expected"] or not x["inbound_sources"]
+                 else "  [warn] 예상과 다른 출발지"))
+    print(f"  전부 success: {'예' if res['all_success'] else '아니오'}")
+    if res["unattributed_inbound"]:
+        print(f"  [warn] 어느 상대에도 속하지 않은 PING 출발지 {len(res['unattributed_inbound'])}곳")
+
+
+def _run_players(args, servers: list) -> int:
+    """소켓 `count` 개를 열고 소켓마다 STUN 을 돈 뒤, 모두 같은 호스트 하나와 펀치한다."""
+    socks = []
+    keeper = None
+    try:
+        for i in range(args.count):
+            socks.append(make_socket(0, record_state=(i == 0)))
+        local_ip = primary_local_ip()
+        record = _new_record(args, local_ip, socks[0].getsockname()[1])
+        record["socket"]["reused_for_punch"] = True
+        print()
+        print(f"natprobe players  label={args.label}  소켓 {args.count}개")
+        record["player_sockets"] = []
+        # STUN 을 마친 소켓부터 바로 살려 둔다. 뒤 소켓들의 STUN 이 길어져도 앞 소켓의 매핑이 끝나지 않게 한다.
+        keeper = MappingKeeper()
+        keeper.__enter__()
+        for i, s in enumerate(socks, 1):
+            port = s.getsockname()[1]
+            stun = run_stun(s, servers, port)
+            nat = classify_nat(local_ip, port, stun["servers"])
+            record["player_sockets"].append({"local_port": port, "stun": stun, **nat})
+            srv = first_stun_server(stun)
+            if srv is not None:
+                keeper.add(s, srv)
+            print(f"  소켓 {i}: 매핑 {stun['mapping']}")
+        record["stun"] = record["player_sockets"][0]["stun"]
+        record["socket"].update(classify_nat(local_ip, socks[0].getsockname()[1],
+                                             record["stun"]["servers"]))
+        print()
+        mine = [shareable_endpoint(p["stun"]) for p in record["player_sockets"]]
+        if not all(mine):
+            keeper.__exit__(None, None, None)
+            print("  [error] 공인 엔드포인트를 얻지 못한 소켓이 있다. 호스트에게 줄 값이 없다")
+            path = save(record, args.out, args.label, args.mode)
+            print(f"  기록: {path}")
+            return 2
+        print("  >>> 호스트에게 알려줄 엔드포인트 (순서대로):")
+        for i, e in enumerate(mine, 1):
+            print(f"      {i}. {e}")
+        print()
+        servers_each = [first_stun_server(p["stun"]) for p in record["player_sockets"]]
+        # 확인은 함께 누르는 Enter 앞에서 한다. 뒤에서 하면 확인 시간만큼 펀치 시작이 어긋난다.
+        try:
+            host = _ask_endpoints(1, "호스트")
+            if host is None:
+                return 2
+            checks = [recheck_endpoint(s, srv, e) for s, srv, e in zip(socks, servers_each, mine)]
+            _print_prepunch({"checks": checks})
+            input("  호스트와 함께 준비되면 Enter > ")
+        finally:
+            keeper.__exit__(None, None, None)
+        record["prepunch"] = {"keepalive_sent": keeper.sent, "checks": checks}
+        print()
+        print(f"  소켓 {args.count}개가 호스트로 {args.duration:.0f}초 동안 펀치. Ctrl+C 로 중단")
+        record["links"] = run_links([(s, host[0]) for s in socks], args.duration)
+        _print_links(record["links"])
+    finally:
+        if keeper is not None:
+            keeper.__exit__(None, None, None)  # 여러 번 불러도 된다
+        for s in socks:
+            s.close()
+    path = save(record, args.out, args.label, args.mode)
+    print()
+    print(f"  기록: {path}")
+    print("  RECORD-TEMPLATE.md 에 옮겨 적는다. 3회 반복이 필요하다.")
+    print()
+    return 0
 
 
 def main(argv=None) -> int:
@@ -1273,7 +1602,9 @@ def main(argv=None) -> int:
                          "방화벽 시험처럼 IPv4 경로를 전제하는 곳에서 쓴다")
 
     for name, help_text in (("probe", "STUN 매핑 거동만 측정"),
-                            ("punch", "STUN 측정 후 같은 소켓으로 홀펀칭 시도")):
+                            ("punch", "STUN 측정 후 같은 소켓으로 홀펀칭 시도"),
+                            ("host", "소켓 하나로 여러 상대와 동시에 펀치. 스타 토폴로지의 호스트"),
+                            ("players", "소켓 여러 개가 각자 한 상대(호스트)와 펀치. 플레이어 여럿을 흉내")):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--label", default=socket.gethostname(), help="망 식별자. 기본값 호스트명")
         p.add_argument("--port", type=int, default=0, help="로컬 UDP 포트. 기본값 0(임시)")
@@ -1290,6 +1621,16 @@ def main(argv=None) -> int:
             p.add_argument("--unsolicited-duration", type=float,
                            default=UNSOL_DEFAULT_DURATION_S,
                            help="위 시험 시간(초). 기본 10")
+        if name == "host":
+            p.add_argument("--peers", type=int, required=True,
+                           help=f"상대 수. 1~{MULTI_MAX_LINKS}. 엔드포인트는 실행 중에 하나씩 묻는다")
+            p.add_argument("--duration", type=float, default=PUNCH_DEFAULT_DURATION_S,
+                           help="펀치 시도 시간(초). 기본 30")
+        if name == "players":
+            p.add_argument("--count", type=int, required=True,
+                           help=f"소켓 수. 1~{MULTI_MAX_LINKS}. 소켓마다 STUN 을 따로 돈다")
+            p.add_argument("--duration", type=float, default=PUNCH_DEFAULT_DURATION_S,
+                           help="펀치 시도 시간(초). 기본 30")
 
     args = ap.parse_args(argv)
 
@@ -1298,6 +1639,13 @@ def main(argv=None) -> int:
 
     try:
         local_port = valid_port(args.port, allow_zero=True)
+        if args.mode in ("host", "players"):
+            valid_duration(args.duration)
+            n = args.peers if args.mode == "host" else args.count
+            if not 1 <= n <= MULTI_MAX_LINKS:
+                raise ValueError(f"상대 수는 1~{MULTI_MAX_LINKS} 다")
+            if args.mode == "players" and args.port:
+                raise ValueError("players 는 --port 를 받지 않는다. 소켓마다 임시 포트다")
         if args.mode == "punch":
             valid_duration(args.duration)
             if args.unsolicited:
@@ -1318,6 +1666,9 @@ def main(argv=None) -> int:
     except OSError:
         # 이름 해석 실패. 예외 문자열과 역추적에 입력값이 들어가므로 되쓰지 않는다.
         ap.error("상대 엔드포인트의 호스트를 해석할 수 없다")
+
+    if args.mode == "players":
+        return _run_players(args, servers)
 
     sock = make_socket(local_port)
     local_ip = primary_local_ip()
@@ -1348,6 +1699,26 @@ def main(argv=None) -> int:
             print(f"  >>> 상대에게 알려줄 내 엔드포인트: {mine}")
         if record["stun"]["mapping"] == "destination-dependent":
             print("  [warn] 매핑이 목적지마다 달라서 위 값이 상대에게 유효하지 않을 수 있다.")
+
+        if args.mode == "host":
+            print()
+            server = first_stun_server(record["stun"])
+            if not mine or server is None:
+                print("  [error] 공인 엔드포인트를 얻지 못했다. 상대에게 줄 값이 없다")
+                return 2
+            # 확인은 함께 누르는 Enter 앞에서 한다. 뒤에서 하면 확인 시간만큼 펀치 시작이 어긋난다.
+            with MappingKeeper([(sock, server)]) as keeper:
+                peers = _ask_endpoints(args.peers)
+                if peers is None:
+                    return 2
+                checks = [recheck_endpoint(sock, server, mine)]
+                _print_prepunch({"checks": checks})
+                input("  모두 준비되면 Enter. 상대 쪽과 거의 동시에 누른다 > ")
+            record["prepunch"] = {"keepalive_sent": keeper.sent, "checks": checks}
+            print()
+            print(f"  상대 {len(peers)}곳으로 {args.duration:.0f}초 동안 동시에 펀치. Ctrl+C 로 중단")
+            record["links"] = run_links([(sock, p) for p in peers], args.duration)
+            _print_links(record["links"])
 
         if args.mode == "punch":
             peer_text = args.peer

@@ -10,6 +10,8 @@ NAT 매핑 거동과 UDP 홀펀칭 실측 도구. 표준 라이브러리만 쓴�
 |-----------|---------|------|
 | `probe` | STUN Binding 으로 **매핑 거동**만 | 혼자 |
 | `punch` | `probe` 를 먼저 하고 **같은 소켓으로** 실제 홀펀칭 | 양쪽 망에서 동시에 |
+| `host` | `probe` 를 먼저 하고 **소켓 하나로 여러 상대와 동시에** 홀펀칭. 스타 토폴로지의 호스트 | 상대 쪽과 동시에 |
+| `players` | 소켓 여러 개가 각자 `probe` 를 하고, 모두 **한 호스트와** 홀펀칭. 플레이어 여럿을 한 기기에서 흉내 | 호스트와 동시에 |
 
 **`probe` 만으로 판단하지 않는다.** Binding 응답은 매핑 거동만 알려주고 **필터링 거동은
 알려주지 않는다.** 홀펀칭 성립은 둘 다에 달려 있다. 엔드포인트 독립인데 필터링 때문에 안
@@ -22,6 +24,8 @@ python natprobe.py probe [--label NAME] [--port N] [--stun HOST:PORT ...] [--out
 python natprobe.py punch [--label NAME] [--port N] [--stun HOST:PORT ...] [--out DIR]
                          [--peer IP:PORT] [--duration SEC]
                          [--unsolicited] [--unsolicited-duration SEC]
+python natprobe.py host    --peers N [--label NAME] [--port N] [--duration SEC] [--out DIR]
+python natprobe.py players --count N [--label NAME] [--duration SEC] [--out DIR]
 python natprobe.py check-peer <IP> [--ipv4]
 python natprobe.py check-peer --stdin [--ipv4]
 ```
@@ -52,6 +56,37 @@ python natprobe.py check-peer --stdin [--ipv4]
 `check-peer` 는 주소가 도달 가능한 유니캐스트인지만 본다. 소켓을 열지 않고 **종료 코드로만
 답한다**(통과 0, 거부 2). **주소는 성공·실패 어느 쪽에도 출력하지 않는다.** 터미널 기록에
 남기지 않기 위해서다. `--stdin` 은 명령줄에 주소를 남기지 않을 때 쓴다.
+
+## 한 호스트와 여러 상대 (`host`, `players`)
+
+스타 토폴로지의 호스트는 소켓 하나로 플레이어 넷과 동시에 펀치한다
+([ADR 0006](../../docs/kor/decisions/0006-무중계-스타-토폴로지.md)). `punch` 는 1:1 이라 그것을 재지 못한다.
+
+**기기 두 대로 잰다.** 호스트 기기는 `host --peers 4`, 다른 망의 기기는 `players --count 4` 를 돌린다.
+
+1. 두 쪽이 거의 함께 시작한다. 각자 STUN 을 마치면 엔드포인트를 낸다. `players` 는 소켓마다 하나씩 넷이다
+2. `players` 쪽이 넷을 순서대로 호스트에게 알려 주고, 호스트는 하나씩 입력한다. 호스트 쪽은 자기 엔드포인트
+   하나를 알려 주고 `players` 쪽이 입력한다. 명령줄에 넣지 않는다(위 `--peer` 경고와 같은 이유)
+3. "셋, 둘, 하나" 로 두 쪽이 함께 Enter 를 누른다. 기본 30초 동안 펀치한다
+4. 결과는 상대마다 `success`, `one-way`, `failure` 와 `all_success` 다. 판정 규칙은 `punch` 와 같다
+
+**주고받는 동안 매핑을 살려 두고, 펀치 직전에 다시 본다.** 엔드포인트를 손으로 옮기는 동안 소켓마다 10초
+간격으로 STUN 서버에 Binding Request 를 보낸다. 실측한 가정망 하나는 유휴 60초 안에 매핑이 끝났다
+([`tools/nat-lifetime`](../nat-lifetime/README.md)). 엔드포인트를 입력한 뒤, 함께 누르는 Enter 앞에서
+소켓마다 STUN 을 한 번 더 해서 공인 엔드포인트가 알려 준 값과 같은지 본다(`prepunch.checks`). 확인을 Enter 뒤에
+하면 그 시간만큼 두 쪽의 펀치 시작이 어긋난다. 어느 한 쪽이라도 다르거나 확인되지 않으면 **그 회차는
+판정에 쓰지 않고** 엔드포인트를 다시 주고받아 새로 돌린다.
+
+**어느 상대의 패킷인지 가르는 규칙.** PONG 은 쌍마다 다른 세션 값으로 가르고 출발지는 보지 않는다. PING 은
+그 소켓을 쓰는 쌍이 하나면 그 쌍이고, 여럿이면 출발지가 그 상대의 엔드포인트와 같아야 한다. 어느 쌍과도
+맞지 않는 PING 은 `unattributed_inbound` 에만 세고 답은 돌려준다. 그 값이 비어 있지 않으면 **출처를 모르는
+PING 이 왔다는 것만** 뜻한다. 상대 NAT 이 다른 매핑을 쓴 것일 수도, 남의 트래픽일 수도 있다. 상대 쪽 결과의
+출발지와 맞춰 보기 전에는 원인을 단정하지 않고, 값을 기록에 옮긴다.
+
+**흉내의 한계.** 실제 플레이어 넷은 망이 모두 다르다. 이 측정의 넷은 한 NAT 뒤의 소켓 넷이라 호스트가 보는
+원격 주소는 IP 하나에 포트 넷이다. 호스트 NAT 이 여러 원격 엔드포인트와 동시에 매핑과 필터를 다루는지는 보지만,
+원격 IP 가 다른 경우와 같다고 단정하지 않는다. 기록에 이 한계를 적는다. 기록 양식은
+[`RECORD-TEMPLATE.md`](RECORD-TEMPLATE.md) 4.5 다.
 
 ## 측정 전에 확인할 것
 

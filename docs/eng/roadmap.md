@@ -570,6 +570,14 @@ implementation, not design.
     so requests for that room become `internal` (the type rule of `control_plane.md` 6.3). The
     deploy is treated as ending every room from before it. It is not rolled out during a
     demonstration or a measurement
+- **Candidate hygiene bands and whitespace inside header names.** Fix the control server and client that
+  Phase 3 built
+  - Add reserved `240.0.0.0/4` and "this network" `0.0.0.0/8` to candidate hygiene. Both server and client
+    ([`protocol.md`](protocol.md) 10.1, `control_plane.md` 4.4)
+  - Reject header lines with a space or tab inside the name. Both the server's request parsing and the
+    client's response parsing (`control_plane.md` 3.3, 3.5)
+  - Fix the server case tables (`test_candidates.py`, `test_http.py`) and the client tests first
+  - The server goes out with the display-name deploy above. It is not deployed separately
 - Write the connection result (success or an FR-13 failure code) and RTT to the **local record file.** Not uploaded to the control plane (M-6). The path, line format, and definition of an attempt are in [`architecture.md`](architecture.md) chapter 9 Local Record File
 
 > **The protocol is already fixed.** Implementation cannot start without a fixed wire protocol. That
@@ -740,6 +748,13 @@ The round-trip test and the failure-code test below are started and ended with t
 - Terminal-state reception (9.4.1). After exchanging `CLOSE` and reaching `CLOSED`, a `KEEPALIVE`
   from the same peer only increments `drop_terminal_state` and no response goes out. Confirm silence
   with a capture
+- Keeping terminal-state sessions (`protocol.md` 5.6 `CLOSE`). Run with an injected clock
+  - Before 2 minutes pass it is `drop_terminal_state`; after, `drop_unknown_peer`
+  - When `MAX_PEERS - 1` terminal-state sessions exist and one more ends, the one kept longest is deleted
+  - Leaving the room deletes them even before 2 minutes. Kept sessions are not hit by routing table lookup
+- `IDLE` has no session (`protocol.md` 9.1 States). After the peer's `peer_id` first appears with
+  `ready: false`, injecting that peer's `HELLO` before candidates arrive gives `drop_unknown_peer` and no
+  response goes out
 - Retired list cap (`protocol.md` 4.3 `session_epoch`). **Test it as a unit**
   - Register 17 entries directly in the retired list data structure and check that the list stays at no
     more than 16 and the oldest is evicted
@@ -1205,7 +1220,7 @@ Two Windows machines communicate using virtual IPs only.
 
 ---
 
-## Phase 8: Minecraft Validation
+## Phase 8: Minecraft Validation and GUI Demo
 
 - **Goal:** Demonstrate a real multiplayer session through the GUI.
 - **Priority:** P2

@@ -357,7 +357,8 @@ list.
   other.**
 - The timer set is small. The table in [`protocol.md`](protocol.md) chapter 11 Timers has no more
   than twenty kinds, and the cap on the number of sessions one process holds is a single digit
-  (`protocol.md` 8.5 Transmit-Side Validation). The number of live deadlines does not exceed the
+  (`protocol.md` 8.5 Transmit-Side Validation). That holds even with the sessions kept in a terminal state
+  (`protocol.md` 5.6 `CLOSE`, at most `MAX_PEERS - 1`). The number of live deadlines does not exceed the
   product of the two. Every iteration does a linear scan for the earliest deadline. No timer wheel
   is needed.
   - The "expiry value" table in the same chapter (discard list, nonce, probe, `pending_pings`)
@@ -384,6 +385,13 @@ All of the following is owned solely by `[loop]`. No mutex and no atomic variabl
   drop counters
 - **The local record file handle and its writes**
   ([`architecture.md`](architecture.md) chapter 9 Telemetry and Records)
+- **Local candidates and the own-subnet set** ([`protocol.md`](protocol.md) 10.1 Candidate Collection and
+  Hygiene). `[loop]` reads the interfaces just before sending `register_candidate` and builds them. The two
+  users of that set (chapter 7 source hygiene and hygiene of received candidates) are also `[loop]`. So
+  nothing needs to be handed over
+  - Reading the interfaces is a synchronous OS call. On this development machine, 20 measurements gave a
+    median of 2.1ms and a maximum of 4.8ms. It runs once per attempt, so it is not moved to `[control]`.
+    It is two orders of magnitude smaller than the shortest timer (200ms)
 - Values received from the control plane such as `room_id`, `peer_id`, `peer_token`, and the
   remote peer info. `[control]` only passes those values through the response queue; it does
   not hold them as its own state. The one exception is the resolved server address noted in
@@ -512,9 +520,10 @@ so before that (8) is `[telemetry]` only.
 
 - **A session ending does not end the process.** When a session becomes `FAILED` or
   `CLOSED` (`protocol.md` 9.6 Failure Transitions, 5.6 `CLOSE`), `[loop]` leaves that session's
-  record line and counters and removes it from the session list. Whether it then goes to the lobby
-  is decided not by whether the list is empty but by the triggers in "Lobby" below. The process
-  ends only when the shutdown event is signaled.
+  record line and counters. The session object stays briefly in its terminal state and is then deleted.
+  When it is deleted is decided by `protocol.md` 5.6 `CLOSE`. Whether it goes to the lobby is decided not
+  by whether the list is empty but by the triggers in "Lobby" below. The process ends only when the
+  shutdown event is signaled.
 - **No shutdown marker goes into the queue.** The queue drops new items when full, so if the
   marker is dropped at exactly that moment, `[telemetry]` never sees the shutdown. Shutdown is
   delivered only through the event outside the queue.
@@ -549,7 +558,7 @@ There are five triggers for going to the lobby.
 | Received `leave` | Everyone |
 | The attempt failed. It goes after emitting the `FAIL` line | Player always. Host only before the room is set up |
 | The session with the host ended in `CLOSED` | Player |
-| The room ended on the server and all remaining sessions ended too. The `FAIL` line was already emitted when it learned the room had ended | Host |
+| The room ended on the server and all remaining sessions ended too (reached a terminal state). The `FAIL` line was already emitted when it learned the room had ended | Host |
 
 **After setting up the room, the host stays in the room even when the session list is empty.**
 There are three triggers for leaving the room. They are `leave`, `quit`, and all remaining sessions
@@ -573,7 +582,7 @@ other pairs are not affected. That line carries the name of the player in the fa
 | Adapter session | **Kept.** Only the address and the route are set again in the next room. Creating the adapter needs administrator rights and takes a few seconds |
 | Counters | Not reset. They are per process (`architecture.md` chapter 9) |
 | Local record file | Kept open and appended to. It is not reopened per attempt |
-| Late packets | They keep arriving because the socket is open. With no session they fall to `drop_unknown_peer` (`protocol.md` 8.1 Common Checks) |
+| Late packets | They keep arriving because the socket is open. Leaving the room deletes even the sessions kept in a terminal state (`protocol.md` 5.6 `CLOSE`), so they fall to `drop_unknown_peer` (`protocol.md` 8.1 Common Checks) |
 | The host's `host_report` | **Stops.** Leaving the room drops the lease (`control_plane.md` 5.1) |
 
 **Do not assert that the mapping survives.** The socket is kept because rebinding changes the
@@ -667,7 +676,9 @@ waiting for a retry, it clears that timer.
 **`[control]` neither reads nor writes session state.** It sends what it takes from the request
 queue and pushes what it receives to the response queue. Applying responses to session state is
 `drain_control`, and that is `[loop]`. Response interpretation (JSON parsing, error
-classification) may be done by `[control]`. The result is a value, not shared state.
+classification) may be done by `[control]`. The result is a value, not shared state. **However, hygiene of
+received candidates is done by `[loop]`.** The own-subnet row uses `[loop]`'s own-subnet set (chapter 5 State
+Ownership).
 
 **It is not merged with `[telemetry]`.** Telemetry upload tolerates loss and does not report
 failure. A control request needs a response, and its failure is `CONTROL_PLANE_EXCHANGE_FAILED`.

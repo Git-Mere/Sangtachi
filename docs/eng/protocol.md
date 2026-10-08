@@ -174,7 +174,7 @@ received packet, so it filters nothing. There are two registration cases.
 
 | When | What is registered |
 |------|--------------------|
-| We start a new attempt from `IDLE` | **The peer epoch pinned in the previous attempt.** An attempt that ended before pinning has no value to register |
+| We start a new attempt from `IDLE` | **The peer epoch pinned in the previous attempt.** That value is read from the previous attempt's session while it is kept in a terminal state (5.6 `CLOSE`). An attempt that ended before pinning, or whose session was already deleted, has no value to register |
 | 9.5 Renegotiation | The peer's immediately previous epoch (9.5 step 1) |
 
 **The retired list is not the only line of defense on our retry direction.** If the previous attempt ended
@@ -185,7 +185,8 @@ stopped by 8.2 Epoch and Source Checks.
 - A `HELLO_ACK` that echoes the nonce of the previous attempt is `drop_bad_nonce`. This is why 5.1 `HELLO`
   never reuses a previous nonce
 
-The retired list covers **attempts that did reach pinning**.
+The retired list covers **attempts that did reach pinning**. No path that starts a new attempt with the same
+peer is defined today. Coming back is a new join with a new `peer_id` ([`control_plane.md`](control_plane.md) 4.3).
 
 **The retired list holds at most `MAX_RETIRED_EPOCHS` (16) entries.** When a new entry arrives while the
 list is full, the oldest one is evicted. Entries come only from our own previous attempts (1 per retry) and
@@ -402,6 +403,17 @@ object were deleted too, a packet arriving afterwards would fall to `drop_unknow
 counts post-shutdown receives would disappear. The socket stays open until the process exits (chapter 6),
 so those packets really do keep coming.
 
+**A session object in a terminal state is kept for 2 minutes and then deleted.** The same holds for `FAILED`.
+
+- After deletion, packets from that peer are `drop_unknown_peer`
+- At most `MAX_PEERS - 1` are kept. Beyond that, the one kept longest is deleted first
+- Leaving the room deletes the kept sessions too ([`concurrency.md`](concurrency.md) chapter 7 Lobby)
+- Kept sessions do not count toward the session limit of 8.5. The routing slot is cleared immediately as above
+
+> **Why 2 minutes.** If our `CLOSE` is lost, the peer keeps sending until its 50-second idle timeout. 2 minutes
+> covers that interval and is the same value as a 4.3 retired list entry. The cap keeps the session count in
+> single digits even when people join and leave often.
+
 **A session in which we sent `CLOSE` also transitions to `CLOSED`, whether or not the send succeeded.**
 Sessions that do not send (before learning and `FAILED` in the table below) are finished by the shutdown
 procedure as they are, and `FAILED` stays `FAILED`. Without this transition, the state in which a session
@@ -492,6 +504,13 @@ dropped and `drop_roster_direction` is incremented.
 
 **The roster holds everyone in the room, including itself.** The host is in it and so is the
 receiver. There is no rule for the receiver to filter out its own entry.
+
+- Everyone in the room is the host itself and the `peers` elements of the last `host_report` response the
+  host received ([`control_plane.md`](control_plane.md) 4.6). It is not built from the session list. A member
+  with no session yet (9.1 `IDLE`) is included, and sessions kept in a terminal state (5.6) do not decide
+  membership
+- For a player entry, bit 0 is 1 only when the session with that member is `CONNECTED`, as below. With no
+  session or a terminal state it is 0. The host's own entry is always 1, as below
 
 > **Why.** The member list a person sees has to include that person ([`spec.md`](spec.md) FR-15).
 > Removing it per receiver would make the host build a different payload for each receiver, and
@@ -778,7 +797,8 @@ cases as assumptions.
 
 **Picking the session comes before the state check.** With several sessions, "that state" does not
 belong to any session until the destination has picked one. The host holds at most `MAX_PEERS - 1`
-sessions ([ADR 0006](decisions/0006-star-topology-no-relay.md) decision 3).
+sessions that are not in a terminal state ([ADR 0006](decisions/0006-star-topology-no-relay.md) decision 3).
+Sessions kept in a terminal state have no routing slot, so they are not chosen here (5.6 CLOSE).
 
 **The routing table is a fixed array of 6 slots.** The index is the last octet of the destination
 virtual IP and the value is a session. Lookup has two steps.
@@ -817,8 +837,9 @@ same slot is reused. The order is fixed.
 | A new session is created | Confirm the slot for that virtual IP is empty, then fill it. A non-empty slot is an implementation defect |
 
 **The same address does not mean the same peer.** Packets from the old peer that arrive after the
-reclaim are dropped on receive. Check 7 of the 8.1 common checks compares `peer_id`, not the virtual
-IP, and the old peer's `peer_id` differs from that of the new session (`drop_unknown_peer`). The
+reclaim do not reach the new session. Check 7 of the 8.1 common checks compares `peer_id`, not the virtual
+IP, and the old peer's `peer_id` differs from that of the new session. While the old session is kept in a
+terminal state it is `drop_terminal_state`; once deleted, `drop_unknown_peer` (5.6 `CLOSE`). The
 inner source check of `DATA` also compares against the new session's peer virtual IP, so even an
 identical value is already caught in the header.
 
@@ -838,12 +859,20 @@ actually look for.
 
 | State | Meaning |
 |------|------|
-| `IDLE` | Peer candidates not yet received |
+| `IDLE` | There is no session for this attempt yet. When peer candidates arrive, the session is created as `PUNCHING` |
 | `PUNCHING` | Peer candidates received, no round-trip evidence |
 | `HANDSHAKING` | Evidence in one direction only |
 | `CONNECTED` | Evidence in both directions |
 | `FAILED` | Terminated with a failure code |
 | `CLOSED` | Graceful shutdown |
+
+**`IDLE` has no session object.** Even if the control plane reveals the peer's `peer_id` first (an element with
+`ready: false` in `get_peers`), no session is created before candidates arrive. So that `peer_id` is not in the
+matching set of check 7 of 8.1. "A new attempt from `IDLE`" in 9.6 Failure Transitions is also a new session
+object.
+
+> **Why.** An early peer `HELLO` in that interval comes again every 200ms, so dropping it loses nothing.
+> Creating the session beforehand would need separate `IDLE` receive rules and counters.
 
 **`PUNCHING` is entered when candidates are received, and `HELLO` retransmission starts later than that.**
 Retransmission starts only after the punch delay of 10.2 Rendezvous expires. The waiting interval in
@@ -967,7 +996,7 @@ that interval are used only for state transitions and source learning.
 
 | State | Handling of arriving packets |
 |------|--------------------|
-| `IDLE` | The peer `peer_id` is not yet known, so everything falls to `drop_unknown_peer` at check 7 of 8.1. No separate rule needed |
+| `IDLE` | There is no session (9.1 States), so everything falls to `drop_unknown_peer` at check 7 of 8.1. No separate rule needed |
 | `FAILED` | Drop everything regardless of type, `drop_terminal_state` |
 | `CLOSED` | Drop everything regardless of type, `drop_terminal_state` |
 
@@ -1270,7 +1299,7 @@ candidates, and the parenthesis is that candidate's interface.
 | Rule | Basis |
 |------|------|
 | At most `MAX_CANDIDATES` (8). Discard the excess | An unbounded list means unbounded transmission |
-| Reject broadcast, multicast (`224.0.0.0/4`), unspecified (`0.0.0.0`), and loopback (`127.0.0.0/8`) addresses | Reflection and amplification prevention |
+| Reject multicast (`224.0.0.0/4`), reserved (`240.0.0.0/4`, including limited broadcast `255.255.255.255`), "this network" (`0.0.0.0/8`, including unspecified `0.0.0.0`), and loopback (`127.0.0.0/8`) addresses | Reflection and amplification prevention. `0.0.0.0/8` is a source-only range (RFC 1122) and `240.0.0.0/4` is never assigned, so neither means anything as a destination |
 | Reject port 0 | |
 | Reject broadcast addresses blocked by the own-subnet set. Client only | Amplification prevention. `HELLO` to that address reaches our whole LAN. [ADR 0018](decisions/0018-reject-own-subnet-broadcast-in-received-candidates.md) |
 | Deduplicate | |
@@ -1282,7 +1311,7 @@ As stated in Chapter 2, without these rules the client becomes a reflection tool
 - The type check is the job of [`control_plane.md`](control_plane.md) 3.5 Checks the Client Makes. If even one candidate
   has the wrong type, the whole response is a transport error
 - For a duplicate, the element that came first is kept
-- The broadcast row is only `255.255.255.255`. Subnet directed broadcast is checked only by the own-subnet
+- Limited broadcast is covered by the reserved row. Subnet directed broadcast is checked only by the own-subnet
   row below
 - The own-subnet row is judged with the own-subnet set at the time of receipt. A directed broadcast of
   the peer's subnet is not judged, since the peer's prefix is unknown
@@ -1597,9 +1626,9 @@ on the spot. For the host there are two `FAIL`s that do not end the attempt.
 
 - The failure of one pair clears only that pair's timers
 - A `host_report` response saying the room has ended on the server (the first row of the
-  `control_plane.md` 4.6 error table) clears only the `host_report` timer if sessions remain. The
-  timers of the remaining sessions keep running. If there is no session and it goes straight to
-  the lobby, the attempt has ended, so everything is cleared per the rule above. Before the room
+  `control_plane.md` 4.6 error table) clears only the `host_report` timer if sessions not in a terminal
+  state remain. The timers of the remaining sessions keep running. If there is no such session and it
+  goes straight to the lobby, the attempt has ended, so everything is cleared per the rule above. Before the room
   is set up, for example during STUN, that transaction ends too
 
 **The three retry values are intervals.** They are not deadlines. Taking the moment the request was
@@ -1628,6 +1657,7 @@ in the "Where" column.**
 | Probe nonce and tentative path slot | 5 seconds (held for the full time regardless of outcome) | 5.1, 10.4 (c) |
 | `pending_pings` entry | 5 seconds | 5.5 |
 | Minimum renegotiation interval | `MIN_RENEG_INTERVAL_MS` (1000ms) | 9.5 |
+| Session in a terminal state | 2 minutes (the `MAX_PEERS - 1` cap comes first) | 5.6 |
 
 Deadline comparisons are `deadline <= now`. Not only a deadline already past but **a deadline that is
 exactly now expires too.** Priority is based on the time dequeued. A receive event dequeued in the same

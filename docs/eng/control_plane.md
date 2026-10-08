@@ -382,7 +382,7 @@ Connection: close\r\n
 | Body length | `Content-Length` is required. If `Transfer-Encoding` is present, reject regardless of its value |
 | Connection | One connection per request. The server closes after the response. No keep-alive, no pipelining |
 | Headers | Names are case-insensitive. The four in the format above (`Host`, `Content-Type`, `Content-Length`, `Connection`) and `Transfer-Encoding` are treated as the table headers. Other headers are ignored (ignored even if they appear twice). **A table header is rejected if it appears twice.** For a duplicate `Content-Length`, see below |
-| Header line syntax | `name:value`. A line with no colon, and a line with a space or a tab between the name and the colon, are rejected (RFC 9112 5.1). A single space right after the colon is removed as a separator, and any other whitespace is part of the value |
+| Header line syntax | `name:value`. A line with no colon, and a line with a space or a tab inside the name or between the name and the colon, are rejected (RFC 9112 5.1; the name is a token in RFC 9110 5.1). A single space right after the colon is removed as a separator, and any other whitespace is part of the value |
 | Body | One UTF-8 JSON **object**. Arrays and scalars are rejected. Unknown keys are ignored (forward compatibility). Duplicate keys within one object are rejected, including in nested objects. `NaN` and `Infinity` are not JSON and are rejected |
 | Size | Request line plus headers total `MAX_HEADER_BYTES` (2048), body `MAX_BODY_BYTES` (4096). The former is counted from the first byte of the request line to the CRLF of the empty line that ends the headers |
 | Encoding | Strings are UTF-8. Integers are JSON numbers with no decimal point. `uint32` fields are 0 or more and 4294967295 or less |
@@ -481,7 +481,7 @@ The client looks at only the following in a response. Everything else is ignored
    `CONTROL_PLANE_EXCHANGE_FAILED` (8.3)
 2. Do the status line and headers together end within `MAX_HEADER_BYTES`? If not, transport error
 3. Do the header lines follow the header line syntax of 3.3 HTTP Subset? Line endings are CRLF only,
-   and folding, whitespace before the colon, and a line with no colon are transport errors. If
+   and folding, whitespace inside the name or before the colon, and a line with no colon are transport errors. If
    `Transfer-Encoding` is present, it is a transport error regardless of its value
 4. One `Content-Length` header. If missing, present twice, not matching `^[0-9]+$`, or larger than
    `MAX_BODY_BYTES`, transport error
@@ -714,7 +714,7 @@ version, `socket.inet_aton` accepted `10.0.5` as `10.0.0.5` and `010.0.0.5` as `
 
 | What | Result |
 |------|------|
-| **Hygiene rejection** — the address or port value hits a rule of 10.1 Candidate Collection and Hygiene (broadcast, multicast, unspecified, loopback, port 0) | Drop that candidate only and store the rest. Increment `rejected`; the response is `ok` |
+| **Hygiene rejection** — the address or port value hits a rule of 10.1 Candidate Collection and Hygiene (multicast, reserved, "this network", loopback, port 0) | Drop that candidate only and store the rest. Increment `rejected`; the response is `ok` |
 | **Type violation** — `ip`, `port`, or `kind` is out of type or range or missing, or the list has 9 entries or is empty | **The whole request is `bad_request`.** It is a request problem, not an individual candidate problem |
 
 **The dividing line is "does the value hit a rule" versus "is it not the right type".**
@@ -736,12 +736,12 @@ table of `protocol.md` 10.1 Candidate Collection and Hygiene.
 - On a duplicate, the element that came first is kept. Its `kind` is also kept
 - Unknown keys inside a candidate element are ignored. Only `ip`, `port`, and `kind` are stored
 
-**The bands the server decides are exactly the list of 10.1 minus the own-subnet row.** Broadcast is only `255.255.255.255`,
-and unspecified is only `0.0.0.0`. Loopback is the whole of `127.0.0.0/8`.
+**The bands the server decides are exactly the list of 10.1 minus the own-subnet row.** Multicast `224.0.0.0/4`,
+reserved `240.0.0.0/4` (including limited broadcast), "this network" `0.0.0.0/8` (including unspecified), and
+loopback `127.0.0.0/8`.
 
 - The server does not receive the peer's prefix length (10.1), so it cannot decide a subnet's
   directed broadcast. `10.0.0.255` is stored
-- The rest of `0.0.0.0/8` and `240.0.0.0/4` are not in the 10.1 list, so they are stored
 
 **The client-side result differs.** On hygiene rejection, `rejected` is nonzero, so the client
 leaves one `WARN` line and continues. `bad_request` is a final error, so it ends in
@@ -1045,7 +1045,7 @@ but a matter of a room that already has tunnels.
 
 | Received | Meaning | What the host does |
 |---------|-----|------------------|
-| `room_expired`, `room_not_found`, `unauthorized`, `bad_request`, other definite errors | The room has ended on the server, or sending the same request again gets the same answer | Emit the `FAIL CONTROL_PLANE_EXCHANGE_FAILED` line once and stop `host_report`. Even when a session ends, do not make the immediate call above. Leave existing sessions as they are. When all remaining sessions end, go to the lobby. If there is no session, go right away |
+| `room_expired`, `room_not_found`, `unauthorized`, `bad_request`, other definite errors | The room has ended on the server, or sending the same request again gets the same answer | Emit the `FAIL CONTROL_PLANE_EXCHANGE_FAILED` line once and stop `host_report`. Even when a session ends, do not make the immediate call above. Leave existing sessions as they are. When all remaining sessions reach a terminal state, go to the lobby. If there is no session outside a terminal state, go right away. Sessions kept in a terminal state ([`protocol.md`](protocol.md) 5.6) are not counted |
 | `rate_limited` | The room may be alive. Another source behind the same public IP may have burned the budget (6.4) | Do not emit `FAIL`; call again on the next cycle |
 | `internal`, `unavailable`, transport error | Transient error. A success response with wrong types is also a transport error (3.5) | Call again on the next cycle |
 

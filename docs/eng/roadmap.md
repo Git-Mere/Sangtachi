@@ -19,7 +19,7 @@ Maps each ID in [`spec.md`](spec.md) to the phase that satisfies it. No ID may b
 | 1 | FR-1, C-2 |
 | 2 | FR-2, FR-3, NFR-4, NFR-9 |
 | 3 | FR-4, FR-5, C-3 |
-| 4 | FR-6, FR-7, FR-8 (up to the minimum `DATA` round trip), FR-13 (partial), NFR-9, M-1 to M-6 |
+| 4 | FR-6, FR-7, FR-8 (up to the minimum `DATA` round trip), FR-13 (partial), FR-16, NFR-9, M-1 to M-6 |
 | 5 | FR-8 (loss and reordering accounting), FR-13, NFR-3 |
 | 6 | FR-9, NFR-5, NFR-6, T-1, T-2 |
 | 7 | FR-10, FR-11, NFR-2, NFR-6, T-3 |
@@ -483,7 +483,7 @@ code (`architecture.md` 3.5 Startup Inputs).
 
 ### Tasks
 
-**To be decided before starting.** Five items. Implementation of those places does not begin before
+**To be decided before starting.** Four items. Implementation of those places does not begin before
 they are decided
 
 - **Before starting, redesign the keepalive mapping-lifetime measurement procedure**
@@ -538,11 +538,6 @@ they are decided
   - Also decide how an attempt aborted by `leave` is written to the record. The establishment line
     of chapter 9 requires a result code for every attempt, but a user's abort is not a failure code
     of FR-13
-- **Before starting, decide whether the `FAIL` line of a pair failure on the host side carries which
-  player it belongs to.** [`concurrency.md`](concurrency.md) chapter 7 Lobby left it undecided. The
-  host emits that line and stays in the room, so with several pairs the line alone does not tell
-  which pair. If it is decided to carry it, add that field to the line format of `architecture.md`
-  3.5 Startup Inputs
 
 **Implementation.** Follow the `protocol.md` 15 implementation checklist as written. This Phase is
 implementation, not design.
@@ -581,9 +576,24 @@ implementation, not design.
 - `DATA` sender-side validation (`protocol.md` 8.5)
 - The fixed array of the routing table and the two-step lookup. Run every row of that section's case
   table (`protocol.md` 8.5 Transmit-Side Validation)
-- `ROSTER` send and receive with dedicated drop counters. Check the direction, the length, the
-  `generation`, and the reserved bits (`protocol.md` 5.7 ROSTER)
+- `ROSTER` send and receive with dedicated drop counters. Check the direction, the structure, the
+  `generation`, the reserved bits, and the names (`protocol.md` 5.7 ROSTER)
 - The three `ROSTER` send moments (`protocol.md` 5.7)
+- **Display names** ([`spec.md`](spec.md) FR-16). Fix the control server and the client that Phase 3
+  built
+  - Control server. The `name` check and the `NAME#` claim of `create_room` and `join_room`,
+    `name_taken`, the `NAME#` deletion on both reclaim paths, and `name` in `peers` elements
+    ([`control_plane.md`](control_plane.md) 2.7, section 4 Operations, 6.3 Items)
+  - Write the case table of `control_plane.md` 2.7 in `control-server/tests/` first. Then fix 2.7 and
+    the section 9 verification to point to that file
+  - Client. The `--name` argument, the lobby command `name`, the format check of `name` in
+    responses, and the `<counterpart>` field of the `FAIL` line
+    ([`architecture.md`](architecture.md) 3.5 Startup Inputs, `control_plane.md` 3.5)
+  - The names of `ROSTER` members go in together with the `ROSTER` send/receive item above
+  - Deploy the fixed control server. The `PEER#` of a room created before the deploy has no `name`,
+    so requests for that room become `internal` (the type rule of `control_plane.md` 6.3). The
+    deploy is treated as ending every room from before it. It is not rolled out during a
+    demonstration or a measurement
 - Write the connection result (success or an FR-13 failure code) and RTT to the **local record file.** Not uploaded to the control plane (M-6)
 
 > **The protocol is already fixed.** Implementation cannot start without a fixed wire protocol. That
@@ -877,6 +887,41 @@ The round-trip test and the failure-code test below are started and ended with t
   > **Why.** Comparing log strings or a reconstructed header passes even when the header is rewritten
   > or padding is added.
 - `DATA` with a wrong inner source/destination virtual IP is discarded as `drop_inner_src` / `drop_inner_dst`
+
+**Display names.**
+
+- Name format check ([`control_plane.md`](control_plane.md) 2.7 name). The case table has all of the
+  following
+  - Pass: 1 character, 16 characters, digits only, underscores only, mixed case
+  - Reject: empty string, 17 characters, a space in the middle, a leading or trailing space, a
+    hyphen, Hangul, full-width digits, a trailing newline, control characters, a value that is not a
+    string
+  - The mutation that deletes the character set check and the mutations that replace it with
+    `str.isalnum()` or the regex `\w` each `FAIL`
+- Uniqueness within the room (`control_plane.md` 4.3, 6.3)
+  - Joining a room that has `Alice` as `alice` is `name_taken`. In a different room it succeeds
+  - Sending two joins with the same name at the same time, only one succeeds. This needs the store
+  - `name_taken` does not move to the next address in the pool. That request makes one transaction
+    attempt. An implementation that looks at `VIP#` first is caught by the attempt count
+- A name is released together with its slot (`control_plane.md` 4.6)
+  - A new join succeeds with the name of a peer the host reported in `departed`
+  - The same goes for the name of a peer reclaimed by the server
+  - Before reclaim, the same name is `name_taken`
+- `peers` elements have `name`, and the field set matches `control_plane.md` 4.5 get_peers
+- The `<counterpart>` field of the `FAIL` line ([`architecture.md`](architecture.md) 3.5 Startup
+  Inputs)
+  - Attach two players to a host and make only one pair fail. The `<counterpart>` of the host's
+    `FAIL` line is that player's name, and the other pair stays `CONNECTED`. To make only one pair
+    fail, use the injection of the forced failure-code tests below
+  - For a player's pair failure, `<counterpart>` is the host's name
+  - For `STUN_DISCOVERY_FAILED` and `CONTROL_PLANE_EXCHANGE_FAILED`, `<counterpart>` is `-`
+- Names in `ROSTER` ([`protocol.md`](protocol.md) 5.7 ROSTER). Run them by receive-path injection
+  - A name length of 0 or 17, a last member that runs past the end of the payload, and bytes left
+    over after reading `count` members are `drop_type_length`
+  - Lengths 1 and 16 are accepted
+  - A name containing a space or a control byte is `drop_roster_name`
+- After the name is changed with the lobby command `name`, the next `join` request carries the new
+  name. A malformed `name` leaves one `WARN` line and does not change the name
 
 **Records and failure codes.**
 

@@ -16,7 +16,8 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 4 착수 전 결정 다섯 | `roadmap.md` Phase 4 작업 머리 |
+| 1 | Phase 4 착수 전 결정 넷. 다음은 로컬 기록 파일의 경로와 줄 형식이다 | `roadmap.md` Phase 4 작업 머리. 호스트 쪽 `FAIL` 줄 결정은 [ADR 0015](decisions/0015-멤버를-표시-이름으로-가리킨다.md) 로 닫았다 |
+| 2 | 문서 부채의 `IDLE` 정의와 종료 세션 객체의 수명 | Phase 4 세션 구현 전에 정해야 한다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.
@@ -45,6 +46,7 @@
 | 자리 | 무엇 | 언제 |
 |------|------|------|
 | `tests/mutate.py` 의 시간 초과 | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
+| 표시 이름 구현 때 낡는 코드 주석과 시험 | `control-server/controlplane/store.py` 의 취소 사유 순서 주석(2번부터), `tests/mutants/store.py` 의 취소 사유 번호와 15개 항목 언급, `tests/test_store.py` 의 "네 put". `control_plane.md` 6.3 취소 사유 표에 `NAME#` 가 3번으로 들어가 번호가 하나씩 밀렸다 | `roadmap.md` Phase 4 의 표시 이름 작업 |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 
 ## 문서 부채
@@ -60,7 +62,7 @@
 | Phase 8 제목 | `## Phase 8: Minecraft 검증` 인데 목표가 GUI 시연을 포함한다. 제목 문자열에 기대는 자리는 `roadmap.md` 의 한국어와 영어 제목 줄 둘뿐이고 `#phase-8` 앵커는 없다. 바꿀지는 정하지 않았다 |
 | 후보 위생의 대역 | 서버는 [`protocol.md`](protocol.md) 10.1 목록 그대로 거부한다. `0.0.0.0/8` 의 나머지와 `240.0.0.0/4` 는 저장한다(`control_plane.md` 4.4). 그 목록을 허용 목록으로 바꿀지, 두 대역을 더할지는 정하지 않았다. 바꾸면 10.1 이 먼저이고 클라이언트 쪽 위생도 같이 바뀐다 |
 | 헤더 이름 가운데 공백 | `control_plane.md` 3.3 의 헤더 줄 문법은 이름과 콜론 사이의 공백만 거부한다. `X Foo: bar` 처럼 이름 가운데 공백이 있는 줄은 표 밖 헤더로 무시된다. 거부할지는 정하지 않았다 |
-| 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md) 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 둘 많다.** `endpoint_learned` 는 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
+| 카운터 이름의 문서-코드 대조 | 이름이 [`protocol.md`](protocol.md) 와 [`concurrency.md`](concurrency.md) 에 흩어져 있고 `counters.hpp` 가 그것을 옮겨 적었다. 둘이 어긋나도 알려 주는 것이 없다. **지금은 문서 쪽이 셋 많다.** `endpoint_learned` 와 `drop_roster_name` 은 Phase 4, `telemetry_upload_failed` 는 Phase 9 에 들어온다. `docgate.py` 개수 검사와 같이 붙인다 |
 
 ## 세션을 시작할 때
 

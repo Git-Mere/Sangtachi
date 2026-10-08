@@ -26,7 +26,7 @@ One-sentence definition:
 
 - **C++20 Windows client**: Winsock2-based UDP socket, endpoint representation, logging
 - **Own STUN client**: Binding Request construction, transaction ID, response parsing, `XOR-MAPPED-ADDRESS` decoding, timeout handling
-- **Python control plane (AWS EC2)**: room create/join, peer registration, virtual IP assignment, candidate endpoint exchange
+- **Python control plane (AWS EC2)**: room create/join, peer registration, virtual IP assignment, display name registration, candidate endpoint exchange
 - **Python telemetry service (AWS EC2)**: receives and stores connection results and performance metrics. **It is a separate service from the control plane.** The boundary contract is in [`architecture.md`](architecture.md) 3.4 Telemetry Service
 - **UDP hole punching**: simultaneous bidirectional transmission, retries, keepalive, failure reason classification
 - **Own tunnel protocol**: 20-byte wire header, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`/`CLOSE`/`ROSTER`, serialization and corrupt packet validation
@@ -35,7 +35,7 @@ One-sentence definition:
 - **Telemetry and diagnostics**: connection success rate, establishment time, RTT, packet loss, jitter, session duration, per-stage failure codes
 - **Experiments and analysis**: repeated measurements across multiple network environments, comparison of successful and failed NAT cases, result visualization
 - **Minecraft Java Edition validation**: a real multiplayer session over the virtual IP
-- **Minimum GUI**: create and join a room, member list and connection status, failure code display, quit by closing the window. FR-15 owns the scope
+- **Minimum GUI**: create and join a room, a list of member names and connection status, failure code display, quit by closing the window. FR-15 owns the scope
 
 ### Excluded
 
@@ -83,10 +83,11 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-12 | When a player enters `10.100.0.1:25565` in the Minecraft server address field, the client connects to the server on the remote host. |
 | FR-13 | Every connection attempt records success or failure and, on failure, a per-stage code (`STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED`). |
 | FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. |
-| FR-15 | The client provides five actions through a GUI: create a room and show the room code, enter a room code and join, a member list with each member's connection status, display of the FR-13 per-stage code on failure, and quit by closing the window. Any other screen is out of scope. |
+| FR-15 | The client provides five actions through a GUI: create a room under a chosen name and show the room code, join by entering a name and a room code, a member list with each member's name and connection status, display of the FR-13 per-stage code on failure, and quit by closing the window. Any other screen is out of scope. |
+| FR-16 | A peer that creates or joins a room chooses a display name. The name is unique within the room. Places a person sees (the failure line, the member list) refer to a member by this name. The name is used only for display, not for peer identification or packet validation. [`control_plane.md`](control_plane.md) 2.7 `name` owns the format ([ADR 0015](decisions/0015-refer-to-members-by-display-name.md)). |
 
 **The tunnel carries the FR-15 connection status.** The host sends the room roster and each
-member's connection status to every player as a `ROSTER` ([`protocol.md`](protocol.md) 5.7). The
+member's name and connection status to every player as a `ROSTER` ([`protocol.md`](protocol.md) 5.7). The
 control plane does not hold this information. Its peer states are only `joined` and `registered`,
 and neither one tells whether the connection is up
 ([`control_plane.md`](control_plane.md) 5.3).
@@ -290,7 +291,7 @@ All must be met in addition to minimum success.
 | T-4 | A real Minecraft Java Edition multiplayer session is established over the virtual network. | The player connects to `10.100.0.1:25565`, logs in, and enters the world |
 | T-5 | Sustained gameplay is maintained beyond the initial connection. | No forced termination during 30 or more minutes of continuous play |
 | T-6 | Latency, packet loss, connection time, and session stability are measured. | A dataset of RTT, loss rate, establishment time, and duration is obtained for whole sessions |
-| T-7 | The five actions of FR-15 are performed end to end through the GUI alone. | The host creates a room and reads the code, the player joins with that code, each side sees the other in its member list, and when one side is cut the other side's list shows that member as disconnected. No command line arguments are used |
+| T-7 | The five actions of FR-15 are performed end to end through the GUI alone. | The host creates a room and reads the code, the player joins with that code, each side sees the other's name in its member list, and when one side is cut the other side's list shows that member as disconnected. No command line arguments are used |
 
 ### Analysis success (CSP requirement)
 

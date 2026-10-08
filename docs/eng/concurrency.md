@@ -563,8 +563,8 @@ is owned by the final error rule of [`control_plane.md`](control_plane.md) 4.6. 
 > [ADR 0011](decisions/0011-lobby-is-room-membership.md).
 
 **When one pair on the host side fails, the host emits a `FAIL` line and stays in the room.** The
-other pairs are not affected. Whether that line says which player it belongs to is not decided
-yet. When it is decided is owned by [`roadmap.md`](roadmap.md).
+other pairs are not affected. That line carries the name of the player in the failed pair. The line format is owned by
+[`architecture.md`](architecture.md) 3.5 Startup Inputs.
 
 
 | What | In the lobby |

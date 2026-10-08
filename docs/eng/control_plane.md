@@ -80,7 +80,7 @@ v1 accepts both.
 | Path | What happens | Why it is accepted |
 |------|-------------------|---------------|
 | Concurrent connection slot exhaustion | A caller that reopens 32 connections (`MAX_INFLIGHT`) that never send headers every 5 seconds turns the legitimate requests of that window into `unavailable` (3.4, 7.2) | A per-source concurrent connection limit would be needed, and that judgement stands on the "caller IP" assumption of the table above, so it inherits the same limit |
-| `create_room` abuse | `create_room` takes only a `client_nonce` and answers with success, so 6.4 Rate Limit does not count it. Repeating it with a changed nonce produces a four-item transactional write per call and those items survive up to a day past expiry (6.5). Exhausting the provisioned write capacity throttles legitimate requests into `internal` | The reason 6.4 Rate Limit gives for not counting success is about `get_peers`, and `create_room` has no polling. A per-source room creation limit could be added, but v1 does not add it. **Observation is done.** The per-source frequency of the `room.created` log (7.5) is the evidence |
+| `create_room` abuse | `create_room` takes only two inputs, `client_nonce` and `name`, and answers with success, so 6.4 Rate Limit does not count it. Repeating it with a changed nonce produces a five-item transactional write per call and those items survive up to a day past expiry (6.5). Exhausting the provisioned write capacity throttles legitimate requests into `internal` | The reason 6.4 Rate Limit gives for not counting success is about `get_peers`, and `create_room` has no polling. A per-source room creation limit could be added, but v1 does not add it. **Observation is done.** The per-source frequency of the `room.created` log (7.5) is the evidence |
 
 **Neither of these hijacks a room or changes a value.** They only slow it down or stop it. That
 is why they are stated apart from the trust assumption table above.
@@ -224,6 +224,7 @@ JOIN_REGISTER_GRACE_S     = 90          # Until the server reclaims a participan
 STORAGE_GRACE_S           = 86400       # Grace from expiry to DynamoDB TTL deletion (6.5)
 PUNCH_DELAY_MS            = 1000        # protocol.md 10.2. Written to the pair once when it becomes ready
 MAX_CANDIDATES            = 8           # Same value as protocol.md section 3. Per peer
+MAX_NAME_LEN              = 16          # Same value as protocol.md section 3. Display name length cap (2.7)
 MAX_BODY_BYTES            = 4096        # Request body cap (3.3)
 MAX_HEADER_BYTES          = 2048        # Cap on request line plus all headers (3.3). The client also uses it for the response head (3.5)
 CLIENT_JSON_MAX_DEPTH     = 32          # Nesting cap when the client parses response JSON (3.5)
@@ -244,11 +245,61 @@ DDB_READ_TIMEOUT_S        = 1           # Read timeout of the same calls (7.6)
 DDB_MAX_ATTEMPTS          = 1           # Number of times the SDK sends. The client does the retries (7.6, 8.3)
 ```
 
-`MAX_CANDIDATES` and `PUNCH_DELAY_MS` are copies of values owned by
+`MAX_CANDIDATES`, `PUNCH_DELAY_MS`, and `MAX_NAME_LEN` are copies of values owned by
 [`protocol.md`](protocol.md). **When that document changes, fix them here to follow.**
 
-> **Why.** These two are the only copies allowed because the server code has to have the values,
+> **Why.** These three are the only copies allowed because the server code has to have the values,
 > and the server code does not read C++ headers.
+
+### 2.7 name
+
+**A display name shown to people. It is a string of ASCII letters, digits, and underscores, at least
+1 and at most `MAX_NAME_LEN` (16) characters long.** The `create_room` and `join_room` requests carry
+it (4.2, 4.3). The rationale and the rejected alternatives are in
+[ADR 0015](decisions/0015-refer-to-members-by-display-name.md).
+
+```text
+ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_      (63 characters)
+```
+
+- If it is not a JSON string, `bad_request`
+- If even one character is outside the 63 above, `bad_request`. Spaces, hyphens, Hangul, full-width
+  characters, and control characters are caught here. **Leading and trailing spaces are not trimmed**
+- If the length is less than 1 or exceeds `MAX_NAME_LEN`, `bad_request`. Every character is ASCII, so
+  the character count and the byte count are the same
+- The three above are checked before the store is read. This is step 1 of 7.3 Operation Processing
+  Order
+- **Case is stored and returned as registered.** It is not changed
+- **Uniqueness within the room is decided ignoring case.** The comparison key is the value converted
+  to ASCII lowercase. If the room has `Alice`, `alice` is `name_taken` (4.1). Uniqueness is
+  guaranteed by the conditional write of the `NAME#<key>` item (6.3)
+
+**The character set check comes before lowercasing.** The reason is the same as the ASCII check order
+of 2.1 `room_id`.
+
+**A name is released when that peer's slot is reclaimed.** `NAME#` is deleted in the same transaction
+as `PEER#` (4.6, 6.3). Before that, even the same person joining again with the same name gets
+`name_taken`. There is no rejoin (4.3), and coming in again is a new join.
+
+- On a normal leave, the host receives `CLOSE` and sends `host_report` right away, so it is released
+  within one request. `CLOSE` is sent only once ([`protocol.md`](protocol.md) 5.6), so if it is lost
+  it is the same as the next line
+- If the process dies, it is released only when the host learns of it by the idle timeout
+  ([`protocol.md`](protocol.md) section 11)
+- If it left without candidates, it is released only after the grace `JOIN_REGISTER_GRACE_S` of 4.6
+  server reclaim passes
+- To come in again during that time, use a different name
+
+**The name is for display only.** The server does not look up peers by name. Authentication,
+reclaim, and confirmation use `peer_id` and `peer_token`. The same rule on the client side is
+"The roster is for display only" in [`protocol.md`](protocol.md) 5.7 ROSTER.
+
+> **Why compare ignoring case.** If `Alice` and `alice` were accepted as different people, a person
+> could hardly tell the two apart on the screen. Uniqueness exists to prevent that.
+
+> **Why spaces are not accepted.** The name is one field of the `FAIL` line
+> ([`architecture.md`](architecture.md) 3.5 Startup Inputs) and can be the value of a log
+> `<name>=<value>`. A space would break both rules.
 
 ### Why It Was Decided This Way
 
@@ -441,7 +492,8 @@ The client looks at only the following in a response. Everything else is ignored
    - An implementation where the two disagree has to be caught in tests. But if the client looked
      at both, which one to trust when they disagree would differ per implementation
 7. If `ok: true`, does it match the types of that operation's response table (section 4)? A missing
-   field or a wrong type is a transport error. Unknown keys are ignored
+   field or a wrong type is a transport error. Unknown keys are ignored. For `name` in a `peers`
+   element, the 2.7 format is checked in addition to the type. A wrong format is a transport error
 8. If `ok: false`, is `error` a code in the 4.1 table? A code not in the table is a definite error.
    The transient errors of 8.3 are closed to the two `internal` and `unavailable`
 
@@ -504,6 +556,7 @@ humans and its content is not pinned. **Do not put the request body or tokens in
 | `room_not_found` | 404 | No room with that `room_id` | Same. **An expired room is not this code either.** See `room_expired` below |
 | `room_expired` | 410 | The room exists but its expiry time has passed (5.1) | Same |
 | `room_full` | 409 | Every address in the participant pool is already claimed (2.5) | Same |
+| `name_taken` | 409 | The room has a peer with the same name (2.7, ignoring case) | Same |
 | `unauthorized` | 403 | `peer_token` does not belong to that `peer_id` | Same |
 | `rate_limited` | 429 | The per-source budget of 6.4 Rate Limit is exhausted | Same. The client does not wait and retry on its own. A person restarts it. Only `host_report` is the exception (4.6) |
 | `internal` | 500 | Storage error, redraw cap reached | **Transient error.** Follow the rules of 8.3 Error Classification and Retry |
@@ -526,6 +579,7 @@ Called by the host. Creates the room, registers the host as the first peer, and 
 | Field | Type | Required | Meaning |
 |------|-----|:---:|-----|
 | `client_nonce` | 32-character hex string | Yes | Idempotency key (2.4) |
+| `name` | string | Yes | The host's display name (2.7) |
 
 **Response.**
 
@@ -539,7 +593,9 @@ Called by the host. Creates the room, registers the host as the first peer, and 
 
 **Idempotency.** If the same `client_nonce` comes again, return **the same response for the room
 already created.** Only `expires_in_s` shrinks. If that room has expired, `room_expired`. No new
-room is created. The basis for the decision is the `NONCE#` item (6.3).
+room is created. The basis for the decision is the `NONCE#` item (6.3). For a repeated request, `name`
+is checked only for format and is not compared with the stored value. The same goes for 4.3
+`join_room`.
 
 **Errors.** None specific to the operation. Only the common four (4.1).
 
@@ -563,6 +619,7 @@ can come out.
 |------|-----|:---:|
 | `room_id` | string | Yes. Goes through 2.1 normalization |
 | `client_nonce` | 32-character hex | Yes |
+| `name` | string | Yes. 2.7 format. The display name of this participant |
 
 **Response.**
 
@@ -597,8 +654,13 @@ pool finds no free address. Whether the room is `ready` is not considered (5.1).
 > a free slot. The truth about a slot is the `VIP#` claim and the peer count is derived from it.
 > Deciding it in two places makes them disagree right after a reclaim.
 
-**Errors.** `room_not_found`, `room_expired`, `room_full`. The common four (4.1) are not listed
-separately.
+**`name_taken` is decided by the `NAME#` claim result alone.** It is not decided by scanning the
+room's names with a prior read. If two joins with the same name come at the same time, only one
+conditional write succeeds (6.3). A name collision does not move to the next address in the pool.
+Changing the address leaves the name colliding just the same.
+
+**Errors.** `room_not_found`, `room_expired`, `room_full`, `name_taken`. The common four (4.1) are not
+listed separately.
 
 ### 4.4 register_candidate
 
@@ -740,13 +802,14 @@ repeated here.
 |------|-----|-----|
 | `peer_id` | uint32 | |
 | `virtual_ip` | dotted-decimal string | Used for the `virtual_ip` check in `protocol.md` 5.1 `HELLO` (section 14 contract 6) |
+| `name` | string | The display name that peer registered (2.7). Used for display only |
 | `ready` | boolean | True if the `PAIR#` item of this pair exists |
 | `punch_delay_ms` | integer | The value written to that pair. Present only when `ready` is true |
 | `elapsed_since_ready_ms` | integer 0 or more | From the moment that pair's ready was written to the moment this response is built. Present only when `ready` is true. How it is computed is in 7.4 |
 | `candidates` | array | Same element type as 4.4 `register_candidate`. In stored order. Present only when `ready` is true |
 
-**The field set of an element is decided by `ready`.** With no `PAIR#`, it is the three fields
-`peer_id`, `virtual_ip`, `ready: false`. If it exists, `punch_delay_ms`, `elapsed_since_ready_ms`,
+**The field set of an element is decided by `ready`.** With no `PAIR#`, it is the four fields
+`peer_id`, `virtual_ip`, `name`, `ready: false`. If it exists, `punch_delay_ms`, `elapsed_since_ready_ms`,
 and `candidates` are added. The case table is `FIELD_SETS` in
 [`test_get_peers.py`](../../control-server/tests/test_get_peers.py).
 
@@ -852,9 +915,9 @@ failures.** Keep that margin in view when changing the values.
 **The processing order is pinned.** One request runs the steps below in order.
 
 1. Caller decision. If it does not match, it ends with `unauthorized`
-2. For each `peer_id` in `departed`, delete the `PEER#`, that peer's `VIP#`, the `PAIR#` items
-   that peer is part of, and that peer's `NONCE#` (6.3). Then delete the `PEER#` and `VIP#` of the
-   server reclaim targets too. "Server reclaim" below decides the targets. Server reclaim does not
+2. For each `peer_id` in `departed`, delete the `PEER#`, that peer's `VIP#` and `NAME#`, the `PAIR#`
+   items that peer is part of, and that peer's `NONCE#` (6.3). Then delete the `PEER#`, `VIP#`, and
+   `NAME#` of the server reclaim targets too. "Server reclaim" below decides the targets. Server reclaim does not
    decide again on a peer in `departed`. Reclaiming that peer belongs to the host, and `by` in the
    log is `host`
 3. For each `peer_id` in `confirm`, if that peer and the caller **both have 1 or more candidates**
@@ -865,7 +928,8 @@ failures.** Keep that margin in view when changing the values.
 
 **Server reclaim.** The targets are the peers of the room read in step 1 that satisfy all of the
 following. Deleting one also deletes that peer's `NONCE#`. The key is known from the `client_nonce`
-of `PEER#`. Peers deleted in step 2 are put into `released`.
+of `PEER#`. The `NAME#` to delete is the item among the room items read in step 1 whose `peer_id`
+is that peer. The key is not built from the `name` of `PEER#`. Peers deleted in step 2 are put into `released`.
 
 - Not the host
 - Candidates are empty. It is `joined` of 5.3 Peer
@@ -927,6 +991,14 @@ the host gets `internal` every cycle. It is also `internal` when the target of `
 `confirm` is an unreadable `PEER#`, and when the caller's `PEER#` cannot be read. The one exception
 is the `client_nonce` of a `departed` target. If only that cannot be read, everything except
 `NONCE#` is deleted, per the reclaim row of 6.3 Items.
+
+**The `NAME#` that reclaim deletes is found by `peer_id`.** Among the room items read in step 1,
+every item that is a `NAME#` and whose `peer_id` is the target is deleted. If there is none, the
+deletion goes ahead without a `NAME#`.
+
+> **Why not find it by the `name` of `PEER#`.** If that value cannot be read, only `PEER#` would be
+> deleted while `NAME#` stays, and renewal would keep pushing the `ttl` of the remaining `NAME#`, so
+> it would block that name until the room ends.
 
 **Step 2 comes before step 3.** If one request carries the same `peer_id` in both `departed` and
 `confirm`, the reclaim wins. Writing an ended session as ready would fill that slot again.
@@ -1182,10 +1254,10 @@ the restart. No other in-memory state is created beyond these two.
 | Capacity mode | [ADR 0004](decisions/0004-state-store-dynamodb.md) decision 4. Provisioned. Values are in deployment configuration |
 | Indexes | None (Storage 2) |
 
-Items belonging to a room (`ROOM`, `PEER#`, `VIP#`, `PAIR#`) share the same partition key, so the
+Items belonging to a room (`ROOM`, `PEER#`, `VIP#`, `NAME#`, `PAIR#`) share the same partition key, so the
 whole state of one room is read with a single `Query(pk = room_id, ConsistentRead=true)`. The item
-count is at most `1 + MAX_PEERS × 2 + (MAX_PEERS - 1)` (one `ROOM`, a `PEER#` and a `VIP#` per
-peer, and one `PAIR#` per host-and-player pair). In v1 that is at most 15.
+count is at most `1 + MAX_PEERS × 3 + (MAX_PEERS - 1)` (one `ROOM`, a `PEER#`, a `VIP#`, and a
+`NAME#` per peer, and one `PAIR#` per host-and-player pair). In v1 that is at most 20.
 
 **The `NONCE#` item has a different partition key.**
 
@@ -1198,8 +1270,9 @@ peer, and one `PAIR#` per host-and-player pair). In v1 that is at most 15.
 |------|------|-----|
 | `ROOM` | `created_at_ms`, `expires_at_ms`, `host_peer_id`, `ttl` | Room. The first `expires_at_ms` is `now + ROOM_LEASE_S * 1000` of `create_room`, and `host_report` pushes it (4.6) |
 | `PAIR#<lo>-<hi>` | `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms`, `ttl` | Ready state of a pair. `lo` and `hi` are the two `peer_id`s placed in ascending numeric order and written in decimal. `9` comes before `10`. 7.4 Clocks uses the three values |
-| `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `candidates` (list), `client_nonce`, `joined_at_ms`, `ttl` | Peer. `peer_id` is written in decimal in `sk`. `peer_token` is the raw value (2.3). `candidates` is not written before the first `register_candidate` |
+| `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `name`, `candidates` (list), `client_nonce`, `joined_at_ms`, `ttl` | Peer. `peer_id` is written in decimal in `sk`. `peer_token` is the raw value (2.3). `name` is as registered (2.7). `candidates` is not written before the first `register_candidate` |
 | `VIP#<virtual_ip>` | `peer_id`, `ttl` | Virtual IP claim marker. `<virtual_ip>` is dotted-decimal |
+| `NAME#<name key>` | `peer_id`, `ttl` | Display name claim marker. `<name key>` is the name converted to ASCII lowercase (2.7). Reclaim finds this item by `peer_id` (4.6) |
 | (pk = `NONCE#<client_nonce>`, sk = `NONCE`) | `room_id`, `peer_id`, `ttl` | Idempotency key → room and peer mapping. **The pk is the nonce, not the room** |
 
 Token comparison uses a constant-time comparison (`hmac.compare_digest`). A comparison inside a
@@ -1216,11 +1289,11 @@ the `host_report` renewal (table below).
 
 | Operation | Write | Condition |
 |------|------|------|
-| `create_room` | Transaction: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NONCE#` put | **All four puts carry `attribute_not_exists(pk)`.** A `ROOM` failure is a `room_id` collision → redraw (2.1). A `NONCE#` failure means the same nonce arrived concurrently, so read again and return that result. `PEER#` and `VIP#` cannot exist without `ROOM`, so a failure there means the store deleted only part of an earlier room's items. That is `internal` and there is no redraw |
-| `join_room` new join | Per pool address, a transaction: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `PEER#<peer_id>` put, `NONCE#` put | `attribute_exists(pk) AND expires_at_ms > :now` on `ROOM`. This blocks the race where the room expires or is deleted between the prior read and the write. `attribute_not_exists(pk)` on `VIP#`, `PEER#`, and `NONCE#` each. Failure handling is in the cancellation reason table below |
+| `create_room` | Transaction: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NAME#<host name key>` put, `NONCE#` put | **All five puts carry `attribute_not_exists(pk)`.** A `ROOM` failure is a `room_id` collision → redraw (2.1). A `NONCE#` failure means the same nonce arrived concurrently, so read again and return that result. `PEER#`, `VIP#`, and `NAME#` cannot exist without `ROOM`, so a failure there means the store deleted only part of an earlier room's items. That is `internal` and there is no redraw |
+| `join_room` new join | Per pool address, a transaction: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `NAME#<name key>` put, `PEER#<peer_id>` put, `NONCE#` put | `attribute_exists(pk) AND expires_at_ms > :now` on `ROOM`. This blocks the race where the room expires or is deleted between the prior read and the write. `attribute_not_exists(pk)` on `VIP#`, `NAME#`, `PEER#`, and `NONCE#` each. Failure handling is in the cancellation reason table below |
 | `register_candidate` | `PEER#` update: `candidates = :list` | `attribute_exists(pk) AND peer_token = :t`. Failure is `unauthorized`. It is the case where that peer was reclaimed after the token check (4.6 server reclaim) |
-| `host_report` reclaim | Per target, a transaction: `PEER#<target>` delete, `VIP#<that peer's virtual_ip>` delete, delete the `PAIR#` items that peer is part of, `NONCE#<that peer's client_nonce>` delete | **`attribute_exists(pk)` on `PEER#` only.** If that condition fails, the target was already gone and is not put into `released` (4.6). The rest are unconditional deletes. A peer that left before confirmation has no `PAIR#` at all, and conditioning on it would cancel the whole reclaim. If `client_nonce` cannot be read, everything except `NONCE#` is deleted |
-| `host_report` server reclaim | Per target, a transaction: `PEER#<target>` delete, `VIP#<that peer's virtual_ip>` delete, `NONCE#<that peer's client_nonce>` delete | `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff` on `PEER#`. `:cutoff` is `now - JOIN_REGISTER_GRACE_S * 1000`. If the condition fails, the peer registered in the meantime or was already gone, so it is not put into `released`. A peer that had no candidates cannot have a `PAIR#`, so none is deleted |
+| `host_report` reclaim | Per target, a transaction: `PEER#<target>` delete, `VIP#<that peer's virtual_ip>` delete, delete the `NAME#` whose `peer_id` is that peer, delete the `PAIR#` items that peer is part of, `NONCE#<that peer's client_nonce>` delete | **`attribute_exists(pk)` on `PEER#` only.** If that condition fails, the target was already gone and is not put into `released` (4.6). The rest are unconditional deletes. A peer that left before confirmation has no `PAIR#` at all, and conditioning on it would cancel the whole reclaim. If `client_nonce` cannot be read, everything except `NONCE#` is deleted |
+| `host_report` server reclaim | Per target, a transaction: `PEER#<target>` delete, `VIP#<that peer's virtual_ip>` delete, delete the `NAME#` whose `peer_id` is that peer, `NONCE#<that peer's client_nonce>` delete | `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff` on `PEER#`. `:cutoff` is `now - JOIN_REGISTER_GRACE_S * 1000`. If the condition fails, the peer registered in the meantime or was already gone, so it is not put into `released`. A peer that had no candidates cannot have a `PAIR#`, so none is deleted |
 | `host_report` confirmation | Per pair, a transaction: `PEER#<host>` **ConditionCheck**, `PEER#<other>` **ConditionCheck**, `PAIR#<lo>-<hi>` put | Both condition checks are `attribute_exists(pk) AND size(candidates) > :zero`. The put is `attribute_not_exists(pk)`. **The both-sides-have-candidates rule is a storage condition.** The other peer can be reclaimed or have its candidates cleared between the read and the write. If only the put condition fails, the pair is already confirmed and that is not an error (4.6) |
 | `host_report` renewal | First write the single `ROOM` update (`expires_at_ms = :new`, `ttl = :new_ttl`). If it succeeds, write a separate `ttl = :new_ttl` update for each other item of that room. Not bundled into a transaction | `attribute_exists(pk) AND expires_at_ms > :now` on `ROOM`. Failure is `room_expired`, and the rest is not written. **Each other item carries `attribute_exists(pk)`.** If the condition fails, the item was deleted in the meantime, so it is ignored. The item list is the first `Query` result of this request minus the items step 2 deleted |
 
@@ -1238,17 +1311,22 @@ decision order is not by position but by the table below.
 |:----:|-------------|------|
 | 1 | `NONCE#` | **Whatever the other reasons are,** a request with the same nonce was established first. Read `NONCE#` again, `Query` the room by its `room_id` and `peer_id`, and return the same response. If that room has expired, `room_expired` (4.2). Do not go to `room_full` or to a redraw. If the re-read `room_id` differs from the request's room, it is `bad_request`. The nonce was reused for a different room, and the answer has to match what the prior-read path gives for the same input |
 | 2 | `ROOM` ConditionCheck (`join_room`) | Read the room again. If absent, `room_not_found`; if present, `room_expired`. Do not move to the next address |
-| 3 | `VIP#` | Next address. When the pool is exhausted, `room_full` |
-| 4 | `PEER#` | Redraw `peer_id`. The cap is `MAX_PEER_ID_ATTEMPTS` |
-| 5 | `ROOM` put (`create_room`) | Redraw `room_id`. The cap is `MAX_ROOM_ID_ATTEMPTS` |
+| 3 | `NAME#` (`join_room`) | `name_taken`. Do not move to the next address (4.3) |
+| 4 | `VIP#` | Next address. When the pool is exhausted, `room_full` |
+| 5 | `PEER#` | Redraw `peer_id`. The cap is `MAX_PEER_ID_ATTEMPTS` |
+| 6 | `ROOM` put (`create_room`) | Redraw `room_id`. The cap is `MAX_ROOM_ID_ATTEMPTS` |
 | - | A reason that is not a condition failure (`TransactionConflict`, throttling) | `internal`. The client retries by the rules of 8.3 Error Classification and Retry |
 
 The reason `NONCE#` is placed at row 1 is in "Why It Was Decided This Way" below.
 
-- **`create_room` checks row 5 right after row 1.** If the `room_id` collides with a live room, the
-  `ROOM` put fails together with `VIP#10.100.0.1` and `PEER#`, and `create_room` has no next address.
-  If the `ROOM` put succeeded but only `PEER#` or `VIP#` failed, it is `internal` per the write table
-  above
+- **`create_room` checks row 6 right after row 1.** If the `room_id` collides with a live room, the
+  `ROOM` put fails together with `VIP#10.100.0.1` and `PEER#`, and `NAME#` can fail too, but
+  `create_room` has no next address, and the peer whose name collided is a peer of another room. If
+  the `ROOM` put succeeded but only `PEER#`, `VIP#`, or `NAME#` failed, it is `internal` per the write
+  table above
+- **`NAME#` comes before `VIP#`.** If both fail together in the same transaction, the name collided.
+  Looking at `VIP#` first would move to the next address, repeat attempts whose name keeps colliding
+  as many times as the pool size, and then return `room_full`
 - When condition failures and reasons that are not condition failures are mixed, it is row 1 only
   when there is a `NONCE#` condition failure. Otherwise, if there is even one reason that is not a
   condition failure or an unknown reason, it is `internal`
@@ -1315,6 +1393,13 @@ directly. Finding by token would require reading every peer and comparing.
 > **Why.** `bad_request` is a format error unrelated to guessing, and counting success would catch
 > normal polling.
 
+**`room_full` and `name_taken` are not counted either.** Both go out only to requests that gave a
+correct room code. What the budget tries to slow down is room code guessing, and these two are
+answers after the guessing has already succeeded. Someone who knows the room code burning storage
+write capacity with these two is the same kind of thing as the `create_room` abuse of 1.2 Trust
+Assumptions, and v1 accepts it. That `name_taken` reveals that the room has that name is also
+accepted. Names are visible to room members anyway.
+
 | Item | Value |
 |------|-----|
 | Budget | `RATE_LIMIT_BUCKET` (10) tokens per source IP. One is spent each time one of the three errors above goes out |
@@ -1377,17 +1462,17 @@ guessing blocks the other person's normal requests.** A campus network is like t
 
 | Item | `ttl` value |
 |------|----------|
-| All items of a room (`ROOM`, `PEER#`, `VIP#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S`. `expires_at_ms` is the value at the time that item is written |
+| All items of a room (`ROOM`, `PEER#`, `VIP#`, `NAME#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S`. `expires_at_ms` is the value at the time that item is written |
 
 After a renewal finishes, the items of the room partition share the same `ttl`. One day after the
 room expires, DynamoDB deletes them.
 
 **Renewing the lease pushes the `ttl` of every item of the room partition (`ROOM`, `PEER#`, `VIP#`,
-`PAIR#`).** `NONCE#` is not pushed. It is in a different partition, so it does not appear in the
+`NAME#`, `PAIR#`).** `NONCE#` is not pushed. It is in a different partition, so it does not appear in the
 renewal's `Query`, and its job ends when the retries of a request that lost its response end. So the
 `NONCE#` of a long-lived room is deleted first, a little over a day after that peer came in. A request
 that comes with the same nonce after that is a new join. Renewing only `ROOM` would
-delete the `PEER#`, `VIP#` and `PAIR#` items of a long-lived room first, leaving a live room with
+delete the `PEER#`, `VIP#`, `NAME#` and `PAIR#` items of a long-lived room first, leaving a live room with
 no peers. The write is done by the renewal writes of 4.6 `host_report` (6.3).
 
 - **An item created between two renewals takes its `ttl` from the `expires_at_ms` of that moment.**
@@ -1735,17 +1820,17 @@ Free Tier page shows it as "Always Free monthly allowance".
 The load is the worst case under the assumption that each item is 1KB or less. A write uses 1 WCU
 per item, and a strongly consistent `Query` uses RCU equal to the total bytes read rounded up in
 4KB units (the read/write units section of the AWS DynamoDB Developer Guide). One room has at most
-15 items per 6.2.
+20 items per 6.2.
 
 | Load | Worst case |
 |------|--------|
-| `host_report` renewal writes of a room below capacity | With three players, 12 items every 5 seconds. 2.4 WCU/s |
-| Renewal writes of a full room | 15 items every 30 seconds. 0.5 WCU/s |
-| Reads of `host_report` | Two `Query`s per call (4.6). If the room has just become full it is 15KB, so 4 RCU per `Query` and 8 RCU per call. The interval is set by the previous response, so that call can come 5 seconds later, and the periodic calls alone give a worst case of 1.6 RCU/s. The immediate call when a session ends adds 8 RCU per call |
-| One player polling with `get_peers` | One `Query` every 0.5 seconds. With 15 items it is 15KB, so 4 RCU, 8 RCU/s. It runs only until ready |
+| `host_report` renewal writes of a room below capacity | With three players, 16 items every 5 seconds. 3.2 WCU/s |
+| Renewal writes of a full room | 20 items every 30 seconds. 0.7 WCU/s |
+| Reads of `host_report` | Two `Query`s per call (4.6). If the room has just become full it is 20KB, so 5 RCU per `Query` and 10 RCU per call. The interval is set by the previous response, so that call can come 5 seconds later, and the periodic calls alone give a worst case of 2 RCU/s. The immediate call when a session ends adds 10 RCU per call |
+| One player polling with `get_peers` | One `Query` every 0.5 seconds. With 20 items it is 20KB, so 5 RCU, 10 RCU/s. It runs only until ready |
 
 One room fits within 25 for writes. For reads, during the few seconds when four players poll at the
-same time, polling alone is a worst case of 32 RCU/s, and the `host_report` reads on top of that go
+same time, polling alone is a worst case of 40 RCU/s, and the `host_report` reads on top of that go
 over 25. The excess can be absorbed by burst capacity, where DynamoDB keeps up to 300 seconds of
 unused capacity. It is not guaranteed, though. The same guide says that reserve can be used for
 background work without notice, so throttling can happen. Then the client gets `internal` (the 6.3
@@ -1759,6 +1844,10 @@ CloudWatch 1-minute `Sum` divided by 60 was 7.1 RCU/s for reads and 2.6 WCU/s fo
 one poll is about 1 RCU, which matches the whole set of items of one room fitting within 4KB. In the
 same window the throttle metrics had no data points. `ThrottledRequests` was read per operation (the
 `Operation` dimension), and `ReadThrottleEvents` and `WriteThrottleEvents` per table.
+
+**The measured values are from before the `NAME#` item existed.** They have not been measured again
+since. A `NAME#` item holds only the key, `peer_id`, and `ttl`, so the whole set of items of one room
+is expected to still fit within 4KB, but this has not been confirmed.
 
 **The deployment procedure is owned by [`tools/cp-deploy/`](../../tools/cp-deploy/README.md).** The
 unit file and deployment commands are not copied here. That tool uploads only committed code, writes
@@ -1848,7 +1937,7 @@ The result `[control]` returns to `[loop]` is one of three.
 | Result | What | Example |
 |------|------|-----|
 | Success | An `ok: true` response | Operation result |
-| Definite error | `ok: false` and `error` is not a transient error | `room_not_found`, `room_full`, `unauthorized`, `bad_request`, `rate_limited` |
+| Definite error | `ok: false` and `error` is not a transient error | `room_not_found`, `room_full`, `name_taken`, `unauthorized`, `bad_request`, `rate_limited` |
 | Transient error | Transport error (3.5), `internal`, `unavailable` | connect timeout, 500, 503 |
 
 **The one that decides on a retry is `[loop]`.** `[control]` only sends one request and puts the
@@ -1949,6 +2038,7 @@ per table under `control-server/tests/mutants/`, and the runner `tests/mutate.py
 | Storage 1 `ConsistentRead=true` | Eventually consistent reads also usually return the latest value. Local even more so |
 | Token comparison is constant time and done first in the application (6.3) | Timing differences are hard to reproduce in a test |
 | No `ipaddress` predicates in decisions (7.1) | A case table row can pass by accident |
+| The name check compares directly against the 63-character set and uses no Unicode predicates (2.7) | `str.isalnum()` and the regex `\w` accept Unicode letters, and `$` also matches before a trailing newline. A character not in the case table can slip through that gap |
 | `room_id` and `peer_token` are absent from logs (7.5) | Scanning all the logs is not a proof that "it appears on no path" |
 | Whether the response of `host_report` is read **after** the writes (4.6) | The read and write order of two requests cannot be forced from outside. Sending them at the same time usually ends up sequential and the defect does not show. Running the 4.6 confirmation race case table needs an **injection point in the store layer that adds a delay right after the write**, and whether that injection point exists is also judged by reading code |
 

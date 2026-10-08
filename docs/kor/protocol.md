@@ -90,6 +90,7 @@ constexpr size_t   MAX_DATAGRAM   = HEADER_SIZE + MAX_INNER;   // 1472
 constexpr uint32_t STUN_COOKIE    = 0x2112A442;                // RFC 5389
 constexpr size_t   MAX_CANDIDATES = 8;                         // 피어당 상한
 constexpr size_t   MAX_PEERS      = 5;                         // 한 방의 인원. 5.7 ROSTER 의 상한이기도 하다
+constexpr size_t   MAX_NAME_LEN   = 16;                        // 표시 이름 바이트 상한. 형식은 control_plane.md 2.7
 constexpr size_t   REPLAY_WINDOW  = 64;                        // 4.5. seen_bits 폭과 같이 움직인다
 constexpr size_t   MAX_PENDING_PINGS   = 16;
 constexpr size_t   MAX_PROBE_PATHS     = 4;                    // 10.4 (c) 동시 잠정 경로 상한
@@ -288,7 +289,7 @@ expected = position - baseline
 | `0x05` | `PING` | 8 | RTT 측정 요청 |
 | `0x06` | `PONG` | 8 | RTT 측정 응답 |
 | `0x07` | `CLOSE` | 1 | 정상 종료 통지 |
-| `0x08` | `ROSTER` | 14 ~ 50 | 방 명부와 멤버 연결 상태. 호스트만 보낸다 |
+| `0x08` | `ROSTER` | 16 ~ 135 | 방 명부와 멤버의 이름과 연결 상태. 호스트만 보낸다 |
 
 목록에 없는 값은 폐기하고 `drop_unknown_type`을 올린다.
 
@@ -409,21 +410,31 @@ pending_pings[id] = steady_clock::now();
 
 ---
 
-### 5.7 ROSTER (14 ~ 50바이트)
+### 5.7 ROSTER (16 ~ 135바이트)
 
 ```text
  오프셋  크기  필드         설명
    0      4   generation   uint32. 호스트가 명부를 바꿀 때마다 1 올린다
    4      1   count        멤버 수. 1 이상 MAX_PEERS(5) 이하
-   5     9*n  members      멤버 n개. 아래 배치를 그대로 잇는다
+   5     가변  members      멤버 n개. 아래 배치를 빈틈없이 잇는다
 
- 멤버 하나 (9바이트)
+ 멤버 하나 (11 ~ 26바이트)
    +0     4   peer_id      uint32
    +4     4   virtual_ip   uint32. 네트워크 바이트 오더
    +8     1   flags        비트 0 = 호스트와 연결됨. 비트 1~7 은 예약이고 0 이어야 한다
+   +9     1   name_len     이름의 바이트 수. 1 이상 MAX_NAME_LEN(16) 이하
+  +10  name_len name       표시 이름. ASCII. 끝에 0 바이트를 붙이지 않는다
 ```
 
-페이로드 길이는 `5 + 9 * count` 다. `count` 가 1 이면 14, 5 이면 50 이다.
+멤버 하나의 길이는 `10 + name_len` 이고 페이로드 길이는 `5` 에 멤버 길이를 모두 더한 값이다. 가장
+짧은 것은 멤버 하나에 한 글자 이름인 16바이트이고, 가장 긴 것은 멤버 다섯에 16자 이름인 135바이트다.
+
+**`name` 은 그 멤버가 제어 평면에 등록한 표시 이름이다.** 형식은
+[`control_plane.md`](control_plane.md) 2.7 `name` 이 정한다. 호스트는 `host_report` 응답으로 받은
+값을 그대로 싣는다. 자신의 이름은 자신이 등록한 값이다.
+
+> **왜 명부에 싣나.** 플레이어는 제어 평면에서 호스트의 정보만 받는다(`control_plane.md` 4.5
+> `get_peers`). 다른 플레이어의 이름을 알 길은 명부뿐이다.
 
 **호스트가 각 플레이어에게 보낸다.** 플레이어는 보내지 않는다. 플레이어가 보낸 `ROSTER` 는
 폐기하고 `drop_roster_direction` 을 올린다.
@@ -456,16 +467,28 @@ pending_pings[id] = steady_clock::now();
 > 주기를 두면 상한이 값 하나로 적히고 세션 상태가 늘지 않는다. **화면이 틀릴 수 있는 최대
 > 시간은 15초다.**
 
-**수신 검증은 8.1 공통 검사 뒤에 넷을 더 본다.**
+**수신 검증은 8.1 공통 검사 뒤에 다섯을 더 본다.**
 
 | # | 검사 | 실패 카운터 |
 |---|------|-------------|
 | 1 | 보낸 쪽이 호스트다 | `drop_roster_direction` |
-| 2 | `1 <= count <= MAX_PEERS` 이고 `payload_length == 5 + 9 * count` | `drop_type_length` |
+| 2 | 구조가 맞는다. 아래 셋이 모두 참이다 | `drop_type_length` |
 | 3 | `generation` 이 그 세션에서 마지막으로 받아들인 값보다 크다 | `drop_roster_stale` |
 | 4 | 모든 멤버의 `flags` 비트 1~7 이 0 이다 | `drop_roster_flags` |
+| 5 | 모든 멤버의 `name` 이 `control_plane.md` 2.7 `name` 의 문자 집합 안에 있다 | `drop_roster_name` |
 
-**명부는 표시 전용이다.** 받은 값이 수신 검증도 라우팅도 바꾸지 않는다.
+2번의 구조 검사다.
+
+- `1 <= count <= MAX_PEERS`
+- 멤버를 앞에서부터 차례로 읽을 때 각 `name_len` 이 `1` 이상 `MAX_NAME_LEN` 이하이고, 멤버 하나가
+  페이로드 끝을 넘지 않는다
+- `count` 개를 다 읽은 위치가 페이로드 끝과 정확히 같다. 남는 바이트도 모자란 바이트도 없다
+
+> **왜 5번을 따로 세나.** 길이는 맞는데 이름에 제어 문자나 공백이 든 명부는 구조 결함이 아니라
+> 내용 위조이거나 송신 구현의 결함이다. 카운터를 나눠야 둘을 가를 수 있다. 그 이름을 화면에 내면
+> 표준 출력과 로그의 줄 규칙이 깨진다.
+
+**명부는 표시 전용이다.** 받은 값이 수신 검증도 라우팅도 바꾸지 않는다. 이름도 같다.
 
 - 8.1 공통 검사 7번의 대조 집합은 **세션이 정한다.** 명부에 있는 `peer_id` 로 온 패킷이라도
   그 피어와 세션이 없으면 `drop_unknown_peer` 다
@@ -599,7 +622,7 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 | 3 | `version == TUNNEL_VERSION` | `drop_version` |
 | 4 | `type`이 5장 목록에 있음 | `drop_unknown_type` |
 | 5 | `payload_length == len - HEADER_SIZE` | `drop_length` |
-| 6 | 타입별 길이 규정 충족: `HELLO`/`HELLO_ACK` 정확히 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` 는 5.7 이 정한 `5 + 9 * count` | `drop_type_length` |
+| 6 | 타입별 길이 규정 충족: `HELLO`/`HELLO_ACK` 정확히 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` 16~135 (구조는 5.7 수신 검증의 2번이 따로 본다) | `drop_type_length` |
 | 7 | `peer_id`가 세션이 있는 피어의 ID와 일치 (5.7) | `drop_unknown_peer` |
 | 8 | `session_epoch`가 폐기 목록에 없음 | `drop_retired_epoch` |
 
@@ -1519,7 +1542,7 @@ Phase 4 에서 아래가 전부 코드에 있어야 한다. Phase 4 가 이 체�
 - [ ] 13장 STUN 범위
 - [ ] 5.4 `DATA` 타입, 8.4 내부 검증(검사 9~15), 8.5 송신 측 검증 전부
 - [ ] 8.5 라우팅 표. 6칸 고정 배열, 두 단계 조회, 케이스 표 전 행
-- [ ] 5.7 `ROSTER` 송수신. 방향·길이·`generation`·예약 비트 검사와 전용 카운터 셋
+- [ ] 5.7 `ROSTER` 송수신. 방향·구조·`generation`·예약 비트·이름 검사와 전용 카운터 넷
 - [ ] 5.7 `ROSTER` 송신 시점 셋 (변경 즉시, 5초 2회, 15초 주기)
 
 Phase 5에서 추가: 4.5 손실 집계와 `baseline`(재정렬을 손실로 세지 않는 집계), 퍼즈 방어.

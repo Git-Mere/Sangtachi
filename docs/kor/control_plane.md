@@ -72,7 +72,7 @@
 | 경로 | 무엇이 일어나는가 | 왜 수용하는가 |
 |------|-------------------|---------------|
 | 동시 연결 자리 고갈 | 헤더를 보내지 않는 연결 32개(`MAX_INFLIGHT`)를 5초마다 다시 여는 호출자가 그 구간의 정상 요청을 `unavailable` 로 만든다 (3.4, 7.2) | 출발지별 동시 연결 상한이 필요한데 그 판정이 위 표의 "호출자 IP" 가정 위에 서므로 같은 한계를 물려받는다 |
-| `create_room` 남용 | `create_room` 은 입력이 `client_nonce` 하나이고 성공 응답이라 6.4 속도 제한이 세지 않는다. nonce 를 바꿔 반복하면 호출마다 항목 4개짜리 트랜잭션 쓰기가 생기고 만료 뒤 하루까지 남는다(6.5). provisioned 쓰기 용량을 소진하면 정상 요청이 스로틀에 걸려 `internal` 이 된다 | 성공을 세면 정상 폴링이 걸린다는 6.4 속도 제한의 이유는 `get_peers` 에 대한 것이고 `create_room` 에는 폴링이 없다. 출발지별 방 생성 상한은 넣을 수 있으나 v1 은 넣지 않는다. **관측은 한다.** `room.created` 로그(7.5)의 출발지별 빈도가 그 근거다 |
+| `create_room` 남용 | `create_room` 은 입력이 `client_nonce` 와 `name` 둘뿐이고 성공 응답이라 6.4 속도 제한이 세지 않는다. nonce 를 바꿔 반복하면 호출마다 항목 5개짜리 트랜잭션 쓰기가 생기고 만료 뒤 하루까지 남는다(6.5). provisioned 쓰기 용량을 소진하면 정상 요청이 스로틀에 걸려 `internal` 이 된다 | 성공을 세면 정상 폴링이 걸린다는 6.4 속도 제한의 이유는 `get_peers` 에 대한 것이고 `create_room` 에는 폴링이 없다. 출발지별 방 생성 상한은 넣을 수 있으나 v1 은 넣지 않는다. **관측은 한다.** `room.created` 로그(7.5)의 출발지별 빈도가 그 근거다 |
 
 **이 둘은 방을 탈취하거나 값을 바꾸지 못한다.** 느리게 하거나 멈출 뿐이다. 그래서 위 신뢰
 가정 표와 나누어 적는다.
@@ -194,6 +194,7 @@ JOIN_REGISTER_GRACE_S     = 90          # 후보 없는 참가자를 서버가 �
 STORAGE_GRACE_S           = 86400       # 만료 뒤 DynamoDB TTL 삭제까지 여유 (6.5)
 PUNCH_DELAY_MS            = 1000        # protocol.md 10.2. 쌍이 준비 완료될 때 그 쌍에 1회 기록
 MAX_CANDIDATES            = 8           # protocol.md 3장과 같은 값. 피어당
+MAX_NAME_LEN              = 16          # protocol.md 3장과 같은 값. 표시 이름 길이 상한 (2.7)
 MAX_BODY_BYTES            = 4096        # 요청 본문 상한 (3.3)
 MAX_HEADER_BYTES          = 2048        # 요청 줄과 헤더 전체 상한 (3.3). 클라이언트는 응답 머리에도 쓴다 (3.5)
 CLIENT_JSON_MAX_DEPTH     = 32          # 클라이언트가 응답 JSON 을 해석할 때 중첩 상한 (3.5)
@@ -214,11 +215,54 @@ DDB_READ_TIMEOUT_S        = 1           # 같은 호출의 read 시간 제한 (7
 DDB_MAX_ATTEMPTS          = 1           # SDK 가 보내는 횟수. 재시도는 클라이언트가 한다 (7.6, 8.3)
 ```
 
-`MAX_CANDIDATES` 와 `PUNCH_DELAY_MS` 는 [`protocol.md`](protocol.md) 가 소유하는 값의
+`MAX_CANDIDATES`, `PUNCH_DELAY_MS`, `MAX_NAME_LEN` 은 [`protocol.md`](protocol.md) 가 소유하는 값의
 복사다. **그 문서가 바뀌면 여기를 따라 고친다.**
 
-> **왜.** 두 값만 예외로 복사하는 이유는 서버 코드가 그 값을 가져야 하고, 서버 코드는
+> **왜.** 세 값만 예외로 복사하는 이유는 서버 코드가 그 값을 가져야 하고, 서버 코드는
 > C++ 헤더를 읽지 않기 때문이다.
+
+### 2.7 name
+
+**사람에게 보이는 표시 이름이다. ASCII 영문자, 숫자, 밑줄로 된 1자 이상 `MAX_NAME_LEN`(16)자 이하의
+문자열이다.** `create_room` 과 `join_room` 요청이 싣는다(4.2, 4.3). 근거와 버린 대안은
+[ADR 0015](decisions/0015-멤버를-표시-이름으로-가리킨다.md) 다.
+
+```text
+ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_      (63자)
+```
+
+- JSON 문자열이 아니면 `bad_request` 다
+- 위 63자 밖의 글자가 하나라도 있으면 `bad_request` 다. 공백, 하이픈, 한글, 전각 문자, 제어 문자가
+  여기에 걸린다. **앞뒤 공백을 지워 주지 않는다**
+- 길이가 1 미만이거나 `MAX_NAME_LEN` 을 넘으면 `bad_request` 다. 글자가 전부 ASCII 이므로 글자 수와
+  바이트 수가 같다
+- 위 셋은 저장소를 읽기 전에 본다. 7.3 연산 처리 순서의 1번이다
+- **대소문자는 등록한 그대로 저장하고 돌려준다.** 바꾸지 않는다
+- **방 안 유일성은 대소문자를 무시하고 판정한다.** 비교 키는 ASCII 소문자로 바꾼 값이다. 방에
+  `Alice` 가 있으면 `alice` 는 `name_taken` 이다(4.1). 유일성은 `NAME#<키>` 항목의 조건부 쓰기(6.3)가
+  보장한다
+
+**문자 집합 검사가 소문자 변환보다 먼저다.** 2.1 `room_id` 의 ASCII 검사 순서와 같은 이유다.
+
+**이름은 그 피어의 자리가 회수될 때 풀린다.** `NAME#` 는 `PEER#` 와 같은 트랜잭션에서 지워진다(4.6,
+6.3). 그 전에는 같은 사람이 같은 이름으로 다시 참가해도 `name_taken` 이다. 재참가는 없고(4.3) 다시
+들어오는 것은 새 참가이기 때문이다.
+
+- 정상으로 나가면 호스트가 `CLOSE` 를 받고 바로 `host_report` 를 보내므로 요청 한 건 안에 풀린다.
+  `CLOSE` 는 한 번만 보내므로([`protocol.md`](protocol.md) 5.6) 잃으면 다음 줄과 같다
+- 프로세스가 죽으면 호스트가 유휴 타임아웃([`protocol.md`](protocol.md) 11장)으로 알아야 풀린다
+- 후보 없이 떠났으면 4.6 서버 회수의 유예 `JOIN_REGISTER_GRACE_S` 가 지나야 풀린다
+- 그동안 다시 들어오려면 다른 이름을 쓴다
+
+**이름은 표시 전용이다.** 서버는 이름으로 피어를 찾지 않는다. 인증과 회수와 확인은 `peer_id` 와
+`peer_token` 으로 한다. 클라이언트 쪽의 같은 규칙은 [`protocol.md`](protocol.md) 5.7 ROSTER 의
+"명부는 표시 전용이다" 에 있다.
+
+> **왜 대소문자를 무시하고 비교하나.** `Alice` 와 `alice` 를 다른 사람으로 받으면 화면에서 사람이
+> 둘을 가르기 어렵다. 그것을 막으려고 유일성을 둔 것이다.
+
+> **왜 공백을 받지 않나.** 이름은 `FAIL` 줄의 한 칸이고([`architecture.md`](architecture.md) 3.5
+> 기동 입력) 로그의 `<이름>=<값>` 값이 될 수 있다. 공백이 들면 두 규칙이 깨진다.
 
 ### 왜 이렇게 정했나
 
@@ -381,7 +425,8 @@ Connection: close\r\n
    - 둘이 어긋나는 구현은 시험에서 걸러야 한다. 다만 클라이언트가 둘 다 보면 어긋났을 때
      어느 쪽을 믿을지가 구현마다 달라진다
 7. `ok: true` 이면 그 연산의 응답 표(4장)의 형과 맞는가. 필드가 없거나 형이 틀리면 전송 오류다.
-   알 수 없는 키는 무시한다
+   알 수 없는 키는 무시한다. `peers` 원소의 `name` 은 형에 더해 2.7 의 형식까지 본다. 형식이 틀리면
+   전송 오류다
 8. `ok: false` 이면 `error` 가 4.1 표의 코드인가. 표에 없는 코드는 확정 오류다. 8.3 의 일시 오류는
    `internal` 과 `unavailable` 둘로 닫혀 있다
 
@@ -438,6 +483,7 @@ Connection: close\r\n
 | `room_not_found` | 404 | 그 `room_id` 의 방이 없다 | 같음. **만료된 방도 이 코드가 아니다.** 아래 `room_expired` |
 | `room_expired` | 410 | 방이 있으나 만료 시각이 지났다(5.1) | 같음 |
 | `room_full` | 409 | 참가자 풀의 주소가 전부 선점됐다(2.5) | 같음 |
+| `name_taken` | 409 | 방에 같은 이름(2.7, 대소문자 무시)의 피어가 있다 | 같음 |
 | `unauthorized` | 403 | `peer_token` 이 그 `peer_id` 의 것이 아니다 | 같음 |
 | `rate_limited` | 429 | 6.4 속도 제한의 출발지별 예산 소진 | 같음. 클라이언트가 스스로 기다렸다 다시 하지 않는다. 사람이 다시 시작한다. `host_report` 만 예외다(4.6) |
 | `internal` | 500 | 저장소 오류, 재추첨 상한 도달 | **일시 오류다.** 8.3 오류 분류와 재시도의 규칙을 따른다 |
@@ -458,6 +504,7 @@ Connection: close\r\n
 | 필드 | 형 | 필수 | 뜻 |
 |------|-----|:---:|-----|
 | `client_nonce` | 16진수 32자 문자열 | 예 | 멱등성 키(2.4) |
+| `name` | 문자열 | 예 | 호스트의 표시 이름(2.7) |
 
 **응답.**
 
@@ -469,7 +516,7 @@ Connection: close\r\n
 | `virtual_ip` | 점 십진 문자열 | `10.100.0.1` |
 | `expires_in_s` | 정수 | 응답 시점부터 만료까지 남은 초. 절대 시각을 주지 않는다. 클라이언트 시계를 믿지 않는다 |
 
-**멱등성.** 같은 `client_nonce` 로 다시 오면 **이미 만든 방의 같은 응답**을 돌려준다. `expires_in_s` 만 줄어든다. 그 방이 만료됐으면 `room_expired` 다. 새 방을 만들지 않는다. 판정 근거는 `NONCE#` 항목(6.3)이다.
+**멱등성.** 같은 `client_nonce` 로 다시 오면 **이미 만든 방의 같은 응답**을 돌려준다. `expires_in_s` 만 줄어든다. 그 방이 만료됐으면 `room_expired` 다. 새 방을 만들지 않는다. 판정 근거는 `NONCE#` 항목(6.3)이다. 다시 온 요청의 `name` 은 형식만 보고 저장된 값과 비교하지 않는다. 4.3 `join_room` 도 같다.
 
 **오류.** 연산 고유의 것은 없다. 공통 넷(4.1)만 난다.
 
@@ -491,6 +538,7 @@ Connection: close\r\n
 |------|-----|:---:|
 | `room_id` | 문자열 | 예. 2.1 정규화를 거친다 |
 | `client_nonce` | 16진수 32자 | 예 |
+| `name` | 문자열 | 예. 2.7 형식. 이 참가자의 표시 이름 |
 
 **응답.**
 
@@ -522,7 +570,11 @@ Connection: close\r\n
 > 자리의 진실은 `VIP#` 선점이고 피어 수는 그 파생이다. 두 곳에서 판정하면 회수 직후에
 > 어긋난다.
 
-**오류.** `room_not_found`, `room_expired`, `room_full`. 공통 넷(4.1)은 따로 적지 않는다.
+**`name_taken` 의 판정은 `NAME#` 선점 결과뿐이다.** 사전 읽기로 방의 이름을 훑어 판정하지 않는다.
+같은 이름의 두 참가가 동시에 오면 조건부 쓰기 하나만 성공한다(6.3). 이름이 겹치면 풀의 다음 주소로
+넘어가지 않는다. 주소를 바꿔도 이름은 그대로 겹친다.
+
+**오류.** `room_not_found`, `room_expired`, `room_full`, `name_taken`. 공통 넷(4.1)은 따로 적지 않는다.
 
 ### 4.4 register_candidate
 
@@ -653,13 +705,14 @@ Connection: close\r\n
 |------|-----|-----|
 | `peer_id` | uint32 | |
 | `virtual_ip` | 점 십진 문자열 | `protocol.md` 5.1 `HELLO` 의 `virtual_ip` 검증에 쓴다 (14장 계약 6) |
+| `name` | 문자열 | 그 피어가 등록한 표시 이름(2.7). 표시에만 쓴다 |
 | `ready` | 불 | 이 쌍의 `PAIR#` 항목이 있으면 참 |
 | `punch_delay_ms` | 정수 | 그 쌍에 기록된 값. `ready` 가 참일 때만 있다 |
 | `elapsed_since_ready_ms` | 정수 0 이상 | 그 쌍의 준비 완료 기록 시점부터 이 응답을 만드는 시점까지. `ready` 가 참일 때만 있다. 계산 방법은 7.4 |
 | `candidates` | 배열 | 4.4 `register_candidate` 와 같은 원소 형. 저장된 순서대로. `ready` 가 참일 때만 있다 |
 
-**원소의 필드 집합은 `ready` 가 가른다.** `PAIR#` 가 없으면 `peer_id`, `virtual_ip`,
-`ready: false` 셋이다. 있으면 거기에 `punch_delay_ms`, `elapsed_since_ready_ms`, `candidates` 가
+**원소의 필드 집합은 `ready` 가 가른다.** `PAIR#` 가 없으면 `peer_id`, `virtual_ip`, `name`,
+`ready: false` 넷이다. 있으면 거기에 `punch_delay_ms`, `elapsed_since_ready_ms`, `candidates` 가
 더해진다. 케이스 표는 [`test_get_peers.py`](../../control-server/tests/test_get_peers.py) 의
 `FIELD_SETS` 다.
 
@@ -757,8 +810,8 @@ Connection: close\r\n
 **처리 순서를 못박는다.** 한 요청 안에서 아래 순서로 돈다.
 
 1. 호출자 판정. 어긋나면 `unauthorized` 로 끝난다
-2. `departed` 의 각 `peer_id` 에 대해 `PEER#` 와 그 피어의 `VIP#`, 그 피어가 낀 `PAIR#`, 그
-   피어의 `NONCE#` 를 지운다(6.3). 이어서 서버 회수 대상도 `PEER#` 와 `VIP#` 를 지운다. 대상은 아래
+2. `departed` 의 각 `peer_id` 에 대해 `PEER#` 와 그 피어의 `VIP#`, `NAME#`, 그 피어가 낀 `PAIR#`, 그
+   피어의 `NONCE#` 를 지운다(6.3). 이어서 서버 회수 대상도 `PEER#` 와 `VIP#`, `NAME#` 를 지운다. 대상은 아래
    "서버 회수" 가 정한다. `departed` 에 든 피어는 서버 회수가 다시 판정하지 않는다. 그 피어의
    회수는 호스트의 것이고 로그의 `by` 가 `host` 다
 3. `confirm` 의 각 `peer_id` 에 대해, 그 피어와 호출자가 **둘 다 후보를 1개 이상** 갖고 있고
@@ -768,7 +821,9 @@ Connection: close\r\n
 5. `Query(pk, ConsistentRead=true)` 로 읽어 응답을 만든다
 
 **서버 회수.** 1번에서 읽은 방의 피어 가운데 아래를 모두 만족하는 것이 대상이다.
-지울 때 그 피어의 `NONCE#` 도 같이 지운다. 키는 `PEER#` 의 `client_nonce` 로 안다. 2번에서
+지울 때 그 피어의 `NONCE#` 도 같이 지운다. 키는 `PEER#` 의 `client_nonce` 로 안다. 지울 `NAME#` 는
+1번에서 읽은 방 항목 가운데 `peer_id` 가 그 피어인 것이다. `PEER#` 의 `name` 으로 키를 만들지
+않는다. 2번에서
 지운 피어는 `released` 에 담는다.
 
 - 호스트가 아니다
@@ -823,6 +878,12 @@ Connection: close\r\n
 받는다. `departed` 나 `confirm` 의 대상이 읽을 수 없는 `PEER#` 일 때와 호출자의 `PEER#` 를 읽을 수
 없을 때도 `internal` 이다. 예외는 `departed` 대상의 `client_nonce` 하나다. 그것만 읽을 수 없으면
 6.3 항목의 회수 행대로 `NONCE#` 만 빼고 지운다.
+
+**회수가 지우는 `NAME#` 는 `peer_id` 로 찾는다.** 1번에서 읽은 방 항목 가운데 `NAME#` 이고 `peer_id`
+가 대상인 것을 모두 지운다. 하나도 없으면 `NAME#` 없이 지운다.
+
+> **왜 `PEER#` 의 `name` 으로 찾지 않나.** 그 값을 읽을 수 없으면 `NAME#` 를 남긴 채 `PEER#` 만
+> 지우게 되고, 남은 `NAME#` 는 갱신이 `ttl` 을 계속 밀어 방이 끝날 때까지 그 이름을 막는다.
 
 **2번이 3번보다 먼저다.** 같은 요청에 `departed` 와 `confirm` 이 같은 `peer_id` 를 담으면
 회수가 이긴다. 끝난 세션을 준비 완료로 기록하면 그 자리가 다시 찬다.
@@ -1056,10 +1117,10 @@ Connection: close\r\n
 | 용량 모드 | [ADR 0004](decisions/0004-상태-저장소-dynamodb.md) 결정 4. provisioned. 값은 배포 설정 |
 | 인덱스 | 없음 (저장 2) |
 
-방에 속한 항목(`ROOM`, `PEER#`, `VIP#`, `PAIR#`)은 같은 파티션 키를 가지므로 방 하나의
+방에 속한 항목(`ROOM`, `PEER#`, `VIP#`, `NAME#`, `PAIR#`)은 같은 파티션 키를 가지므로 방 하나의
 전체 상태를 `Query(pk = room_id, ConsistentRead=true)` 하나로 읽는다. 항목 수는
-`1 + MAX_PEERS × 2 + (MAX_PEERS - 1)` 이하다(`ROOM` 하나, 피어마다 `PEER#` 와 `VIP#`,
-호스트와 각 플레이어의 쌍마다 `PAIR#` 하나). v1 에서 최대 15개다.
+`1 + MAX_PEERS × 3 + (MAX_PEERS - 1)` 이하다(`ROOM` 하나, 피어마다 `PEER#` 와 `VIP#` 와 `NAME#`,
+호스트와 각 플레이어의 쌍마다 `PAIR#` 하나). v1 에서 최대 20개다.
 
 **`NONCE#` 항목은 파티션 키가 다르다.**
 
@@ -1072,8 +1133,9 @@ Connection: close\r\n
 |------|------|-----|
 | `ROOM` | `created_at_ms`, `expires_at_ms`, `host_peer_id`, `ttl` | 방. 처음 `expires_at_ms` 는 `create_room` 의 `now + ROOM_LEASE_S * 1000` 이고 `host_report` 가 민다(4.6) |
 | `PAIR#<lo>-<hi>` | `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms`, `ttl` | 쌍의 준비 완료. `lo` 와 `hi` 는 두 `peer_id` 를 수의 오름차순으로 놓고 10진수로 적는다. `9` 가 `10` 보다 앞이다. 7.4 시계가 세 값을 쓴다 |
-| `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `candidates`(리스트), `client_nonce`, `joined_at_ms`, `ttl` | 피어. `peer_id` 는 `sk` 에서 10진수로 적는다. `peer_token` 은 원문이다(2.3). `candidates` 는 첫 `register_candidate` 전에는 쓰지 않는다 |
+| `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `name`, `candidates`(리스트), `client_nonce`, `joined_at_ms`, `ttl` | 피어. `peer_id` 는 `sk` 에서 10진수로 적는다. `peer_token` 은 원문이다(2.3). `name` 은 등록한 그대로다(2.7). `candidates` 는 첫 `register_candidate` 전에는 쓰지 않는다 |
 | `VIP#<virtual_ip>` | `peer_id`, `ttl` | 가상 IP 선점 표식. `<virtual_ip>` 는 점 십진 |
+| `NAME#<이름 키>` | `peer_id`, `ttl` | 표시 이름 선점 표식. `<이름 키>` 는 이름을 ASCII 소문자로 바꾼 값이다(2.7). 회수는 `peer_id` 로 이 항목을 찾는다(4.6) |
 | (pk = `NONCE#<client_nonce>`, sk = `NONCE`) | `room_id`, `peer_id`, `ttl` | 멱등성 키 → 방과 피어 대응. **pk 가 방이 아니라 nonce 다** |
 
 토큰 비교는 상수 시간 비교(`hmac.compare_digest`)로 한다. 조건식에 넣는 비교(`peer_token
@@ -1087,11 +1149,11 @@ Connection: close\r\n
 
 | 연산 | 쓰기 | 조건 |
 |------|------|------|
-| `create_room` | 트랜잭션: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NONCE#` put | **네 put 전부 `attribute_not_exists(pk)`** 다. `ROOM` 실패는 `room_id` 충돌 → 재추첨(2.1). `NONCE#` 실패는 동시에 같은 nonce 가 들어온 것이므로 다시 읽어 그 결과를 돌려준다. `PEER#`·`VIP#` 는 `ROOM` 이 없으면 있을 수 없으므로 실패가 나면 저장소가 앞선 방의 항목을 일부만 지운 상태다. 그때는 `internal` 이고 재추첨하지 않는다 |
-| `join_room` 새 참가 | 풀의 주소마다 트랜잭션: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `PEER#<peer_id>` put, `NONCE#` put | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 사전 읽기와 쓰기 사이에 방이 만료되거나 삭제되는 경합을 막는다. `VIP#` 와 `PEER#` 와 `NONCE#` 각각 `attribute_not_exists(pk)`. 실패 처리는 아래 취소 사유 표 |
+| `create_room` | 트랜잭션: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NAME#<호스트 이름 키>` put, `NONCE#` put | **다섯 put 전부 `attribute_not_exists(pk)`** 다. `ROOM` 실패는 `room_id` 충돌 → 재추첨(2.1). `NONCE#` 실패는 동시에 같은 nonce 가 들어온 것이므로 다시 읽어 그 결과를 돌려준다. `PEER#`·`VIP#`·`NAME#` 는 `ROOM` 이 없으면 있을 수 없으므로 실패가 나면 저장소가 앞선 방의 항목을 일부만 지운 상태다. 그때는 `internal` 이고 재추첨하지 않는다 |
+| `join_room` 새 참가 | 풀의 주소마다 트랜잭션: `ROOM` **ConditionCheck**, `VIP#<ip>` put, `NAME#<이름 키>` put, `PEER#<peer_id>` put, `NONCE#` put | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 사전 읽기와 쓰기 사이에 방이 만료되거나 삭제되는 경합을 막는다. `VIP#` 와 `NAME#` 와 `PEER#` 와 `NONCE#` 각각 `attribute_not_exists(pk)`. 실패 처리는 아래 취소 사유 표 |
 | `register_candidate` | `PEER#` update: `candidates = :list` | `attribute_exists(pk) AND peer_token = :t`. 실패는 `unauthorized` 다. 토큰 검사 뒤 그 피어가 회수된 경우다(4.6 서버 회수) |
-| `host_report` 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, 그 피어가 낀 `PAIR#` delete, `NONCE#<그 피어의 client_nonce>` delete | **`PEER#` 에만 `attribute_exists(pk)` 를 건다.** 그 조건이 실패하면 이미 없던 대상이고 `released` 에 담지 않는다(4.6). 나머지는 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 그 회수가 통째로 취소된다. `client_nonce` 를 읽을 수 없으면 `NONCE#` 만 빼고 지운다 |
-| `host_report` 서버 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, `NONCE#<그 피어의 client_nonce>` delete | `PEER#` 에 `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff`. `:cutoff` 는 `now - JOIN_REGISTER_GRACE_S * 1000` 이다. 조건이 실패하면 그 사이 등록했거나 이미 없는 것이므로 `released` 에 담지 않는다. 후보가 없던 피어는 `PAIR#` 가 있을 수 없으므로 지우지 않는다 |
+| `host_report` 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, `peer_id` 가 그 피어인 `NAME#` delete, 그 피어가 낀 `PAIR#` delete, `NONCE#<그 피어의 client_nonce>` delete | **`PEER#` 에만 `attribute_exists(pk)` 를 건다.** 그 조건이 실패하면 이미 없던 대상이고 `released` 에 담지 않는다(4.6). 나머지는 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 그 회수가 통째로 취소된다. `client_nonce` 를 읽을 수 없으면 `NONCE#` 만 빼고 지운다 |
+| `host_report` 서버 회수 | 대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, `peer_id` 가 그 피어인 `NAME#` delete, `NONCE#<그 피어의 client_nonce>` delete | `PEER#` 에 `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND joined_at_ms <= :cutoff`. `:cutoff` 는 `now - JOIN_REGISTER_GRACE_S * 1000` 이다. 조건이 실패하면 그 사이 등록했거나 이미 없는 것이므로 `released` 에 담지 않는다. 후보가 없던 피어는 `PAIR#` 가 있을 수 없으므로 지우지 않는다 |
 | `host_report` 확인 | 쌍마다 트랜잭션: `PEER#<호스트>` **ConditionCheck**, `PEER#<상대>` **ConditionCheck**, `PAIR#<lo>-<hi>` put | 두 ConditionCheck 는 각각 `attribute_exists(pk) AND size(candidates) > :zero` 다. put 은 `attribute_not_exists(pk)`. **양쪽 후보 조건을 저장소 조건으로 건다.** 읽고 나서 쓰기 전에 상대가 회수되거나 후보가 비워지는 경합이 있다. put 조건만 실패하면 이미 확인된 쌍이므로 오류가 아니다(4.6) |
 | `host_report` 갱신 | `ROOM` update(`expires_at_ms = :new`, `ttl = :new_ttl`) 하나를 먼저 쓴다. 그것이 성공하면 그 방의 나머지 항목마다 `ttl = :new_ttl` update 를 따로 쓴다. 트랜잭션으로 묶지 않는다 | `ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 실패는 `room_expired` 이고 나머지를 쓰지 않는다. **나머지 항목은 각각 `attribute_exists(pk)`** 다. 조건이 실패하면 그 사이 지워진 항목이므로 무시한다. 항목 목록은 이 요청의 첫 `Query` 결과에서 2번이 지운 항목을 뺀 것이다 |
 
@@ -1105,16 +1167,21 @@ Connection: close\r\n
 |:----:|-------------|------|
 | 1 | `NONCE#` | **다른 사유가 무엇이든** 같은 nonce 의 요청이 먼저 성립한 것이다. `NONCE#` 를 다시 읽어 그 `room_id`·`peer_id` 로 방을 `Query` 하고 같은 응답을 돌려준다. 그 방이 만료됐으면 `room_expired` 다(4.2). `room_full` 이나 재추첨으로 가지 않는다. **다시 읽은 `room_id` 가 요청의 방과 다르면 `bad_request`** 다. nonce 를 다른 방에 재사용한 것이고, 사전 읽기 경로가 같은 입력에 내는 답과 같아야 한다 |
 | 2 | `ROOM` ConditionCheck (`join_room`) | 방을 다시 읽는다. 없으면 `room_not_found`, 있으면 `room_expired`. 다음 주소로 넘어가지 않는다 |
-| 3 | `VIP#` | 다음 주소. 풀이 끝나면 `room_full` |
-| 4 | `PEER#` | `peer_id` 재추첨. 상한은 `MAX_PEER_ID_ATTEMPTS` |
-| 5 | `ROOM` put (`create_room`) | `room_id` 재추첨. 상한은 `MAX_ROOM_ID_ATTEMPTS` |
+| 3 | `NAME#` (`join_room`) | `name_taken`. 다음 주소로 넘어가지 않는다(4.3) |
+| 4 | `VIP#` | 다음 주소. 풀이 끝나면 `room_full` |
+| 5 | `PEER#` | `peer_id` 재추첨. 상한은 `MAX_PEER_ID_ATTEMPTS` |
+| 6 | `ROOM` put (`create_room`) | `room_id` 재추첨. 상한은 `MAX_ROOM_ID_ATTEMPTS` |
 | - | 조건 실패가 아닌 사유 (`TransactionConflict`, 스로틀) | `internal`. 클라이언트가 8.3 오류 분류와 재시도의 규칙대로 재시도한다 |
 
 `NONCE#` 를 1번에 둔 근거는 아래 "왜 이렇게 정했나" 에 있다.
 
-- **`create_room` 은 1번 다음에 5번을 본다.** `room_id` 가 살아 있는 방과 부딪히면 `ROOM` put 과
-  함께 `VIP#10.100.0.1` 과 `PEER#` 도 실패하는데, `create_room` 에는 다음 주소가 없다. `ROOM` put 이
-  성공했는데 `PEER#` 나 `VIP#` 만 실패하면 위 쓰기 표대로 `internal` 이다
+- **`create_room` 은 1번 다음에 6번을 본다.** `room_id` 가 살아 있는 방과 부딪히면 `ROOM` put 과
+  함께 `VIP#10.100.0.1` 과 `PEER#` 도 실패하고 `NAME#` 도 실패할 수 있는데, `create_room` 에는 다음
+  주소가 없고 이름이 겹친 상대도 다른 방의 피어다. `ROOM` put 이 성공했는데 `PEER#`, `VIP#`, `NAME#`
+  만 실패하면 위 쓰기 표대로 `internal` 이다
+- **`NAME#` 가 `VIP#` 보다 먼저다.** 같은 트랜잭션에서 둘이 함께 실패하면 이름이 겹친 것이다.
+  `VIP#` 를 먼저 보면 다음 주소로 넘어가 이름이 계속 겹치는 시도를 풀 크기만큼 되풀이한 뒤
+  `room_full` 을 돌려준다
 - 조건 실패와 조건 실패가 아닌 사유가 섞이면, `NONCE#` 조건 실패가 있을 때만 1번이다. 그 밖에는
   조건 실패가 아닌 사유나 모르는 사유가 하나라도 있으면 `internal` 이다
 
@@ -1171,6 +1238,12 @@ Connection: close\r\n
 
 > **왜.** `bad_request` 는 추측과 무관한 형식 오류이고, 성공을 세면 정상 폴링이 걸린다.
 
+**`room_full` 과 `name_taken` 도 세지 않는다.** 둘 다 맞는 방 코드를 낸 요청에만 나간다. 예산이 늦추려는
+것은 방 코드 추측이고 이 둘은 추측이 이미 끝난 뒤의 답이다. 방 코드를 아는 사람이 이 둘로 저장소
+쓰기 용량을 태우는 것은 1.2 신뢰 가정의 `create_room` 남용과 같은 종류이고 v1 이 받아들인다.
+`name_taken` 이 방에 그 이름이 있다는 것을 알려 주는 것도 받아들인다. 이름은 방 멤버에게 어차피
+보인다.
+
 | 항목 | 값 |
 |------|-----|
 | 예산 | 출발지 IP 당 토큰 `RATE_LIMIT_BUCKET`(10). 위 세 오류가 한 번 나갈 때마다 하나 쓴다 |
@@ -1225,16 +1298,16 @@ Connection: close\r\n
 
 | 항목 | `ttl` 값 |
 |------|----------|
-| 방의 모든 항목 (`ROOM`, `PEER#`, `VIP#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S`. `expires_at_ms` 는 그 항목을 쓰는 시점의 값이다 |
+| 방의 모든 항목 (`ROOM`, `PEER#`, `VIP#`, `NAME#`, `PAIR#`, `NONCE#`) | `floor(expires_at_ms / 1000) + STORAGE_GRACE_S`. `expires_at_ms` 는 그 항목을 쓰는 시점의 값이다 |
 
 갱신이 끝난 뒤 방 파티션의 항목은 같은 `ttl` 을 갖는다. 방이 만료된 뒤 하루가 지나면 DynamoDB 가
 지운다.
 
-**임대를 갱신하면 방 파티션의 모든 항목(`ROOM`, `PEER#`, `VIP#`, `PAIR#`)의 `ttl` 을 같이 민다.**
+**임대를 갱신하면 방 파티션의 모든 항목(`ROOM`, `PEER#`, `VIP#`, `NAME#`, `PAIR#`)의 `ttl` 을 같이 민다.**
 `NONCE#` 는 밀지 않는다. 파티션이 달라 갱신의 `Query` 에 나오지 않고, 그 일은 응답을 잃은 요청의
 재시도가 끝나면 끝난다. 그래서 오래 산 방의 `NONCE#` 는 그 피어가 들어온 때로부터 하루 남짓 뒤에
 먼저 지워진다. 그 뒤 같은 nonce 로 온 요청은 새 참가다. `ROOM` 만 밀면 오래 산 방의
-`PEER#`·`VIP#`·`PAIR#` 가 먼저 지워지고, 방은 살아 있는데 피어가 사라진다. 쓰기는 4.6
+`PEER#`·`VIP#`·`NAME#`·`PAIR#` 가 먼저 지워지고, 방은 살아 있는데 피어가 사라진다. 쓰기는 4.6
 `host_report` 의 갱신 쓰기가 한다(6.3).
 
 - **갱신 사이에 새로 생긴 항목은 그 시점의 `expires_at_ms` 로 `ttl` 을 갖는다.** 다음 갱신에서
@@ -1544,17 +1617,17 @@ allowance" 로 표시되는 것을 확인했다.
 
 부하는 항목 하나가 1KB 이하라는 가정의 최악값이다. 쓰기는 항목마다 1 WCU 이고, 강한 일관성
 `Query` 는 읽은 바이트 합을 4KB 단위로 올림한 만큼 RCU 를 쓴다(AWS DynamoDB 개발자 가이드의
-읽기·쓰기 단위 절). 방 하나의 항목은 6.2 대로 최대 15개다.
+읽기·쓰기 단위 절). 방 하나의 항목은 6.2 대로 최대 20개다.
 
 | 부하 | 최악값 |
 |------|--------|
-| 정원 미만 방의 `host_report` 갱신 쓰기 | 플레이어 셋이면 항목 12개를 5초마다. 2.4 WCU/s |
-| 정원이 찬 방의 갱신 쓰기 | 항목 15개를 30초마다. 0.5 WCU/s |
-| `host_report` 의 읽기 | 호출마다 `Query` 둘(4.6). 방이 막 정원이 찼으면 15KB 라 회당 4 RCU, 호출당 8 RCU 다. 간격은 직전 응답으로 정하므로 그 호출이 5초 뒤일 수 있어 주기 호출만으로 최악 1.6 RCU/s 다. 세션이 끝날 때의 즉시 호출이 호출당 8 RCU 씩 더해진다 |
-| `get_peers` 로 폴링하는 플레이어 한 명 | 0.5초마다 `Query` 한 번. 항목 15개면 15KB 라 4 RCU, 8 RCU/s. 준비 완료까지만 돈다 |
+| 정원 미만 방의 `host_report` 갱신 쓰기 | 플레이어 셋이면 항목 16개를 5초마다. 3.2 WCU/s |
+| 정원이 찬 방의 갱신 쓰기 | 항목 20개를 30초마다. 0.7 WCU/s |
+| `host_report` 의 읽기 | 호출마다 `Query` 둘(4.6). 방이 막 정원이 찼으면 20KB 라 회당 5 RCU, 호출당 10 RCU 다. 간격은 직전 응답으로 정하므로 그 호출이 5초 뒤일 수 있어 주기 호출만으로 최악 2 RCU/s 다. 세션이 끝날 때의 즉시 호출이 호출당 10 RCU 씩 더해진다 |
+| `get_peers` 로 폴링하는 플레이어 한 명 | 0.5초마다 `Query` 한 번. 항목 20개면 20KB 라 5 RCU, 10 RCU/s. 준비 완료까지만 돈다 |
 
 방 하나는 쓰기가 25 안에 든다. 읽기는 플레이어 넷이 동시에 폴링하는 몇 초 동안 폴링만으로 최악
-32 RCU/s 이고, 거기에 `host_report` 의 읽기가 더해져 25 를 넘는다. 넘는 부분은 DynamoDB 가 쓰지
+40 RCU/s 이고, 거기에 `host_report` 의 읽기가 더해져 25 를 넘는다. 넘는 부분은 DynamoDB 가 쓰지
 않은 용량을 최대 300초어치 모아 두는 burst capacity 가 받을 수 있다. 다만 보장되지 않는다. 같은
 가이드가 그 여유를 예고 없이 백그라운드 작업에 쓸 수 있다고 적었으므로 스로틀이 날 수 있다.
 그때 클라이언트는 `internal` 을 받고(6.3 취소 사유 표) 8.3 대로 재시도하거나 다음 폴링을
@@ -1566,6 +1639,9 @@ CloudWatch 의 1분 `Sum` 을 60 으로 나눈 값의 최대가 읽기 7.1 RCU/s
 1 RCU 꼴이라는 뜻이고, 방 하나의 항목 전체가 4KB 안에 든다는 것과 맞는다. 같은 구간에 스로틀 지표는
 데이터점이 없었다. `ThrottledRequests` 는 연산별(`Operation` 차원)로, `ReadThrottleEvents` 와
 `WriteThrottleEvents` 는 테이블 단위로 읽었다.
+
+**잰 값은 `NAME#` 항목이 생기기 전의 것이다.** 그 뒤로 다시 재지 않았다. `NAME#` 항목은 키와
+`peer_id` 와 `ttl` 뿐이라 방 하나의 항목 전체가 여전히 4KB 안에 들 것으로 보지만, 확인하지 않았다.
 
 **배포 절차는 [`tools/cp-deploy/`](../../tools/cp-deploy/README.md) 가 갖는다.** 유닛 파일과 배포
 명령을 여기 옮겨 적지 않는다. 그 도구가 커밋된 코드만 올리고, 시스템 사용자와 systemd 유닛을 쓰고,
@@ -1642,7 +1718,7 @@ CloudWatch 의 1분 `Sum` 을 60 으로 나눈 값의 최대가 읽기 7.1 RCU/s
 | 결과 | 무엇 | 예 |
 |------|------|-----|
 | 성공 | `ok: true` 응답 | 연산 결과 |
-| 확정 오류 | `ok: false` 이고 `error` 가 일시 오류가 아님 | `room_not_found`, `room_full`, `unauthorized`, `bad_request`, `rate_limited` |
+| 확정 오류 | `ok: false` 이고 `error` 가 일시 오류가 아님 | `room_not_found`, `room_full`, `name_taken`, `unauthorized`, `bad_request`, `rate_limited` |
 | 일시 오류 | 전송 오류(3.5), `internal`, `unavailable` | connect 타임아웃, 500, 503 |
 
 **재시도를 판단하는 것은 `[loop]` 다.** `[control]` 은 한 번의 요청을 보내고 결과를 응답 큐에
@@ -1732,6 +1808,7 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 그 항�
 | 저장 1 `ConsistentRead=true` | 최종 일관성 읽기도 대개 최신 값을 준다. 로컬은 더 그렇다 |
 | 토큰 비교가 상수 시간이고 애플리케이션에서 먼저 한다 (6.3) | 시간 차이는 시험으로 재현하기 어렵다 |
 | 판정에 `ipaddress` 술어를 쓰지 않음 (7.1) | 케이스 표 행이 우연히 통과할 수 있다 |
+| 이름 검사가 63자 집합을 직접 대조하고 유니코드 술어를 쓰지 않음 (2.7) | `str.isalnum()` 과 정규식 `\w` 는 유니코드 글자를 받고 `$` 는 끝 줄바꿈 앞에서도 맞는다. 케이스 표에 없는 글자가 그 틈으로 통과할 수 있다 |
 | `room_id` 와 `peer_token` 이 로그에 없음 (7.5) | 로그를 전부 훑어도 "어느 경로에서도 안 나온다" 는 증명이 아니다 |
 | `host_report` 의 응답이 쓰기 **뒤에** 읽은 것인가 (4.6) | 두 요청의 읽기·쓰기 순서를 밖에서 강제할 수 없다. 그냥 동시에 보내면 대개 순차로 끝나 결함이 드러나지 않는다. 4.6 확인 경합 케이스 표를 돌리려면 store 계층에 **쓰기 직후 지연을 넣는 주입점**이 있어야 하고, 그 주입점이 있는지도 코드로 본다 |
 

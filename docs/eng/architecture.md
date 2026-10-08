@@ -206,6 +206,7 @@ becomes necessary is decided by [`roadmap.md`](roadmap.md).
 | Role | First positional argument `host` or `player` | No. Without it the process starts in the lobby | The same as typing one lobby command right after startup. `host` is `host`, and `player` is `join <--room value>`. Phase 1~2 only accepts and stores it |
 | Control server address | `--server <name or IPv4>[:<port>]` | Yes from Phase 3. Phase 1~2 only accepts and stores it, and starts without it | DNS name or IPv4 literal. If the port is omitted, `CONTROL_PORT` from [`control_plane.md`](control_plane.md) 2.6 Constants. No real address is hard-coded in documents |
 | Room code | `--room <6 chars>` | `player` always. Phase 3 onward. **Giving it to `host` is a startup failure.** Giving it without a role is also a startup failure from Phase 3 | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
+| Display name | `--name <name>` | Yes from Phase 4. Before that it only accepts and stores it, and starts without it | Format from [`control_plane.md`](control_plane.md) 2.7 `name`. Every room creation and join of this process uses this name. It is changed in the lobby with the `name` command below |
 | STUN servers | `--stun <name or IPv4>:<port>`, repeatable | No | If given, it **replaces the default list below entirely**. The behavior when the list has one entry is below the table |
 
 **A `--stun` list with one entry leaves one `WARN` line at startup.** That list cannot produce
@@ -308,12 +309,32 @@ and the sentence is in that table too.
 
 ```text
 ROOM <room_id>
-FAIL <failure code> <human-readable sentence>
+FAIL <failure code> <counterpart> <human-readable sentence>
 ```
 
-The first word is fixed. Tests split lines with it. **On a `FAIL` line, the third field through
+The first word is fixed. Tests split lines with it. **On a `FAIL` line, the fourth field through
 the end of the line is one sentence and contains spaces.** It is a different line from the
 `<name>=<value>` log format (chapter 9).
+
+**`<counterpart>` holds, as a name a person chose, which member the failure is with.** The field
+is always present.
+
+| Failure code | `<counterpart>` |
+|-----------|----------|
+| `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED` | The display name of that session's counterpart. It is the value received in a `peers` element of the control plane response (`control_plane.md` 4.5) |
+| `STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED` | `-` |
+
+The latter two codes are failures before a session exists or failures of the whole room. `-` is
+not in the character set of names (`control_plane.md` 2.7), so it does not mix with names.
+
+> **Why the field is always present.** A host has several pairs, so without the counterpart the
+> line alone does not tell whom the failure is with. If the field were present only for pair
+> failures, the reader would have to guess whether the third word is a name or the start of the
+> sentence. The rationale and the rejected alternatives are in
+> [ADR 0015](decisions/0015-refer-to-members-by-display-name.md).
+
+**`<counterpart>` is a value for humans to read.** When a test tells failed pairs apart by
+machine, it uses `peer_id`, not the name. The name is not authenticated.
 
 **When standard output is redirected, it is written as UTF-8 bytes.** The line ending is a single LF. When
 standard output is a console, it is emitted with the console's Unicode write. The console code page is not changed.
@@ -338,9 +359,11 @@ The order is from step 4 of `control_plane.md` 8.4 From Launch to Punch.
 | `host` | Creates a room with `create_room` | In the lobby, with no outstanding control request |
 | `join <room code>` | Joins that room with `join_room`. The format check of the room code is the same as `--room` | In the lobby, with no outstanding control request |
 | `leave` | Goes to the lobby. What it does is decided by `concurrency.md` chapter 7 Lobby | When not in the lobby |
+| `name <name>` | Changes the display name that the next `host` and `join` will use. Sends no request. The format check is the same as `--name` | In the lobby |
 
-A command that arrives when it is not accepted, and a `join` with no room code or a malformed
-one, send no request and leave one `WARN` line. Words left after the command also make it malformed. Commands are case-sensitive. The process stays in the state it was in. Unlike a
+A command that arrives when it is not accepted, a `join` with no room code or a malformed one,
+and a `name` with no name or a malformed one send no request and leave one `WARN` line. A
+malformed `name` does not change the name. Words left after the command also make it malformed. Commands are case-sensitive. The process stays in the state it was in. Unlike a
 format violation of `--room`, this is not a startup failure. The reason `host` and `join` are not
 accepted while a request is outstanding is in `concurrency.md` chapter 8 The `[control]` Thread.
 
@@ -404,6 +427,7 @@ process still starts. But a value that is neither `host` nor `player` is a forma
 | Value | Source |
 |-------|--------|
 | `--room` | `control_plane.md` 2.1 `room_id`, its normalization and checks |
+| `--name` | `control_plane.md` 2.7 `name`, its checks |
 | The port in `--server` | If omitted, `CONTROL_PORT` in `control_plane.md` 2.6 Constants |
 | Every port | 1~65535 |
 | The address in `--peer` | An IPv4 literal only. A name is not accepted |
@@ -520,7 +544,7 @@ field** and fix the length as a constant.
 | `PING` `0x05` | Both | ping_id(8) | RTT measurement. The timestamp is not carried on the wire |
 | `PONG` `0x06` | Both | ping_id echo(8) | RTT measurement response |
 | `CLOSE` `0x07` | Both | reason(1) | Normal shutdown notice. Without it the remote holds a dead session until the 50-second idle timeout |
-| `ROSTER` `0x08` | **Host -> player** | generation(4) + count(1) + members(9 x count) | Room roster and member connection status. The GUI member list is drawn from it ([`spec.md`](spec.md) FR-15) |
+| `ROSTER` `0x08` | **Host -> player** | generation(4) + count(1) + members(11~26 by name length x count) | Room roster and member names and connection status. The GUI member list is drawn from it ([`spec.md`](spec.md) FR-15) |
 
 ### 5.3 Session State Machine
 
@@ -701,7 +725,7 @@ sentence ([`spec.md`](spec.md) FR-15).
 | Code | Human-readable sentence |
 |------|------------------|
 | `STUN_DISCOVERY_FAILED` | Could not confirm your address on the internet. Check your network connection and try again. |
-| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not exchange room information. Check that the room code is right and that the room is still open, then try again. |
+| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not exchange room information. Check that the room code is right and that the room is still open, then try again. If the room has the same name, use a different name. |
 | `HOLE_PUNCH_TIMEOUT` | Could not make a direct connection with the other side. Try again with one of you on a different network. |
 | `PEER_HANDSHAKE_FAILED` | The connection opened in one direction only. Check your firewall settings and try again. |
 | `TUNNEL_DROPPED` | The connection with the other side was lost. The other side closed the session, or the network is unstable. |

@@ -96,6 +96,7 @@ constexpr size_t   MAX_DATAGRAM   = HEADER_SIZE + MAX_INNER;   // 1472
 constexpr uint32_t STUN_COOKIE    = 0x2112A442;                // RFC 5389
 constexpr size_t   MAX_CANDIDATES = 8;                         // cap per peer
 constexpr size_t   MAX_PEERS      = 5;                         // people in one room. Also the cap in 5.7 ROSTER
+constexpr size_t   MAX_NAME_LEN   = 16;                        // display name byte cap. Format in control_plane.md 2.7
 constexpr size_t   REPLAY_WINDOW  = 64;                        // 4.5. moves together with the seen_bits width
 constexpr size_t   MAX_PENDING_PINGS   = 16;
 constexpr size_t   MAX_PROBE_PATHS     = 4;                    // 10.4 (c) cap on concurrent tentative paths
@@ -324,7 +325,7 @@ Packets dropped with `drop_too_old` are already confirmed as loss and are not re
 | `0x05` | `PING` | 8 | RTT measurement request |
 | `0x06` | `PONG` | 8 | RTT measurement response |
 | `0x07` | `CLOSE` | 1 | Graceful shutdown notice |
-| `0x08` | `ROSTER` | 14 ~ 50 | Room roster and member connection state. Only the host sends it |
+| `0x08` | `ROSTER` | 16 ~ 135 | Room roster and member names and connection state. Only the host sends it |
 
 A value not in the list is dropped and `drop_unknown_type` is incremented.
 
@@ -453,21 +454,33 @@ Without `CLOSE`, graceful shutdown and a crash cannot be distinguished, and the 
 
 ---
 
-### 5.7 ROSTER (14 ~ 50 bytes)
+### 5.7 ROSTER (16 ~ 135 bytes)
 
 ```text
  Offset  Size  Field        Description
    0      4   generation   uint32. The host increments it each time the roster changes
    4      1   count        member count. At least 1, at most MAX_PEERS (5)
-   5     9*n  members      n members. The layout below, repeated back to back
+   5    var   members      n members. The layout below, repeated back to back with no gaps
 
- One member (9 bytes)
+ One member (11 ~ 26 bytes)
    +0     4   peer_id      uint32
    +4     4   virtual_ip   uint32, network byte order
    +8     1   flags        bit 0 = connected to the host. Bits 1~7 are reserved and must be 0
+   +9     1   name_len     byte count of the name. At least 1, at most MAX_NAME_LEN (16)
+  +10  name_len name       display name. ASCII. No trailing 0 byte
 ```
 
-The payload length is `5 + 9 * count`. With `count` 1 it is 14, with 5 it is 50.
+The length of one member is `10 + name_len`, and the payload length is `5` plus the sum of all
+member lengths. The shortest is 16 bytes, one member with a one-character name, and the longest is
+135 bytes, five members with 16-character names.
+
+**`name` is the display name that member registered with the control plane.** The format is
+decided by [`control_plane.md`](control_plane.md) 2.7 `name`. The host carries the value it
+received in the `host_report` response as is. Its own name is the value it registered itself.
+
+> **Why carry it in the roster.** A player receives only the host's information from the control
+> plane (`control_plane.md` 4.5 `get_peers`). The roster is the only way to learn the names of
+> other players.
 
 **The host sends it to each player.** Players do not send it. A `ROSTER` sent by a player is
 dropped and `drop_roster_direction` is incremented.
@@ -501,17 +514,31 @@ between players. In a star with no relay, players do not establish tunnels with 
 > grows the retransmission state per session. A period writes the bound as a single value and adds
 > no session state. **The longest time a screen can be wrong is 15 seconds.**
 
-**Receive validation adds four checks after the 8.1 Common Checks.**
+**Receive validation adds five checks after the 8.1 Common Checks.**
 
 | # | Check | Failure counter |
 |---|------|-------------|
 | 1 | The sender is the host | `drop_roster_direction` |
-| 2 | `1 <= count <= MAX_PEERS` and `payload_length == 5 + 9 * count` | `drop_type_length` |
+| 2 | The structure is right. All three below are true | `drop_type_length` |
 | 3 | `generation` is greater than the last value accepted on that session | `drop_roster_stale` |
 | 4 | Bits 1~7 of every member's `flags` are 0 | `drop_roster_flags` |
+| 5 | Every member's `name` is within the character set of `control_plane.md` 2.7 `name` | `drop_roster_name` |
+
+The structure check of check 2:
+
+- `1 <= count <= MAX_PEERS`
+- When the members are read in order from the front, each `name_len` is at least `1` and at most
+  `MAX_NAME_LEN`, and no member runs past the end of the payload
+- The position after reading all `count` members is exactly the end of the payload. No bytes are
+  left over and none are missing
+
+> **Why count check 5 separately.** A roster whose lengths are right but whose names contain control
+> characters or spaces is not a structural defect. It is forged content or a defect in the sending
+> implementation. Separate counters are needed to tell the two apart. Putting such a name on the
+> screen would break the line rules of standard output and the log.
 
 **The roster is for display only.** The received value changes neither receive validation nor
-routing.
+routing. The same goes for names.
 
 - The comparison set of check 7 in 8.1 Common Checks is **decided by the session.** Even a packet
   that arrives with a `peer_id` from the roster is `drop_unknown_peer` if there is no session with
@@ -655,7 +682,7 @@ Tunnel candidates are checked in the order below. Each step has its own drop cou
 | 3 | `version == TUNNEL_VERSION` | `drop_version` |
 | 4 | `type` is in the Chapter 5 list | `drop_unknown_type` |
 | 5 | `payload_length == len - HEADER_SIZE` | `drop_length` |
-| 6 | Per-type length rule met: `HELLO`/`HELLO_ACK` exactly 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` the `5 + 9 * count` defined by 5.7 | `drop_type_length` |
+| 6 | Per-type length rule met: `HELLO`/`HELLO_ACK` exactly 20, `KEEPALIVE` 0, `PING`/`PONG` 8, `CLOSE` 1, `DATA` 20~1452, `ROSTER` 16~135 (the structure is checked separately by check 2 of the 5.7 receive validation) | `drop_type_length` |
 | 7 | `peer_id` matches the ID of a peer that has a session (5.7) | `drop_unknown_peer` |
 | 8 | `session_epoch` is not on the retired list | `drop_retired_epoch` |
 
@@ -1635,7 +1662,7 @@ Everything below has to be in the code in Phase 4. Phase 4 is the stage that imp
 - [ ] Chapter 13 STUN scope
 - [ ] 5.4 `DATA` type, 8.4 inner validation (checks 9~15), all of 8.5 transmit-side validation
 - [ ] The 8.5 routing table. Fixed array of 6 slots, two-step lookup, every row of the case table
-- [ ] `ROSTER` send/receive of 5.7. Direction, length, `generation`, and reserved-bit checks with the three dedicated counters
+- [ ] `ROSTER` send/receive of 5.7. Direction, structure, `generation`, reserved-bit, and name checks with the four dedicated counters
 - [ ] The three `ROSTER` send triggers of 5.7 (immediately on change, twice at 5 seconds, 15-second period)
 
 Added in Phase 5: 4.5 loss accounting and `baseline` (accounting that does not count reordering as loss), fuzz defense.

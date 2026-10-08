@@ -668,6 +668,10 @@ The round-trip test and the failure-code test below are started and ended with t
 
 ### Verification
 
+**Items that look at counters read them by the scopes of [`architecture.md`](architecture.md) section 9.** A drop after
+the session is known is read from the session table line carrying that peer's `peer_id`, and a drop before that from the
+process table line. Do not pick by name alone.
+
 **Direct path establishment.**
 
 - Two PCs on different home networks communicate bidirectionally with no port forwarding rules
@@ -764,8 +768,11 @@ The round-trip test and the failure-code test below are started and ended with t
     observed
   - An implementation that grows without bound and one that rejects new entries are each caught
 
-  > **Why.** 17 cannot be produced through the defined interfaces. Renegotiation is capped at 8 per
-  > attempt (9.5) and Phase 4 has no means to initiate a retry on our side.
+  - Also check that there is one list per process. Epochs registered from two sessions go into one list and share the cap
+
+  > **Why test it as a unit.** Producing 17 through the defined paths means combining renegotiations across several
+  > host sessions, which makes the test heavy (renegotiation is capped at 8 per attempt, 9.5). Phase 4 has no means to
+  > initiate a retry on our side.
 - `session_epoch` randomness source (4.3). Make the source injectable and check (a) that a 0 result
   is redrawn and (b) that the draw path is the OS CSPRNG. Value distribution cannot expose a
   `rand()` implementation, so **checking the call path in code is part of the verdict**

@@ -580,7 +580,7 @@ other pairs are not affected. That line carries the name of the player in the fa
 |------|--------------|
 | UDP socket | **Kept.** It is not bound again ([`protocol.md`](protocol.md) chapter 6 Socket Ownership). If the port changes, the STUN result and the local candidates all go stale |
 | Adapter session | **Kept.** Only the address and the route are set again in the next room. Creating the adapter needs administrator rights and takes a few seconds |
-| Counters | Not reset. They are per process (`architecture.md` chapter 9) |
+| Counters | The process table is not reset. It accumulates per process. A session table goes away with its session object, including the tables of kept sessions deleted on leaving the room. Those tables were already emitted when the session reached a terminal state (`architecture.md` chapter 9) |
 | Local record file | Kept open and appended to. It is not reopened per attempt |
 | Late packets | They keep arriving because the socket is open. Leaving the room deletes even the sessions kept in a terminal state (`protocol.md` 5.6 `CLOSE`), so they fall to `drop_unknown_peer` (`protocol.md` 8.1 Common Checks) |
 | The host's `host_report` | **Stops.** Leaving the room drops the lease (`control_plane.md` 5.1) |

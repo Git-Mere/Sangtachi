@@ -942,7 +942,7 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `stun.result` | `server`, `mapped` (관측된 공인 엔드포인트) | Phase 2, M-2 |
 | `session.state` | `from`, `to` ([`protocol.md`](protocol.md) 9.1 상태의 이름 문자열 그대로) | Phase 4 전이 확인 |
 | `session.failed` | `code` (8장 문자열) | Phase 2~5 실패 코드 확인 |
-| `counter` | `name`, `value` | 폐기 카운터를 보는 모든 항목 |
+| `counter` | `name`, `value`. 세션 표의 줄은 `peer_id`, `peer_name` 도 싣는다 | 폐기 카운터를 보는 모든 항목 |
 | `socket.error` | `op` (호출 이름), `code` (Winsock 오류 코드) | Phase 1 소켓 오류에도 프로세스가 죽지 않는지 |
 | `control.result` | `op`, `ok`, `error` (실패 코드 문자열, 성공이면 `-`) | Phase 3 연산 검증, `CONTROL_PLANE_EXCHANGE_FAILED` 원인 확인. **`room_id` 와 `peer_token` 을 싣지 않는다** (3.5) |
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (상대 후보 `ip:port` 를 쉼표로 이어 붙인 것) | `spec.md` M-3, Phase 3 `get_peers` 검증 |
@@ -971,15 +971,36 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `code` | 8장의 실패 코드 문자열, 또는 `socket.error` 에서는 10진 오류 코드 |
 | `error` (`control.result`) | [`control_plane.md`](control_plane.md) 4.1 공통 봉투의 오류 코드 문자열, 전송 오류면 `transport`, 4.1 표에 없는 코드면 `unknown_code`, 응답의 상대 목록에 자신의 `peer_id` 가 있으면 `self_in_peers`, 성공이면 `-`. 서버가 보낸 코드가 표에 없을 때 그 문자열을 그대로 싣지 않는다 |
 | `value` (`counter`) | 10진 정수 |
+| `peer_id` (`counter`) | 10진 정수 |
+| `peer_name` (`counter`) | [`control_plane.md`](control_plane.md) 2.7 `name` 의 형식. 모르면 `-` |
 
 나머지 필드의 값 형식은 정하지 않는다. 사람이 읽는 진단이다.
+
+**카운터 표는 두 범위다.** 프로세스 표 하나와 세션마다 표 하나다. **어느 표에 오르는지는 이름이 아니라 오르는
+자리가 정한다.**
+
+- 세션이 정해진 자리는 그 세션의 표다. [`protocol.md`](protocol.md) 8.1 공통 검사 7번을 지난 뒤의 수신 판정과, 그 세션의
+  송신, 타이머, 재협상, 엔드포인트 학습이다
+- 세션이 정해지지 않은 자리는 프로세스 표다. 출발지 위생과 분류, 8.1 검사 1~7번, STUN 송신, 큐, 세션을 고르기 전의
+  송신 측 검사다
+- 그래서 같은 이름이 두 표에 다 있을 수 있다. `drop_type_length` 는 8.1 의 6번에서 걸리면 프로세스 표, 5.7 `ROSTER` 수신
+  검증의 2번에서 걸리면 세션 표다. `tx_err_send` 는 STUN 송신이면 프로세스 표다
+- 두 표의 합계 줄은 내지 않는다. 전체는 두 범위를 더한 것이다
+
+> **왜.** 어느 상대와의 연결이 나빴는지를 사후에 로그만으로 확인하려는 것이다. 표가 하나면 세션이 여럿인 호스트에서
+> 폐기가 누구와의 것인지 가를 수 없다. 오르는 자리로 범위를 정하면 세션을 모르는 자리에서 세션을 지어내지 않는다. 결정과
+> 버린 대안은 [ADR 0022](decisions/0022-카운터는-세션마다-표를-둔다.md) 다.
 
 **`counter` 이벤트를 언제 내는지도 정한다.** 시점이 없으면 카운터를 보는 검증 항목이 무엇을
 기다려야 하는지 알 수 없다. 세 시점이다.
 
-- 세션이 종료 상태(`FAILED`, `CLOSED`)에 도달할 때 그 세션의 카운터 전량
-- 프로세스 종료 절차([`concurrency.md`](concurrency.md) 7장 종료)에서 전량
-- `[console]` 명령으로 요청받았을 때 즉시 전량
+- 세션이 종료 상태(`FAILED`, `CLOSED`)에 도달할 때 그 세션의 표 전량
+- 프로세스 종료 절차([`concurrency.md`](concurrency.md) 7장 종료)에서 프로세스 표 전량과, 남아 있는 세션(종료 상태로
+  보존된 것 포함)마다 그 세션의 표 전량
+- `[console]` 명령으로 요청받았을 때 즉시, 바로 위와 같은 범위
+
+**세션 표의 줄은 `peer_id` 와 `peer_name` 을 싣는다.** 프로세스 표의 줄은 싣지 않는다. 세션 객체가 지워지면 그 표도
+사라진다. 그 전에 종료 상태 도달 시점에 이미 냈다.
 
 **증가할 때마다 내지 않는다.** 폐기 카운터는 공격 트래픽에서 초당 수천 번 오를 수 있고,
 그때마다 로그를 쓰면 로그가 데이터 평면의 부하가 된다. 값이 0인 카운터도 함께 낸다. 없는

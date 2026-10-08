@@ -1058,7 +1058,7 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `stun.result` | `server`, `mapped` (the observed public endpoint) | Phase 2, M-2 |
 | `session.state` | `from`, `to` (the state name strings from [`protocol.md`](protocol.md) 9.1 States as is) | Phase 4 transition check |
 | `session.failed` | `code` (chapter 8 string) | Phase 2~5 failure code check |
-| `counter` | `name`, `value` | Every item that looks at drop counters |
+| `counter` | `name`, `value`. Lines of a session table also carry `peer_id`, `peer_name` | Every item that looks at drop counters |
 | `socket.error` | `op` (call name), `code` (Winsock error code) | Phase 1: the process does not die on socket errors |
 | `control.result` | `op`, `ok`, `error` (failure code string, `-` on success) | Phase 3 operation verification, `CONTROL_PLANE_EXCHANGE_FAILED` cause check. **Does not carry `room_id` or `peer_token`** (3.5) |
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (remote candidates as `ip:port` joined by commas) | `spec.md` M-3, Phase 3 `get_peers` verification |
@@ -1090,16 +1090,37 @@ leaves one `WARN` line at startup.
 | `code` | A chapter 8 failure code string, or in `socket.error` a decimal error code |
 | `error` (`control.result`) | An error code string from [`control_plane.md`](control_plane.md) 4.1 Common Envelope, `transport` for a transport error, `unknown_code` for a code not in the 4.1 table, `self_in_peers` if the response's peer list contains its own `peer_id`, `-` on success. When the code the server sent is not in the table, that string is not carried as is |
 | `value` (`counter`) | Decimal integer |
+| `peer_id` (`counter`) | Decimal integer |
+| `peer_name` (`counter`) | The format of [`control_plane.md`](control_plane.md) 2.7 `name`. `-` if unknown |
 
 The value formats of the remaining fields are not fixed. They are human-read diagnostics.
+
+**Counter tables come in two scopes.** One process table and one table per session. **Which table a counter rises in is
+decided by the place where it rises, not by its name.**
+
+- A place where the session is known uses that session's table. That is every receive decision after check 7 of
+  [`protocol.md`](protocol.md) 8.1 Common Checks, and the session's sends, timers, renegotiation, and endpoint learning
+- A place where the session is not known uses the process table. That is source hygiene and classification, checks 1-7 of 8.1,
+  STUN sends, the queues, and the send-side checks before a session is chosen
+- So the same name can exist in both tables. `drop_type_length` goes to the process table when check 6 of 8.1 catches it, and to
+  the session table when check 2 of the 5.7 `ROSTER` receive validation catches it. `tx_err_send` goes to the process table for a
+  STUN send
+- No total line for the two tables is emitted. The whole is the sum of the two scopes
+
+> **Why.** To check afterwards, from the log alone, which peer had a bad connection. With one table, a host with several sessions
+> cannot tell whose drops they were. Deciding the scope by the place of the increment avoids inventing a session where none is known. The decision
+> and the rejected alternatives are in [ADR 0022](decisions/0022-counters-keep-a-table-per-session.md).
 
 **When the `counter` event is emitted is also fixed.** Without a timing, a verification item that looks at
 counters cannot know what to wait for. There are three moments.
 
-- When a session reaches a terminal state (`FAILED`, `CLOSED`), all counters of that session
+- When a session reaches a terminal state (`FAILED`, `CLOSED`), all of that session's table
 - In the process shutdown procedure ([`concurrency.md`](concurrency.md) chapter 7 Shutdown),
-  all of them
-- Immediately, when requested by a `[console]` command, all of them
+  all of the process table, and for every remaining session (including those kept in a terminal state) all of its table
+- Immediately, when requested by a `[console]` command, the same scope as just above
+
+**Lines of a session table carry `peer_id` and `peer_name`.** Lines of the process table do not. When a session object is
+deleted, its table goes with it. It was already emitted when the session reached a terminal state.
 
 **Not on every increment.** Drop counters can rise thousands of times per second under attack traffic,
 and writing a log line each time makes the log a load on the data plane. Counters with value 0 are emitted too. Distinguishing

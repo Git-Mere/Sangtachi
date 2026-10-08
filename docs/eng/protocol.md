@@ -188,6 +188,8 @@ stopped by 8.2 Epoch and Source Checks.
 The retired list covers **attempts that did reach pinning**. No path that starts a new attempt with the same
 peer is defined today. Coming back is a new join with a new `peer_id` ([`control_plane.md`](control_plane.md) 4.3).
 
+**There is one retired list per process.** Not one per session. A host's sessions share one list and its cap.
+
 **The retired list holds at most `MAX_RETIRED_EPOCHS` (16) entries.** When a new entry arrives while the
 list is full, the oldest one is evicted. Entries come only from our own previous attempts (1 per retry) and
 from the peer's previous epochs (1 per renegotiation). The count and interval of renegotiation are limited
@@ -693,8 +695,8 @@ Datagrams exceeding `MAX_DATAGRAM` (1472) do not reach this step. The receive lo
 Tunnel candidates are checked in the order below. Each step has its own drop counter. If any check fails, drop immediately.
 
 **The order is 8.1 Common Checks, 8.2 Epoch and Source Checks, 8.3 Duplicate Suppression, then the per-type checks.** The per-type
-checks are 8.4 `DATA` Inner Validation, 5.5 `PONG` matching, the 5.6 `CLOSE` reason, and the 5.7 `ROSTER` receive validation. Side
-effects happen only after every check passes. **The one exception is 9.5 Renegotiation.** As 4.5 states, when 8.2 sends a
+checks are 8.4 `DATA` Inner Validation, 5.5 `PONG` matching, the 5.6 `CLOSE` reason, and the 5.7 `ROSTER` receive validation. The terminal-state drop of 9.4.1 comes after 8.1 and
+before 8.2. Side effects happen only after every check passes. **The one exception is 9.5 Renegotiation.** As 4.5 states, when 8.2 sends a
 `HELLO` with another epoch to 9.5, renegotiation runs before 8.3.
 
 > **Why.** One counter should point to one cause. Network duplication is `drop_duplicate`, a packet with a mismatching epoch is
@@ -1014,9 +1016,13 @@ that interval are used only for state transitions and source learning.
 | `FAILED` | Drop everything regardless of type, `drop_terminal_state` |
 | `CLOSED` | Drop everything regardless of type, `drop_terminal_state` |
 
+**This decision comes after all of 8.1 Common Checks 1-8 and before 8.2.** A session kept in a terminal state still counts as "a
+peer that has a session" for check 7 of 8.1 (5.6 `CLOSE`). So even a packet addressed to a finished session is
+`drop_retired_epoch` if its epoch is on the retired list.
+
 **Terminal states do not accept `HELLO` either.** A retry, as 9.6 Failure Transitions defines it, starts from `IDLE` with a new epoch and a new
 nonce; it is not a finished session coming back to life. If a session in a terminal state answered a `HELLO`,
-it would have to revive routing and counters that were already cleaned up, and no document defines
+it would have to revive routing and session timers that were already cleaned up, and no document defines
 that path. **Dropping is the defined behavior.**
 
 The socket is kept until process exit (Chapter 6), so packets keep arriving after a terminal state is reached.
@@ -1074,6 +1080,11 @@ Once both caps pass, increment the renegotiation count by 1 and atomically perfo
 10. **Restore the timers of the punch interval.** Restart `HELLO` retransmission (200ms) and stop
     `KEEPALIVE`, `PING`, and the idle timeout. The three start again on the next entry into `CONNECTED`
     as Chapter 11 Timers defines
+
+**If renegotiation arrives before the actual local punch has started, the `HELLO` retransmission and the punch deadline of steps
+7 and 10 do not start then.** That is the interval of waiting for the scheduled time of 10.2 Rendezvous. The state is set by the
+flags as step 7 says (`PUNCHING`, or `HANDSHAKING` if step 6 succeeded). The two timers start at the actual local punch start
+(10.3 Punch). The other steps run as written.
 
 The basis for the ten rules above follows, in rule number order.
 
@@ -1624,8 +1635,8 @@ validation.
 | `get_peers` deadline | 60s. Player only. **Counted per pair** | The moment that peer first appears in a response. For the first peer, the successful `register_candidate` response | None | Ready response for that pair |
 | `host_report` period | 5s while a slot is free, 30s when full. **Host only** | Successful `create_room` response | Each send. When a session ends, it sends immediately without waiting for the period (`control_plane.md` 4.6) | Leaving the room, the first row of the 4.6 error table (the room has ended on the server) |
 | Punch delay | Value computed in 10.2 Rendezvous | Ready response for that pair | None | Punch starts on expiry |
-| `HELLO` retransmission | 200ms interval | Punch start, **9.5 renegotiation (step 10)** | Each send | `CONNECTED` reached, 9.6 failure transition |
-| Punch deadline | 10s | **Actual local punch start** | 9.5 renegotiation | `CONNECTED` reached |
+| `HELLO` retransmission | 200ms interval | Punch start, **9.5 renegotiation (step 10)**. For renegotiation before the punch start, at the punch start (9.5) | Each send | `CONNECTED` reached, 9.6 failure transition |
+| Punch deadline | 10s | **Actual local punch start** | 9.5 renegotiation. Not reset by renegotiation before the punch start (9.5) | `CONNECTED` reached |
 | `KEEPALIVE` | 15s interval | `CONNECTED` entry, **after sending once immediately** | Each send | Session end |
 | `ROSTER` period | 15s interval. **Host only** | `CONNECTED` entry, after sending once immediately | Each send | Session end |
 | `ROSTER` change resend | 5s interval, 2 times | After the immediate send on a roster change | Ends once the 2 sends are done | Session end, next roster change |

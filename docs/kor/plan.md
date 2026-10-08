@@ -56,12 +56,14 @@ Phase 1 의 두 머신 실측은 따로 기다리지 않는다. `roadmap.md` Pha
 |------|------|------|
 | `tests/mutate.py` 의 시간 초과 | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
 | 표시 이름 구현 때 낡는 코드 주석과 시험 | `control-server/controlplane/store.py` 의 취소 사유 순서 주석(2번부터), `tests/mutants/store.py` 의 취소 사유 번호와 15개 항목 언급, `tests/test_store.py` 의 "네 put". `control_plane.md` 6.3 취소 사유 표에 `NAME#` 가 3번으로 들어가 번호가 하나씩 밀렸다 | `roadmap.md` Phase 4 의 표시 이름 작업 |
-| 받은 후보 위생의 코드와 주석 | `client/src/control/ops.cpp` 의 `rejected_by_hygiene` 와 `sanitize_received_candidates` 에 자기 서브넷 행과 새 대역(`0.0.0.0/8`, `240.0.0.0/4`)이 없다. 자기 서브넷 집합을 입력으로 받아야 한다. 낡는 주석은 `client/include/sangtachi/control/ops.hpp` 의 위생 표("`255.255.255.255` 하나", "`0.0.0.0` 하나", "4.4 의 서버 판정과 같은 대역이다")와 `control-server/controlplane/candidates.py` 의 위생 주석이다 | `roadmap.md` Phase 4 의 로컬 후보 수집 작업과 후보 위생 대역 작업 |
+| 받은 후보 위생의 서버 주석 | 클라이언트 쪽은 1차 C 가 고쳤다. `control-server/controlplane/candidates.py` 의 위생 주석이 남는다 | 1차 D |
+| 로컬 후보 수집의 실제 연결 | 1차 C 가 판정과 OS 조회를 만들었지만 `Lobby::on_stun_done` 은 아직 반사 후보만 등록한다. **그때까지 제품 경로의 자기 서브넷 집합이 비어 있어 7장 directed broadcast 행과 받은 후보 위생의 자기 서브넷 행이 아무것도 막지 않는다.** 남은 일은 수집 호출, 등록 본문, `EventLoop::set_own_subnets`, 수집 경고, `lobby.hpp` 경계 표와 `lobby_test` 갱신이다. 자기 Wintun 식별자는 Phase 6 까지 늘 비어 있다 | 4차 J |
 | 4.5 `pkt_pos` 의 언더플로 | 첫 수용 패킷의 `position` 이 0 이라 그보다 앞선 번호의 재정렬 수용에서 `position - back` 이 64비트로 감싸 돈다. `tunnel/replay` 는 4.5 공식을 그대로 따르고 시험이 그 거동을 고정했다. 손실 집계가 `baseline` 이하를 배제한다는 4.5 의 주장과 어긋난다. `protocol.md` 4.5 를 먼저 고친다 | Phase 5 손실 집계 착수 전 |
 | 8.3 을 지난 뒤 버려진 패킷의 수용 창 기록 | 8.4 내부 검증 등 뒤 검사에서 버려진 패킷도 8.3 에서 이미 창에 기록된다. 4.5 의사 코드가 8.3 자리에서 갱신하므로 그것이 지금의 규정이고 `tunnel/replay` 의 `accept` 가 정상 경로다. 문장으로는 적혀 있지 않아 `protocol.md` 8.3 에 한 문장 명시한다 | 2차 E (수신 파이프라인) 착수 때 |
 | 타입별 검사와 8.2·8.3 의 상대 순서 | 5.7 `ROSTER` 의 다섯 검사와 5.6 `drop_bad_reason` 이 8.2 epoch 검사와 8.3 중복 억제보다 앞인지 뒤인지 문서에 없다. 낡은 epoch 의 `ROSTER` 가 `drop_stale_epoch` 인지 `drop_roster_*` 인지가 여기서 갈린다. 1차 A 가 만드는 `tunnel/packet` 의 디코더는 순수 함수라 순서를 정하지 않는다. `protocol.md` 8장을 먼저 고친다 | 2차 E 착수 전 |
 | `ROSTER` `generation` 의 첫 값 | 5.7 은 "바꿀 때마다 1 올린다" 와 수신 쪽 규칙만 적었다. 호스트가 처음 보내는 값이 없다. 수신 쪽은 1차 A 의 `tunnel/packet` 이 "마지막 값이 없으면 받는다, 부호 없는 `>` 비교, 순환 없음" 으로 읽는다 | 3차 I 착수 전 |
 | 표시 이름 형식 검사가 클라이언트에 둘 생길 위험 | 1차 A 의 `tunnel::is_valid_name` 이 `control_plane.md` 2.7 을 구현한다. `--name`, 로비 `name`, 응답의 `name` 검사는 이것을 쓴다. 자리를 `tunnel/` 밖으로 옮길지 그때 정한다 | 4차 J |
+| 수신 경로의 자기 서브넷 집합 | `drain_udp` 가 `classify_datagram` 에 루프의 집합을 넘기는지 지키는 시험이 없다. 빈 집합을 넘기게 바꿔도 시험 전량이 통과한다. 보통 소켓으로는 directed broadcast 출발지를 만들 수 없으므로, roadmap Phase 4 의 7장 (b) 수신 파이프라인 층 시험(시험용 진입점 주입)에 자기 서브넷 행을 넣어 그 변이를 잡는다 | 2차 E |
 | `EventLoop` 의 대기 | 루프 수준 동작 보존을 지키는 시험이 없다. `busy_ ? 0 :` 를 지워도 시험 전량이 통과한다. 대기 자체를 주입할 수 있어야 풀리고, 지금은 `platform::wait_any` 가 그 자리다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 2). 변이 시험과 크로스 모델 리뷰가 각각 따로 짚었다 | Phase 6. 대기 집합이 바뀌는 시점이다 |
 
 ## 문서 부채

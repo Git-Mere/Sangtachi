@@ -7,6 +7,7 @@
 #include "sangtachi/control/ops.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/network/stun_client.hpp"
+#include "sangtachi/peer/candidates.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +22,8 @@ namespace sangtachi::control {
 namespace {
 
 // 응답 하나를 op 에 맞는 해석으로 돌린다. 받지 못한 응답은 전송 오류다 (control_plane.md 3.5, 8.3).
-ControlReply interpret(const ControlResponse& response) {
+// own_subnets 는 상대 후보 위생의 자기 서브넷 행이 쓴다 (protocol.md 10.1).
+ControlReply interpret(const ControlResponse& response, const peer::OwnSubnets& own_subnets) {
     ControlReply out;
     out.op = response.op;
     const bool got = response.result.complete();
@@ -37,11 +39,11 @@ ControlReply interpret(const ControlResponse& response) {
             out.reply = got ? interpret_register_candidate(raw) : transport_failure<Registered>();
             break;
         case http::Op::kGetPeers:
-            out.reply = got ? interpret_get_peers(raw, response.self_peer_id)
+            out.reply = got ? interpret_get_peers(raw, response.self_peer_id, own_subnets)
                             : transport_failure<Peers>();
             break;
         case http::Op::kHostReport:
-            out.reply = got ? interpret_host_report(raw, response.self_peer_id)
+            out.reply = got ? interpret_host_report(raw, response.self_peer_id, own_subnets)
                             : transport_failure<HostReport>();
             break;
     }
@@ -76,7 +78,10 @@ void ControlRunner::on_response(const ControlResponse& response) {
     if (!response.result.complete()) {
         emit_transport(response);
     }
-    run(lobby_.on_reply(interpret(response)));
+    // 집합을 주지 않은 실행기는 빈 집합이다 (runner.hpp 의 RunnerDeps::own_subnets).
+    static const peer::OwnSubnets kNoSubnets;
+    const peer::OwnSubnets& own = deps_.own_subnets ? deps_.own_subnets() : kNoSubnets;
+    run(lobby_.on_reply(interpret(response, own)));
 }
 
 void ControlRunner::on_stun_datagram(const network::Endpoint& from,

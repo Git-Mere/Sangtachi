@@ -4,6 +4,7 @@
 #include "sangtachi/control/json.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/platform/random.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
@@ -332,7 +333,7 @@ std::optional<Candidate> decode_candidate(const Value& v) {
     return c;
 }
 
-std::optional<PeerView> decode_peer(const Value& v) {
+std::optional<PeerView> decode_peer(const Value& v, const peer::OwnSubnets& own_subnets) {
     if (v.kind() != json::Kind::kObject) {
         return std::nullopt;
     }
@@ -374,18 +375,19 @@ std::optional<PeerView> decode_peer(const Value& v) {
         }
         typed.push_back(*c);
     }
-    p.candidates = sanitize_received_candidates(typed);
+    p.candidates = sanitize_received_candidates(typed, own_subnets);
     return p;
 }
 
-std::optional<std::vector<PeerView>> decode_peers(const Value* v) {
+std::optional<std::vector<PeerView>> decode_peers(const Value* v,
+                                                  const peer::OwnSubnets& own_subnets) {
     const auto* arr = v ? v->as_array() : nullptr;
     if (arr == nullptr || arr->size() > kMaxOthers) {
         return std::nullopt;
     }
     std::vector<PeerView> out;
     for (const auto& item : *arr) {
-        auto p = decode_peer(item);
+        auto p = decode_peer(item, own_subnets);
         if (!p) {
             return std::nullopt;
         }
@@ -454,23 +456,27 @@ std::optional<Registered> decode_registered(const Value& body) {
     return Registered{*accepted, *rejected};
 }
 
-// protocol.md 10.1 위생 거부. 4.4 의 서버 판정과 같은 대역이다.
-bool rejected_by_hygiene(const Candidate& c) noexcept {
+// protocol.md 10.1 위생 거부. 표는 ops.hpp 의 sanitize_received_candidates 위에 있다.
+// 자기 서브넷 행을 뺀 다섯은 control_plane.md 4.4 의 서버 판정과 같은 대역이다.
+bool rejected_by_hygiene(const Candidate& c, const peer::OwnSubnets& own_subnets) noexcept {
     const std::uint32_t a = c.endpoint.address();
     if (c.endpoint.port() == 0) {
         return true;
     }
-    if (a == 0xFFFFFFFFu) {
-        return true;  // 브로드캐스트. 255.255.255.255 하나
-    }
-    if (a == 0x00000000u) {
-        return true;  // 미지정. 0.0.0.0 하나
-    }
     if ((a >> 28) == 0xEu) {
         return true;  // 멀티캐스트 224.0.0.0/4
     }
+    if ((a >> 28) == 0xFu) {
+        return true;  // 예약 240.0.0.0/4. 제한 브로드캐스트 255.255.255.255 를 포함한다
+    }
+    if ((a >> 24) == 0u) {
+        return true;  // "이 네트워크" 0.0.0.0/8. 미지정 0.0.0.0 을 포함한다 (RFC 1122 출발지 전용)
+    }
     if ((a >> 24) == 127u) {
         return true;  // 루프백 127.0.0.0/8
+    }
+    if (own_subnets.blocks_broadcast(a)) {
+        return true;  // 자기 서브넷의 브로드캐스트. 그 주소로 가는 HELLO 는 우리 LAN 전체에 닿는다 (ADR 0018)
     }
     return false;
 }
@@ -521,11 +527,12 @@ Reply<Registered> interpret_register_candidate(std::string_view raw) {
     return interpret<Registered>(raw, decode_registered);
 }
 
-Reply<Peers> interpret_get_peers(std::string_view raw, std::uint32_t self_peer_id) {
-    auto reply = interpret<Peers>(raw, [](const Value& body) -> std::optional<Peers> {
+Reply<Peers> interpret_get_peers(std::string_view raw, std::uint32_t self_peer_id,
+                                 const peer::OwnSubnets& own_subnets) {
+    auto reply = interpret<Peers>(raw, [&own_subnets](const Value& body) -> std::optional<Peers> {
         const Value* ready_v = body.find("ready");
         const auto ready = ready_v ? ready_v->as_bool() : std::nullopt;
-        auto peers = decode_peers(body.find("peers"));
+        auto peers = decode_peers(body.find("peers"), own_subnets);
         if (!ready || !peers) {
             return std::nullopt;
         }
@@ -544,12 +551,13 @@ Reply<Peers> interpret_get_peers(std::string_view raw, std::uint32_t self_peer_i
     return reply;
 }
 
-Reply<HostReport> interpret_host_report(std::string_view raw, std::uint32_t self_peer_id) {
-    auto reply = interpret<HostReport>(raw, [](const Value& body) -> std::optional<HostReport> {
+Reply<HostReport> interpret_host_report(std::string_view raw, std::uint32_t self_peer_id,
+                                        const peer::OwnSubnets& own_subnets) {
+    auto reply = interpret<HostReport>(raw, [&own_subnets](const Value& body) -> std::optional<HostReport> {
         const auto expires = get_nonnegative(body.find("expires_in_s"));
         auto released = decode_id_list(body.find("released"));
         auto confirmed = decode_id_list(body.find("confirmed"));
-        auto peers = decode_peers(body.find("peers"));
+        auto peers = decode_peers(body.find("peers"), own_subnets);
         if (!expires || !released || !confirmed || !peers) {
             return std::nullopt;
         }
@@ -564,11 +572,12 @@ Reply<HostReport> interpret_host_report(std::string_view raw, std::uint32_t self
 
 // ---------------------------------------------------------------- 위생 (protocol.md 10.1)
 
-std::vector<Candidate> sanitize_received_candidates(std::span<const Candidate> received) {
+std::vector<Candidate> sanitize_received_candidates(std::span<const Candidate> received,
+                                                    const peer::OwnSubnets& own_subnets) {
     std::vector<Candidate> out;
     // 순서: 위생 거부 -> 중복 제거 -> 앞에서부터 MAX_CANDIDATES 개.
     for (const auto& c : received) {
-        if (rejected_by_hygiene(c)) {
+        if (rejected_by_hygiene(c, own_subnets)) {
             continue;
         }
         bool duplicate = false;
@@ -617,7 +626,9 @@ std::vector<LogField> control_result_fields(http::Op op, Outcome outcome, Failur
 
 std::vector<LogField> control_peers_fields(const PeerView& peer) {
     std::string candidates;
-    for (const auto& c : sanitize_received_candidates(peer.candidates)) {
+    // 빈 집합인 이유는 ops.hpp 의 이 함수 주석에 있다.
+    const peer::OwnSubnets no_subnets;
+    for (const auto& c : sanitize_received_candidates(peer.candidates, no_subnets)) {
         if (!candidates.empty()) {
             candidates.push_back(',');
         }

@@ -191,6 +191,8 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
         (void)sangtachi::platform::write_stdout_line(line);
     };
     deps.clock = [] { return now_ms(); };
+    // 받은 후보 위생의 자기 서브넷 행 (protocol.md 10.1). 집합은 루프가 소유한다 (concurrency.md 5장).
+    deps.own_subnets = [&loop]() -> const sangtachi::peer::OwnSubnets& { return loop.own_subnets(); };
     sangtachi::control::ControlRunner runner(std::move(deps), loop.timers(), counters);
 
     loop.set_lobby_command_handler([&runner](const sangtachi::control::LobbyCommand& command) {

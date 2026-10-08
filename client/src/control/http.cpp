@@ -223,8 +223,10 @@ Frame frame_response(std::string_view received) {
             return invalid(ResponseError::kBadHeaderLine);
         }
         const std::string_view name = line.substr(0, colon);
-        if (name.back() == ' ' || name.back() == '\t') {
-            return invalid(ResponseError::kBadHeaderLine);  // RFC 9112 5.1
+        // 이름 안이나 이름과 콜론 사이의 공백·탭 (3.3 헤더 줄 문법, RFC 9110 5.1 의 이름은 토큰).
+        // 끝만 보면 `Content Length` 가 표 밖 헤더로 무시되어 통과한다. 이름 전체를 본다.
+        if (name.find_first_of(" \t") != std::string_view::npos) {
+            return invalid(ResponseError::kBadHeaderLine);
         }
         if (equals_ignore_case(name, "content-length")) {
             ++content_length_count;

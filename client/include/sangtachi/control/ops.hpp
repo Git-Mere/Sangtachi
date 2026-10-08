@@ -51,7 +51,7 @@
 // **받은 후보 목록은 형 검사 뒤에 위생을 거친다.** protocol.md 10.1 후보 수집과 위생의 "수신한
 // 목록은 이 순서로 다룬다" 그대로다. 형 검사(위 표, 하나라도 틀리면 응답 전체가 전송 오류),
 // 위생 거부, 중복 제거, 앞에서부터 MAX_CANDIDATES 개. 위생은 sanitize_received_candidates 가 하고
-// interpret_get_peers 와 interpret_host_report 가 상대 후보마다 부른다. 그래서 그 둘이 돌려주는
+// interpret_get_peers 와 interpret_host_report 가 상대 후보마다 받은 자기 서브넷 집합으로 부른다. 그래서 그 둘이 돌려주는
 // `PeerView::candidates` 는 늘 위생 뒤의 목록이다. 포트 0 은 형이 아니라 위생에서 걸러진다(4.4 의
 // 거부 정책). 위생 뒤 목록이 비면 그 쌍은 준비 완료가 아니다(8.4). 판정은 is_punch_ready 다.
 //
@@ -79,6 +79,10 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+namespace sangtachi::peer {
+class OwnSubnets;  // peer/candidates.hpp. 그 헤더가 이 헤더를 포함하므로 여기서는 선언만 한다
+}  // namespace sangtachi::peer
 
 namespace sangtachi::control {
 
@@ -261,28 +265,36 @@ struct HostReport {
 //
 // | 거부 | 판정 |
 // |------|------|
-// | 브로드캐스트 | `255.255.255.255` 하나. 서브넷 directed broadcast 는 판정하지 않는다 |
 // | 멀티캐스트 | `224.0.0.0/4` |
-// | 미지정 | `0.0.0.0` 하나 |
+// | 예약 | `240.0.0.0/4`. 제한 브로드캐스트 `255.255.255.255` 를 포함한다 |
+// | "이 네트워크" | `0.0.0.0/8`. 미지정 `0.0.0.0` 을 포함한다 |
 // | 루프백 | `127.0.0.0/8` |
 // | 포트 0 | |
+// | 자기 서브넷 브로드캐스트 | own_subnets 가 막는 주소 (OwnSubnets::blocks_broadcast). **클라이언트만 한다** (ADR 0018) |
 //
-// 중복은 `ip:port` 가 같은 것이고 먼저 온 원소(그 kind 포함)를 남긴다. 4.4 의 서버 판정과 같은 대역이다.
-// `0.0.0.0/8` 의 나머지와 `240.0.0.0/4` 는 목록에 없으므로 남긴다.
-[[nodiscard]] std::vector<Candidate> sanitize_received_candidates(std::span<const Candidate> received);
+// 앞의 다섯은 control_plane.md 4.4 의 서버 판정과 같은 대역이다. 마지막 행은 서버에 없다. 서버에는
+// 자기 서브넷 집합이 없다. 서브넷 directed broadcast 는 그 행만 보고, 상대 서브넷의 것은 상대의
+// prefix 를 모르므로 판정하지 않는다. own_subnets 는 **받는 시점의** 집합이다 (10.1).
+//
+// 중복은 `ip:port` 가 같은 것이고 먼저 온 원소(그 kind 포함)를 남긴다.
+[[nodiscard]] std::vector<Candidate> sanitize_received_candidates(
+    std::span<const Candidate> received, const peer::OwnSubnets& own_subnets);
 
 // 8.4 의 7번과 8번. 그 쌍이 `ready` 이고 위생 뒤 상대 후보가 하나 이상인가. 펀치에 들어가거나
 // control.peers 를 낼 수 있는 상대인지의 판정이다. 거짓이면 플레이어는 폴링을 계속한다.
 [[nodiscard]] bool is_punch_ready(const PeerView& peer) noexcept;
 
 // 받은 응답 바이트 전체를 판정한다. http::parse_response, 봉투, 연산별 필드 순서다.
-// self_peer_id 는 4.5 의 "자신을 제외" 검사에 쓴다.
+// self_peer_id 는 4.5 의 "자신을 제외" 검사에 쓴다. own_subnets 는 상대 후보의 위생
+// (sanitize_received_candidates) 에 그대로 넘긴다. 부르는 쪽([loop])이 가진 지금의 집합이다.
 [[nodiscard]] Reply<Issued> interpret_create_room(std::string_view raw);
 [[nodiscard]] Reply<Issued> interpret_join_room(std::string_view raw);
 [[nodiscard]] Reply<Registered> interpret_register_candidate(std::string_view raw);
-[[nodiscard]] Reply<Peers> interpret_get_peers(std::string_view raw, std::uint32_t self_peer_id);
+[[nodiscard]] Reply<Peers> interpret_get_peers(std::string_view raw, std::uint32_t self_peer_id,
+                                               const peer::OwnSubnets& own_subnets);
 [[nodiscard]] Reply<HostReport> interpret_host_report(std::string_view raw,
-                                                      std::uint32_t self_peer_id);
+                                                      std::uint32_t self_peer_id,
+                                                      const peer::OwnSubnets& own_subnets);
 
 // ---------------------------------------------------------------- host_report 의 결과 (4.6)
 
@@ -318,6 +330,11 @@ enum class HostReportAction : std::uint8_t {
 // interpret_* 가 위생을 마친 것만 만들지만, 손으로 만든 PeerView 도 있을 수 있어 이 함수가
 // sanitize_received_candidates 를 한 번 더 건다(같은 목록이면 결과가 같다). 부르는 쪽은
 // is_punch_ready 가 참인 상대에만 낸다.
+//
+// **여기서 거는 위생은 빈 자기 서브넷 집합으로 돈다.** 이 함수는 로그 줄만 만들고 집합을 갖지 않는다.
+// 위생은 거르기만 하므로, interpret_* 가 그때의 집합으로 이미 거른 목록은 빈 집합으로 다시 걸러도
+// 그대로다. 손으로 만든 PeerView 에는 자기 서브넷 행이 걸리지 않는다. 송신 대상을 정하는 것은 이
+// 함수가 아니라 interpret_* 의 결과다.
 [[nodiscard]] std::vector<LogField> control_peers_fields(const PeerView& peer);
 
 }  // namespace sangtachi::control

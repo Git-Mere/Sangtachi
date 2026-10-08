@@ -179,6 +179,19 @@ TEST_CASE("control_http: parse_response case table", "[control][http]") {
         {with_head("HTTP/1.1 200 OK\r\nno colon here\r\nContent-Length: 11", kBody), ResponseError::kBadHeaderLine,
          "line without colon"},
         {with_head("HTTP/1.1 200 OK\r\n: 11\r\nContent-Length: 11", kBody), ResponseError::kBadHeaderLine, "empty name"},
+        // 3.3 헤더 줄 문법: 이름 **안**의 공백이나 탭도 거부한다. 끝만 보는 구현은 아래 행에서 걸린다.
+        // 표의 헤더가 아닌 이름(X-A B)도 같다. 문법은 이름이 무엇이든 본다.
+        {with_head("HTTP/1.1 200 OK\r\nContent Length: 11\r\nContent-Length: 11", kBody),
+         ResponseError::kBadHeaderLine, "space inside name"},
+        {with_head("HTTP/1.1 200 OK\r\nContent\tLength: 11\r\nContent-Length: 11", kBody),
+         ResponseError::kBadHeaderLine, "tab inside name"},
+        {with_head("HTTP/1.1 200 OK\r\nX-A B: 1\r\nContent-Length: 11", kBody), ResponseError::kBadHeaderLine,
+         "space inside an ignored header name"},
+        {with_head("HTTP/1.1 200 OK\r\nX-A\tB: 1\r\nContent-Length: 11", kBody), ResponseError::kBadHeaderLine,
+         "tab inside an ignored header name"},
+        // 대조군: 값 안의 공백과 탭은 값의 일부다 (3.3 "그 밖의 공백은 값의 일부다").
+        {with_head("HTTP/1.1 200 OK\r\nX-A: b c\td\r\nContent-Length: 11", kBody), ResponseError::kNone,
+         "space and tab inside a value are fine"},
 
         // 5. Transfer-Encoding
         {with_head("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 11", kBody),

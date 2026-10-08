@@ -76,6 +76,7 @@
 | `peer/peer` | 피어 식별자, 가상 IP, 후보 엔드포인트 목록 | 없음 |
 | `peer/hole_punch` | 양방향 동시 송신, 재시도, 성공 판정, 실패 사유 분류 | 없음 |
 | `peer/session` | 핸드셰이크, keepalive, 연결 상태 머신, RTT 측정 | 없음 |
+| `peer/candidates` | 로컬 후보 판정, 기본 경로, 등록 목록, 자기 서브넷 집합 (`protocol.md` 10.1). 인터페이스 열거와 경로 조회는 주입받고 기본은 `platform/interfaces` 다 | 없음 |
 | `peer/epoch` | `session_epoch` 생성, 시도 nonce, 폐기 목록 (`protocol.md` 4.3, 5.1). 난수원은 주입받고 기본은 `platform/random` 이다. `peer/session` 이 쓴다 | 없음 |
 | `tunnel/packet` | 터널 헤더 직렬화/역직렬화, 손상 패킷 검증 | 없음 |
 | `tunnel/replay` | `sequence` 비교와 수용 창 (`protocol.md` 4.4, 4.5). `tunnel/tunnel` 이 쓴다 | 없음 |
@@ -95,6 +96,7 @@
 | `network/stun_client` | STUN 재시도와 마감, 서버 선택과 교체. 시계·소켓·난수원·이름 해석을 주입받는다 | 없음 |
 | `platform/wait` | 단조 시계, 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
 | `platform/random` | CSPRNG 바이트. 트랜잭션 ID 와 뒤의 epoch·nonce 가 쓴다 | Win32 |
+| `platform/interfaces` | IPv4 인터페이스 열거(주소, 넷마스크, 형식, 상태, GUID)와 기본 경로 조회. `peer/candidates` 가 쓴다 | Win32 (IP Helper) |
 | `platform/resolve` | 이름을 IPv4 엔드포인트로. 기동 시 한 번 부른다 (3.5) | Win32 |
 | `platform/console_ctrl` | 콘솔 제어 신호를 받아 종료 이벤트를 신호하고 정리 완료를 기다린다 (`concurrency.md` 7장) | Win32 |
 | `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
@@ -1011,9 +1013,9 @@ Sangtachi/
 |   |   +-- log.cpp      로그 줄 형식 (9장)
 |   |   +-- counters.cpp 카운터 표 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces
 |   |   +-- network/     endpoint, stun, stun_client
-|   |   +-- peer/        peer, hole_punch, session, epoch
+|   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
@@ -1059,7 +1061,7 @@ Sangtachi/
 | 의존성 | 제공 범위 | 승인 상태 |
 |--------|-----------|-----------|
 | Wintun | Windows 가상 네트워크 인터페이스 접근만. 어댑터 생성, 패킷 read/inject | **승인됨** |
-| Windows IP Helper / NetIO API | 가상 어댑터의 IP 주소와 라우트 설정. **Wintun은 이 기능을 제공하지 않는다** | OS 기본 제공 |
+| Windows IP Helper / NetIO API | 가상 어댑터의 IP 주소와 라우트 설정. **Wintun은 이 기능을 제공하지 않는다.** 로컬 후보를 위한 인터페이스 열거와 기본 경로 조회 (`platform/interfaces`) | OS 기본 제공 |
 | Winsock2 | Windows 기본 소켓 API | OS 기본 제공 |
 | Windows CNG (`BCryptHash`) | 9장 `rx.raw` 가 싣는 SHA-256 | OS 기본 제공 |
 | 공개 STUN 서버 | Binding Response 응답. 서버는 구현하지 않고 이용만 한다 | 외부 공개 서비스 |

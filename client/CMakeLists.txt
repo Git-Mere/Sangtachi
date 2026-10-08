@@ -33,6 +33,7 @@ if(WIN32)
     target_link_libraries(sangtachi_core
         PUBLIC ws2_32   # Winsock2 (src/platform/win32/wsa.cpp, udp_socket.cpp)
         PUBLIC bcrypt   # CNG SHA-256 (src/platform/win32/hash.cpp)
+        PUBLIC iphlpapi # IP Helper 인터페이스 열거와 경로 조회 (src/platform/win32/interfaces.cpp)
     )
 endif()
 

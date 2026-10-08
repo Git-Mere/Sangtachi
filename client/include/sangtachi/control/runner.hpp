@@ -21,7 +21,8 @@
 //   Lobby::on_stun_done 을 부른다. 끝난 객체는 다음 StartStun 이나 CancelStun 까지 둔다. 재시도가
 //   부른 늦은 응답을 그 객체가 세지 않고 버리게 하려는 것이다 (stun_client.hpp 의 표)
 // - 제어 응답은 op 로 interpret_* 를 고르고, get_peers 와 host_report 에는 요청에 실었던
-//   self_peer_id 를 넣는다. 전송 오류면 ops::transport_failure 다
+//   self_peer_id 와 응답을 해석하는 시점의 자기 서브넷 집합(RunnerDeps::own_subnets)을 넣는다.
+//   전송 오류면 ops::transport_failure 다
 // - **`control.result` 는 Lobby 가 LogLine 으로 낸다.** 여기서 내지 않는다. 여기서 내는 것은 전송
 //   오류의 이유 한 줄(`control.transport`)뿐이다. 그 줄은 architecture.md 9장의 고정 키가 아니다
 
@@ -30,6 +31,7 @@
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/network/stun_client.hpp"
+#include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/timer.hpp"
 
 #include <cstddef>
@@ -52,6 +54,9 @@ using PrintFn = std::function<void(std::string_view)>;
 // 시각. 제품 경로는 platform::monotonic_ms 다.
 using ClockFn = std::function<Millis()>;
 
+// 자기 서브넷 집합을 읽는다. 돌려준 참조는 그 호출 안에서만 쓴다.
+using OwnSubnetsFn = std::function<const peer::OwnSubnets&()>;
+
 struct RunnerDeps {
     std::string host_header;                         // http::host_header 가 만든 값
     std::vector<network::StunServer> stun_servers;   // 기동 시 한 번 해석한 목록
@@ -61,6 +66,10 @@ struct RunnerDeps {
     PrintFn print;
     ClockFn clock;
     network::StunRandomFn stun_random;               // 비워 두면 platform::random_bytes
+    // 지금의 자기 서브넷 집합 (protocol.md 10.1). get_peers 와 host_report 의 상대 후보 위생에 넘긴다.
+    // 집합의 소유는 [loop] 다 (concurrency.md 5장). 제품 경로는 EventLoop::own_subnets 를 읽는다.
+    // 비워 두면 빈 집합이다 (10.1 "첫 수집 전에는 비어 있다").
+    OwnSubnetsFn own_subnets;
 };
 
 class ControlRunner {

@@ -5,6 +5,7 @@
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
+#include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
@@ -516,6 +517,9 @@ std::vector<std::byte> stun_bytes(std::size_t size = 20, bool good_cookie = true
 
 constexpr std::uint32_t kPublicAddress = 0xCB007101u;  // 203.0.113.1
 
+// 첫 수집 전의 자기 서브넷 집합 (protocol.md 10.1). 자기 서브넷 행을 보지 않는 케이스가 쓴다.
+const sangtachi::peer::OwnSubnets kNoSubnets;
+
 }  // namespace
 
 TEST_CASE("classify: the source hygiene table decides before the class", "[loop][classify]") {
@@ -544,7 +548,7 @@ TEST_CASE("classify: the source hygiene table decides before the class", "[loop]
 
     for (const Row& row : rows) {
         INFO(row.what);
-        REQUIRE(sangtachi::classify_datagram(Endpoint(row.address, row.port), payload) ==
+        REQUIRE(sangtachi::classify_datagram(Endpoint(row.address, row.port), payload, kNoSubnets) ==
                 row.expected);
     }
 }
@@ -553,38 +557,104 @@ TEST_CASE("classify: the leading two bits decide the class", "[loop][classify]")
     const Endpoint from(kPublicAddress, 3478);
 
     // STUN: 상위 2비트 00, 길이 20 이상, buf[4..8) 이 쿠키.
-    REQUIRE(sangtachi::classify_datagram(from, stun_bytes()) == sangtachi::RxClass::Stun);
+    REQUIRE(sangtachi::classify_datagram(from, stun_bytes(), kNoSubnets) == sangtachi::RxClass::Stun);
     // 상위 2비트가 00 인 값 전부가 같다. 0x3F 까지다.
     auto high_bits = stun_bytes();
     high_bits[0] = std::byte{0x3F};
-    REQUIRE(sangtachi::classify_datagram(from, high_bits) == sangtachi::RxClass::Stun);
+    REQUIRE(sangtachi::classify_datagram(from, high_bits, kNoSubnets) == sangtachi::RxClass::Stun);
 
     // 쿠키가 틀리면 STUN 이 아니고, 터널도 아니므로 그 외다.
-    REQUIRE(sangtachi::classify_datagram(from, stun_bytes(20, false)) ==
+    REQUIRE(sangtachi::classify_datagram(from, stun_bytes(20, false), kNoSubnets) ==
             sangtachi::RxClass::Unclassified);
     // 19바이트는 헤더가 안 된다.
-    REQUIRE(sangtachi::classify_datagram(from, stun_bytes(19)) ==
+    REQUIRE(sangtachi::classify_datagram(from, stun_bytes(19), kNoSubnets) ==
             sangtachi::RxClass::Unclassified);
 
     // 터널 후보: 상위 2비트 01. magic 과 version 은 분류 기준이 아니다 (7장).
-    REQUIRE(sangtachi::classify_datagram(from, tunnel_pattern(1)) ==
+    REQUIRE(sangtachi::classify_datagram(from, tunnel_pattern(1), kNoSubnets) ==
             sangtachi::RxClass::TunnelCandidate);
-    REQUIRE(sangtachi::classify_datagram(from, tunnel_pattern(1472)) ==
+    REQUIRE(sangtachi::classify_datagram(from, tunnel_pattern(1472), kNoSubnets) ==
             sangtachi::RxClass::TunnelCandidate);
     auto tunnel_high = tunnel_pattern(8);
     tunnel_high[0] = std::byte{0x7F};
-    REQUIRE(sangtachi::classify_datagram(from, tunnel_high) ==
+    REQUIRE(sangtachi::classify_datagram(from, tunnel_high, kNoSubnets) ==
             sangtachi::RxClass::TunnelCandidate);
 
     // 그 외: 상위 2비트 10 과 11, 그리고 빈 데이터그램.
     auto ten = tunnel_pattern(8);
     ten[0] = std::byte{0x80};
-    REQUIRE(sangtachi::classify_datagram(from, ten) == sangtachi::RxClass::Unclassified);
+    REQUIRE(sangtachi::classify_datagram(from, ten, kNoSubnets) == sangtachi::RxClass::Unclassified);
     auto eleven = tunnel_pattern(8);
     eleven[0] = std::byte{0xC0};
-    REQUIRE(sangtachi::classify_datagram(from, eleven) == sangtachi::RxClass::Unclassified);
-    REQUIRE(sangtachi::classify_datagram(from, std::span<const std::byte>()) ==
+    REQUIRE(sangtachi::classify_datagram(from, eleven, kNoSubnets) == sangtachi::RxClass::Unclassified);
+    REQUIRE(sangtachi::classify_datagram(from, std::span<const std::byte>(), kNoSubnets) ==
             sangtachi::RxClass::Unclassified);
+}
+
+TEST_CASE("classify: own subnet directed broadcast is a bad source", "[loop][classify]") {
+    // protocol.md 7장의 두 번째 표. 자기 서브넷 집합(10.1)이 막는 브로드캐스트만 폐기하고 원격 서브넷의
+    // 것은 통과한다. 첫 표의 행도 집합이 있는 채로 다시 돌려 집합이 다른 행을 바꾸지 않는 것을 본다.
+    const auto payload = stun_bytes();
+    // 10.0.0.49/24 와 172.17.0.1/20. 두 원소의 브로드캐스트는 10.0.0.255, 172.17.15.255 다.
+    const sangtachi::peer::OwnSubnets own({{0x0A000031u, 24}, {0xAC110001u, 20}});
+
+    struct Row {
+        std::uint32_t address;
+        std::uint16_t port;
+        const sangtachi::peer::OwnSubnets* set;
+        sangtachi::RxClass expected;
+        const char* what;
+    };
+    const Row rows[] = {
+        {0x0A0000FFu, 3478, &own, sangtachi::RxClass::BadSource, "own /24 broadcast"},
+        {0xAC110FFFu, 3478, &own, sangtachi::RxClass::BadSource, "own /20 broadcast"},
+        {0x0A0000FFu, 3478, &kNoSubnets, sangtachi::RxClass::Stun, "empty set blocks nothing"},
+        {0x0A000031u, 3478, &own, sangtachi::RxClass::Stun, "our own address passes"},
+        {0x0A0000FEu, 3478, &own, sangtachi::RxClass::Stun, "another host in our subnet passes"},
+        {0xAC1100FFu, 3478, &own, sangtachi::RxClass::Stun, "x.x.0.255 inside a /20 is a host, not the broadcast"},
+        {0x0A0001FFu, 3478, &own, sangtachi::RxClass::Stun, "remote subnet broadcast passes; residual risk of chapter 7"},
+        {0xE0000001u, 3478, &own, sangtachi::RxClass::BadSource, "multicast still dropped"},
+        {0xFFFFFFFFu, 3478, &own, sangtachi::RxClass::BadSource, "limited broadcast still dropped"},
+        {0x00000000u, 3478, &own, sangtachi::RxClass::BadSource, "unspecified still dropped"},
+        {kPublicAddress, 0, &own, sangtachi::RxClass::BadSource, "port zero still dropped"},
+        {0x7F000001u, 3478, &own, sangtachi::RxClass::Stun, "loopback still passes"},
+        {0x7FFFFFFFu, 3478, &own, sangtachi::RxClass::Stun, "127.255.255.255 still passes"},
+        {kPublicAddress, 3478, &own, sangtachi::RxClass::Stun, "anything else still passes"},
+    };
+    for (const Row& row : rows) {
+        INFO(row.what);
+        REQUIRE(sangtachi::classify_datagram(Endpoint(row.address, row.port), payload, *row.set) ==
+                row.expected);
+    }
+    // 터널 후보로 분류될 바이트열도 같다. 위생이 분류보다 먼저다.
+    REQUIRE(sangtachi::classify_datagram(Endpoint(0x0A0000FFu, 3478), tunnel_pattern(40), own) ==
+            sangtachi::RxClass::BadSource);
+}
+
+TEST_CASE("classify: loopback passes even inside an own subnet", "[loop][classify]") {
+    // 7장 첫 표는 루프백 127.0.0.0/8 을 통과로 정한다. 자기 서브넷이 아주 넓으면(10.1.2.3/1 은
+    // 0.0.0.0 ~ 127.255.255.255) 그 브로드캐스트가 127.255.255.255 가 되어 두 행이 겹친다. 루프백
+    // 회신은 자신에게만 가므로 증폭이 없다. 루프백 행이 이긴다.
+    const sangtachi::peer::OwnSubnets wide({{0x0A010203u, 1}, {0x0B000001u, 8}});
+    REQUIRE(sangtachi::classify_datagram(Endpoint(0x7FFFFFFFu, 3478), stun_bytes(), wide) ==
+            sangtachi::RxClass::Stun);
+    // 같은 집합의 루프백 밖 브로드캐스트(11.255.255.255)는 그대로 막는다.
+    REQUIRE(sangtachi::classify_datagram(Endpoint(0x0BFFFFFFu, 3478), stun_bytes(), wide) ==
+            sangtachi::RxClass::BadSource);
+}
+
+TEST_CASE("loop: the own subnet set is held by the loop and starts empty", "[loop][classify]") {
+    // concurrency.md 5장: 자기 서브넷 집합은 [loop] 가 소유한다. 첫 수집 전에는 비어 있다 (10.1).
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    EventLoop loop(std::move(*opened.socket), counters, session->queue(), session->event(), LoopOptions{});
+    REQUIRE(loop.own_subnets().empty());
+    loop.set_own_subnets(sangtachi::peer::OwnSubnets({{0x0A000031u, 24}}));
+    REQUIRE(loop.own_subnets().blocks_broadcast(0x0A0000FFu));
 }
 
 TEST_CASE("loop: each class goes to its own sink", "[loop][classify]") {

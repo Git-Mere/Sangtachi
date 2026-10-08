@@ -20,6 +20,7 @@ target_sources(sangtachi_core PRIVATE
     network/endpoint.cpp
     network/stun.cpp
     network/stun_client.cpp
+    peer/candidates.cpp
     peer/epoch.cpp
     tunnel/packet.cpp
     tunnel/replay.cpp
@@ -31,6 +32,7 @@ if(WIN32)
     target_sources(sangtachi_core PRIVATE
         platform/win32/console_ctrl.cpp
         platform/win32/hash.cpp
+        platform/win32/interfaces.cpp
         platform/win32/random.cpp
         platform/win32/resolve.cpp
         platform/win32/stdout.cpp

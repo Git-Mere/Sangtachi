@@ -11,6 +11,7 @@
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/network/udp_socket.hpp"
+#include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/timer.hpp"
 
 #include <cstddef>
@@ -21,6 +22,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace sangtachi {
 
@@ -62,17 +64,22 @@ enum class RxClass {
 // | 루프백 `127.0.0.0/8` | **통과** |
 // | 그 외 | 통과 |
 //
-// **자기 인터페이스의 서브넷 브로드캐스트는 아직 넣지 않았다.** 7장의 두 번째 표가 그것을
-// 폐기로 정했지만, 판정하려면 각 인터페이스의 주소와 넷마스크가 있어야 하고 그 수집은
-// 10.1 후보 수집과 위생의 로컬 후보이며 Phase 4 다 (roadmap.md). 값을 지어내지 않고 그
-// 자리를 비워 둔다. 원격 서브넷의 브로드캐스트는 그 표가 "막지 못한다" 로 적은 남는
-// 위험이고 여기서도 통과한다.
+// ## 서브넷 브로드캐스트 (7장의 두 번째 표)
+//
+// | 무엇 | 판정 |
+// |------|------|
+// | 자기 서브넷의 브로드캐스트. own_subnets 가 막는 주소 (OwnSubnets::blocks_broadcast) | 폐기 |
+// | 원격 서브넷의 브로드캐스트 | 통과. 넷마스크를 모르므로 막지 못한다. 7장이 남는 위험으로 적었다 |
+//
+// own_subnets 는 10.1 후보 수집과 위생의 자기 서브넷 집합이다. 소유는 [loop] 이고(concurrency.md
+// 5장) 첫 수집 전에는 비어 있다. 비어 있는 동안 이 행은 아무것도 막지 않는다.
 //
 // **루프백을 통과시키는 것은 10.1 후보 수집과 위생의 표와 다르다.** 그 절은 우리가 먼저
 // 보낼 목적지 목록을 판정하고 여기는 받은 데이터그램의 출발지를 판정한다. 7장이 두 표를
 // 합치지 말라고 적었다.
 [[nodiscard]] RxClass classify_datagram(const network::Endpoint& from,
-                                        std::span<const std::byte> payload) noexcept;
+                                        std::span<const std::byte> payload,
+                                        const peer::OwnSubnets& own_subnets) noexcept;
 
 // 분류를 지난 데이터그램 하나를 넘겨받는 자리.
 using DatagramHandler =
@@ -189,6 +196,12 @@ public:
     // 종료할 때까지 돈다.
     void run();
 
+    // 자기 서브넷 집합 (protocol.md 10.1, concurrency.md 5장 상태 소유). 수신 분류의 출발지 위생
+    // (7장)과 받은 후보 위생이 읽는다. 바꾸는 것은 10.1 의 수집 한 번이고, 그 결과(peer::Collection 의
+    // own_subnets)를 그대로 넣는다. 첫 수집 전에는 비어 있다.
+    void set_own_subnets(peer::OwnSubnets subnets) { own_subnets_ = std::move(subnets); }
+    [[nodiscard]] const peer::OwnSubnets& own_subnets() const noexcept { return own_subnets_; }
+
     [[nodiscard]] const network::UdpSocket& socket() const noexcept { return socket_; }
     [[nodiscard]] TimerSet& timers() noexcept { return timers_; }
 
@@ -216,6 +229,7 @@ private:
     std::function<void(control::ControlResponse)> on_control_;
     std::function<void(const control::LobbyCommand&)> on_lobby_command_;
     control::ControlChannel* control_ = nullptr;  // 소유하지 않는다
+    peer::OwnSubnets own_subnets_;                // protocol.md 10.1. 첫 수집 전에는 비어 있다
 
     void* shutdown_event_ = nullptr;  // 수동 리셋. 이 객체가 소유한다
     void* console_event_ = nullptr;   // 자동 리셋. ConsoleSession 이 소유한다

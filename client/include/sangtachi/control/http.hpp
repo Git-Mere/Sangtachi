@@ -16,7 +16,7 @@
 // | 1 | 빈 줄(CRLF CRLF)이 `kMaxHeaderBytes` 안에 있다 | `kHeaderTooLarge`, 덜 왔으면 `kHeaderIncomplete` | 2 |
 // | 2 | 머리 안에 CRLF 가 아닌 CR 이나 LF 가 없다 | `kBadHeaderLine` | 3 "줄 끝은 CRLF 만" |
 // | 3 | 상태 줄이 `HTTP/1.1 ` + 숫자 3자리 + (공백 또는 줄 끝) | `kBadStatusLine` | 1 |
-// | 4 | 헤더 줄이 `이름:값` 이고 접기(공백·탭으로 시작)가 아니며 이름 끝에 공백·탭이 없다 | `kBadHeaderLine` | 3 |
+// | 4 | 헤더 줄이 `이름:값` 이고 접기(공백·탭으로 시작)가 아니며 이름 안이나 콜론 앞에 공백·탭이 없다 | `kBadHeaderLine` | 3 |
 // | 5 | `Transfer-Encoding` 이 없다 | `kTransferEncoding` | 3 |
 // | 6 | `Content-Length` 가 있다 | `kMissingContentLength` | 4 |
 // | 7 | `Content-Length` 가 하나다 | `kDuplicateContentLength` | 4 |

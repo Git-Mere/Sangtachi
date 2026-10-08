@@ -9,6 +9,7 @@
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/network/stun.hpp"
 #include "sangtachi/network/stun_client.hpp"
+#include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/timer.hpp"
 
@@ -82,6 +83,8 @@ struct Rig {
     std::vector<Sent> sent;
     std::vector<std::string> printed;
     std::unique_ptr<ControlRunner> runner;
+    // 실행기가 해석 때 읽는 자기 서브넷 집합 (RunnerDeps::own_subnets). 시험이 바꿔 넣는다.
+    sangtachi::peer::OwnSubnets own_subnets;
 
     explicit Rig(std::size_t stun_count = 2) {
         RunnerDeps deps;
@@ -105,6 +108,7 @@ struct Rig {
         };
         deps.print = [this](std::string_view line) { printed.emplace_back(line); };
         deps.clock = [this] { return now; };
+        deps.own_subnets = [this]() -> const sangtachi::peer::OwnSubnets& { return own_subnets; };
         runner = std::make_unique<ControlRunner>(std::move(deps), timers, counters);
     }
 
@@ -299,6 +303,37 @@ TEST_CASE("control_runner: get_peers is interpreted with the echoed self peer id
         "{\"ready\":false,\"peers\":[{\"peer_id\":123,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}],\"ok\":true}";
     rig.reply(Op::kGetPeers, respond(self_in_peers), rig.submitted.back().self_peer_id);
     REQUIRE(rig.printed_starts_with("FAIL CONTROL_PLANE_EXCHANGE_FAILED "));
+}
+
+TEST_CASE("control_runner: get_peers hygiene uses the own subnet set of the loop",
+          "[control][runner]") {
+    // protocol.md 10.1 자기 서브넷 행. 상대 후보가 우리 서브넷의 브로드캐스트 하나뿐이면 위생 뒤 0개이고
+    // 준비 완료가 아니다(control_plane.md 8.4). 실행기가 RunnerDeps::own_subnets 를 해석에 넘기지 않으면
+    // 그 후보가 남아 플레이어가 폴링을 멈춘다.
+    auto run = [](bool with_set) {
+        Rig rig;
+        if (with_set) {
+            rig.own_subnets = sangtachi::peer::OwnSubnets({{0xC0A8000Au, 24}});  // 192.168.0.10/24
+        }
+        rig.command(LobbyCommandKind::kJoin, "ABCDEF");
+        rig.reply(Op::kJoinRoom, respond(kIssued));
+        const Endpoint mapped(0xC6336401u, 40000);
+        for (std::size_t i = 0; i < 2; ++i) {
+            const auto id = sangtachi::network::peek_transaction_id(rig.sent[i].bytes);
+            rig.runner->on_stun_datagram(rig.sent[i].to, stun_success(*id, mapped));
+        }
+        rig.reply(Op::kRegisterCandidate, respond("{\"accepted\":1,\"rejected\":0,\"ok\":true}"));
+        rig.runner->on_timer("control.poll");
+        REQUIRE(rig.submitted.back().op == Op::kGetPeers);
+        const std::string ready =
+            "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"ready\":true,"
+            "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,\"candidates\":["
+            "{\"ip\":\"192.168.0.255\",\"port\":5000,\"kind\":\"local\"}]}],\"ok\":true}";
+        rig.reply(Op::kGetPeers, respond(ready), rig.submitted.back().self_peer_id);
+        return rig.runner->lobby().stage();
+    };
+    CHECK(run(true) == sangtachi::control::LobbyStage::kPolling);
+    CHECK(run(false) == sangtachi::control::LobbyStage::kSettled);
 }
 
 TEST_CASE("control_runner: a STUN datagram outside an attempt counts drop_stun_parse",

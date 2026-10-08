@@ -2,6 +2,7 @@
 
 #include "sangtachi/control/http.hpp"
 #include "sangtachi/log.hpp"
+#include "sangtachi/peer/candidates.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -30,6 +31,8 @@ namespace {
 constexpr std::string_view kToken = "0123456789abcdef0123456789abcdef";
 constexpr std::string_view kRoom = "ABCDEF";
 constexpr std::uint32_t kSelf = 9;
+// 자기 서브넷 집합이 빈 상태 (protocol.md 10.1 "첫 수집 전에는 비어 있다"). 자기 서브넷 행을 보지 않는 행이 쓴다.
+const sangtachi::peer::OwnSubnets kNoSubnets;
 
 std::string respond(std::string_view body) {
     return "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
@@ -321,7 +324,7 @@ TEST_CASE("control_ops: get_peers not-ready table", "[control][ops]") {
                  {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}]", "[7]", T, kTr,
                   "element is not an object"},
              },
-             [](const std::string& raw) { return interpret_get_peers(raw, kSelf); });
+             [](const std::string& raw) { return interpret_get_peers(raw, kSelf, kNoSubnets); });
 }
 
 TEST_CASE("control_ops: get_peers ready table", "[control][ops]") {
@@ -364,11 +367,11 @@ TEST_CASE("control_ops: get_peers ready table", "[control][ops]") {
                   "candidate is not an object"},
                  {"\"peer_id\":7", "\"peer_id\":9", D, Failure::kSelfInPeers, "4.5: own peer_id"},
              },
-             [](const std::string& raw) { return interpret_get_peers(raw, kSelf); });
+             [](const std::string& raw) { return interpret_get_peers(raw, kSelf, kNoSubnets); });
 }
 
 TEST_CASE("control_ops: get_peers values", "[control][ops]") {
-    const auto got = interpret_get_peers(respond(kReady), kSelf);
+    const auto got = interpret_get_peers(respond(kReady), kSelf, kNoSubnets);
     REQUIRE(got.value);
     CHECK(got.value->ready);
     REQUIRE(got.value->peers.size() == 1);
@@ -390,7 +393,7 @@ TEST_CASE("control_ops: get_peers values", "[control][ops]") {
         nine += "{\"ip\":\"10.0.0." + std::to_string(i) + "\",\"port\":1000,\"kind\":\"local\"}";
     }
     nine += "]}],\"ok\":true}";
-    const auto many = interpret_get_peers(respond(nine), kSelf);
+    const auto many = interpret_get_peers(respond(nine), kSelf, kNoSubnets);
     REQUIRE(many.value);
     // 형 검사는 길이를 보지 않고, 위생(protocol.md 10.1)이 앞에서부터 8개를 남긴다.
     REQUIRE(many.value->peers[0].candidates.size() == 8);
@@ -421,9 +424,9 @@ TEST_CASE("control_ops: host_report table", "[control][ops]") {
                   "\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"ready\":false,\"candidates\":[]}",
                   T, kTr, "4.5 field set applies to host_report peers"},
              },
-             [](const std::string& raw) { return interpret_host_report(raw, kSelf); });
+             [](const std::string& raw) { return interpret_host_report(raw, kSelf, kNoSubnets); });
 
-    const auto got = interpret_host_report(respond(kHostReport), kSelf);
+    const auto got = interpret_host_report(respond(kHostReport), kSelf, kNoSubnets);
     REQUIRE(got.value);
     CHECK(got.value->expires_in_s == 120);
     CHECK(got.value->released == std::vector<std::uint32_t>{5});
@@ -556,7 +559,7 @@ TEST_CASE("control_ops: failure tokens are the 4.1 strings", "[control][ops]") {
 }
 
 TEST_CASE("control_ops: control.peers fields", "[control][ops]") {
-    const auto got = interpret_get_peers(respond(kReady), kSelf);
+    const auto got = interpret_get_peers(respond(kReady), kSelf, kNoSubnets);
     REQUIRE(got.value);
     CHECK(format_line(LogLevel::Info, "control.peers", control_peers_fields(got.value->peers[0])) ==
           "INFO control.peers peer_id=7 virtual_ip=10.100.0.1 candidates=192.168.0.10:51234,203.0.113.5:40000");
@@ -589,7 +592,7 @@ TEST_CASE("control_ops: secrets never reach a log line or an error token", "[con
         const auto issued = interpret_create_room(raw);
         lines.push_back(format_line(LogLevel::Info, "control.result",
                                     control_result_fields(Op::kCreateRoom, issued.outcome, issued.failure)));
-        const auto peers = interpret_get_peers(raw, kSelf);
+        const auto peers = interpret_get_peers(raw, kSelf, kNoSubnets);
         lines.push_back(format_line(LogLevel::Info, "control.result",
                                     control_result_fields(Op::kGetPeers, peers.outcome, peers.failure)));
         if (peers.value) {
@@ -633,9 +636,14 @@ TEST_CASE("control_ops: received candidate hygiene table", "[control][ops]") {
         {{"224.0.0.1:5000"}, {}, "multicast low"},
         {{"239.255.255.255:5000"}, {}, "multicast high"},
         {{"223.255.255.255:5000"}, {"223.255.255.255:5000"}, "just below multicast"},
-        {{"240.0.0.1:5000"}, {"240.0.0.1:5000"}, "240/4 is not in the list"},
+        // 예약 240.0.0.0/4 (제한 브로드캐스트 포함)와 "이 네트워크" 0.0.0.0/8 (미지정 포함). 10.1 위생 규칙 표.
+        {{"240.0.0.1:5000"}, {}, "reserved 240/4 low"},
+        {{"240.0.0.0:5000"}, {}, "reserved 240/4 first"},
+        {{"255.255.255.254:5000"}, {}, "reserved 240/4 high"},
         {{"0.0.0.0:5000"}, {}, "unspecified"},
-        {{"0.0.0.1:5000"}, {"0.0.0.1:5000"}, "rest of 0/8 is not in the list"},
+        {{"0.0.0.1:5000"}, {}, "this network 0/8 low"},
+        {{"0.255.255.255:5000"}, {}, "this network 0/8 high"},
+        {{"1.0.0.0:5000"}, {"1.0.0.0:5000"}, "just above 0/8"},
         {{"127.0.0.1:5000"}, {}, "loopback"},
         {{"127.255.255.254:5000"}, {}, "loopback whole /8"},
         {{"126.255.255.255:5000"}, {"126.255.255.255:5000"}, "just below loopback"},
@@ -672,8 +680,66 @@ TEST_CASE("control_ops: received candidate hygiene table", "[control][ops]") {
         for (const auto t : row.out) {
             want.push_back(cand(t));
         }
-        CHECK(sanitize_received_candidates(in) == want);
+        CHECK(sanitize_received_candidates(in, kNoSubnets) == want);
     }
+}
+
+TEST_CASE("control_ops: own subnet row of received hygiene", "[control][ops]") {
+    // protocol.md 10.1 "자기 서브넷 행 케이스 표". 자기 서브넷 집합이 {192.168.0.10/24} 일 때다.
+    const sangtachi::peer::OwnSubnets own({{*parse_ipv4("192.168.0.10"), 24}});
+    struct Row {
+        std::string_view in;
+        bool kept;
+        const sangtachi::peer::OwnSubnets* set;
+        std::string_view why;
+    };
+    const Row rows[] = {
+        {"192.168.0.255:5000", false, &own, "no own subnet row"},
+        {"192.168.0.254:5000", true, &own, "rejects the whole subnet"},
+        {"192.168.0.10:5000", true, &own, "rejects our own address; may be another process on this machine"},
+        {"192.168.1.255:5000", true, &own, "widens the netmask; remote broadcast is not judged"},
+        {"192.168.0.255:5000", true, &kNoSubnets, "rejects .255 without the set"},
+    };
+    for (const auto& row : rows) {
+        INFO("why=" << row.why);
+        const std::vector<Candidate> in = {cand(row.in)};
+        const auto out = sanitize_received_candidates(in, *row.set);
+        CHECK(out == (row.kept ? in : std::vector<Candidate>{}));
+    }
+}
+
+TEST_CASE("control_ops: own subnet rejects do not take a slot under the limit", "[control][ops]") {
+    // 자기 서브넷 행도 위생 거부다. 상한(8)보다 앞에 걸러 쓸 수 있는 후보를 밀어내지 않는다 (10.1 순서).
+    const sangtachi::peer::OwnSubnets own({{*parse_ipv4("192.168.0.10"), 24}});
+    std::vector<Candidate> in = {cand("192.168.0.255:1")};
+    std::vector<Candidate> want;
+    for (int i = 1; i <= 8; ++i) {
+        in.push_back(cand("10.0.0." + std::to_string(i) + ":1"));
+        want.push_back(in.back());
+    }
+    CHECK(sanitize_received_candidates(in, own) == want);
+}
+
+TEST_CASE("control_ops: interpret passes the own subnet set to hygiene", "[control][ops]") {
+    // get_peers 와 host_report 둘 다 받은 집합으로 판정한다. 빈 집합으로 부르는 구현은 여기서 걸린다.
+    const sangtachi::peer::OwnSubnets own({{*parse_ipv4("203.0.113.9"), 24}});
+    const auto g = interpret_get_peers(respond(patch(kReady, "\"ip\":\"203.0.113.5\"", "\"ip\":\"203.0.113.255\"")),
+                                       kSelf, own);
+    REQUIRE(g.value);
+    for (const auto& c : g.value->peers[0].candidates) {
+        CHECK(c.endpoint.address() != *parse_ipv4("203.0.113.255"));
+    }
+    const auto g_empty = interpret_get_peers(
+        respond(patch(kReady, "\"ip\":\"203.0.113.5\"", "\"ip\":\"203.0.113.255\"")), kSelf, kNoSubnets);
+    REQUIRE(g_empty.value);
+    CHECK(g_empty.value->peers[0].candidates.size() == g.value->peers[0].candidates.size() + 1);
+
+    const sangtachi::peer::OwnSubnets own_host({{*parse_ipv4("198.51.100.1"), 24}});
+    const auto h = interpret_host_report(
+        respond(patch(kHostReport, "\"ip\":\"198.51.100.7\"", "\"ip\":\"198.51.100.255\"")), kSelf, own_host);
+    REQUIRE(h.value);
+    CHECK(h.value->peers[0].candidates.empty());
+    CHECK_FALSE(is_punch_ready(h.value->peers[0]));
 }
 
 TEST_CASE("control_ops: a duplicate keeps the kind of the first", "[control][ops]") {
@@ -681,7 +747,7 @@ TEST_CASE("control_ops: a duplicate keeps the kind of the first", "[control][ops
         cand("203.0.113.5:40000", CandidateKind::kReflexive),
         cand("203.0.113.5:40000", CandidateKind::kLocal),
     };
-    const auto out = sanitize_received_candidates(in);
+    const auto out = sanitize_received_candidates(in, kNoSubnets);
     REQUIRE(out.size() == 1);
     CHECK(out[0].kind == CandidateKind::kReflexive);
 }
@@ -708,7 +774,7 @@ TEST_CASE("control_ops: type check covers every candidate before the limit", "[c
         const std::string get = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\","
                                 "\"ready\":true,\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,"
                                 "\"candidates\":[" + list_with(ninth) + "]}],\"ok\":true}";
-        const auto g = interpret_get_peers(respond(get), kSelf);
+        const auto g = interpret_get_peers(respond(get), kSelf, kNoSubnets);
         CHECK(g.outcome == T);
         CHECK(g.failure == kTr);
 
@@ -716,7 +782,7 @@ TEST_CASE("control_ops: type check covers every candidate before the limit", "[c
                                  "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"ready\":true,"
                                  "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,"
                                  "\"candidates\":[" + list_with(ninth) + "]}],\"ok\":true}";
-        const auto h = interpret_host_report(respond(host), kSelf);
+        const auto h = interpret_host_report(respond(host), kSelf, kNoSubnets);
         CHECK(h.outcome == T);
         CHECK(h.failure == kTr);
     }
@@ -724,7 +790,7 @@ TEST_CASE("control_ops: type check covers every candidate before the limit", "[c
     const std::string good = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\","
                              "\"ready\":true,\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,"
                              "\"candidates\":[" + list_with(ok_ninth) + "]}],\"ok\":true}";
-    const auto g = interpret_get_peers(respond(good), kSelf);
+    const auto g = interpret_get_peers(respond(good), kSelf, kNoSubnets);
     REQUIRE(g.value);
     CHECK(g.value->peers[0].candidates.size() == 8);
 }
@@ -733,7 +799,7 @@ TEST_CASE("control_ops: interpret applies hygiene to both peer lists", "[control
     // get_peers: 포트 0 과 루프백이 빠진다. 형 위반이 아니므로 응답은 성공이다.
     const std::string bad_get = patch(patch(kReady, "\"port\":51234", "\"port\":0"),
                                       "\"ip\":\"203.0.113.5\"", "\"ip\":\"127.0.0.1\"");
-    const auto g = interpret_get_peers(respond(bad_get), kSelf);
+    const auto g = interpret_get_peers(respond(bad_get), kSelf, kNoSubnets);
     REQUIRE(g.value);
     CHECK(g.value->peers[0].candidates.empty());
     CHECK_FALSE(is_punch_ready(g.value->peers[0]));  // 8.4: 위생 뒤 0개면 준비 완료가 아니다
@@ -741,12 +807,12 @@ TEST_CASE("control_ops: interpret applies hygiene to both peer lists", "[control
 
     // host_report: 같은 위생이 상대 후보에 걸린다.
     const std::string bad_host = patch(kHostReport, "\"ip\":\"198.51.100.7\"", "\"ip\":\"224.0.0.9\"");
-    const auto h = interpret_host_report(respond(bad_host), kSelf);
+    const auto h = interpret_host_report(respond(bad_host), kSelf, kNoSubnets);
     REQUIRE(h.value);
     CHECK(h.value->peers[0].candidates.empty());
     CHECK_FALSE(is_punch_ready(h.value->peers[0]));
 
-    const auto good = interpret_host_report(respond(kHostReport), kSelf);
+    const auto good = interpret_host_report(respond(kHostReport), kSelf, kNoSubnets);
     REQUIRE(good.value);
     CHECK(is_punch_ready(good.value->peers[0]));
     CHECK_FALSE(is_punch_ready(good.value->peers[1]));  // ready 가 아니다
@@ -796,7 +862,7 @@ TEST_CASE("control_ops: host_report action table", "[control][ops]") {
     for (const auto& c : cases) {
         INFO("why=" << c.why << " body=" << c.body);
         const auto reply = c.body.empty() ? transport_failure<HostReport>()
-                                          : interpret_host_report(respond(c.body), kSelf);
+                                          : interpret_host_report(respond(c.body), kSelf, kNoSubnets);
         CHECK(host_report_action(reply) == c.action);
     }
 }

@@ -65,6 +65,8 @@ constexpr std::uint32_t kMulticastNetwork = 0xE0000000u;  // 224.0.0.0
 constexpr std::uint32_t kMulticastMask = 0xF0000000u;     // /4
 constexpr std::uint32_t kLimitedBroadcast = 0xFFFFFFFFu;  // 255.255.255.255
 constexpr std::uint32_t kUnspecified = 0x00000000u;       // 0.0.0.0
+constexpr std::uint32_t kLoopbackNetwork = 0x7F000000u;   // 127.0.0.0
+constexpr std::uint32_t kLoopbackMask = 0xFF000000u;      // /8
 
 // 첫 바이트의 상위 2비트로만 분류한다. magic 과 version 은 분류 기준이 아니라 검증
 // 항목이다 (protocol.md 7장).
@@ -90,7 +92,8 @@ void emit_rx_raw(const network::Endpoint& from, std::span<const std::byte> paylo
 }  // namespace
 
 RxClass classify_datagram(const network::Endpoint& from,
-                          std::span<const std::byte> payload) noexcept {
+                          std::span<const std::byte> payload,
+                          const peer::OwnSubnets& own_subnets) noexcept {
     // 1. 출발지 위생. 분류보다 먼저다 (protocol.md 7장). 수신 데이터그램의 출발지는
     //    우리가 되돌려 보내는 목적지가 되므로, 분류 전에 걸러야 STUN 경로와 터널 경로가
     //    같은 보호를 받는다.
@@ -104,6 +107,13 @@ RxClass classify_datagram(const network::Endpoint& from,
     if ((address & kMulticastMask) == kMulticastNetwork) {
         return RxClass::BadSource;  // 회신 1개가 그룹 구독자 수만큼 증폭된다
     }
+    // 루프백은 자기 서브넷 행보다 먼저 통과시킨다. 아주 넓은 자기 서브넷(/1 등)의 브로드캐스트가
+    // 127.255.255.255 가 되어 두 행이 겹칠 수 있고, 7장 첫 표가 루프백을 통과로 정했다.
+    const bool loopback = (address & kLoopbackMask) == kLoopbackNetwork;
+    if (!loopback && own_subnets.blocks_broadcast(address)) {
+        return RxClass::BadSource;  // 자기 서브넷의 directed broadcast. 증폭이 실제로 일어나는 곳이다
+    }
+    // 원격 서브넷의 브로드캐스트는 넷마스크를 모르므로 막지 못한다 (7장의 남는 위험).
     // 루프백은 통과다. 회신이 자신에게만 가므로 증폭이 없고, 같은 기기에서 두 프로세스를
     // 띄우는 시험이 이 경로를 쓴다 (protocol.md 7장의 표).
 
@@ -194,7 +204,7 @@ DrainOutcome EventLoop::drain_udp() {
                 // 시험용 `--peer`, `raw` 와 함께 Phase 6 에서 사라진다.
                 emit_rx_raw(result.from, payload);
 
-                switch (classify_datagram(result.from, payload)) {
+                switch (classify_datagram(result.from, payload, own_subnets_)) {
                     case RxClass::BadSource:
                         counters_.increment(Counter::DropBadSource);
                         break;

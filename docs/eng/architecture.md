@@ -78,6 +78,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `peer/peer` | Peer identifier, virtual IP, candidate endpoint list | None |
 | `peer/hole_punch` | Simultaneous bidirectional send, retry, success decision, failure reason classification | None |
 | `peer/session` | Handshake, keepalive, connection state machine, RTT measurement | None |
+| `peer/candidates` | Local candidate decision, default route, registration list, own-subnet set (`protocol.md` 10.1). Interface enumeration and route lookup are injected and default to `platform/interfaces` | None |
 | `peer/epoch` | `session_epoch` generation, attempt nonces, retired lists (`protocol.md` 4.3, 5.1). The random source is injected and defaults to `platform/random`. Used by `peer/session` | None |
 | `tunnel/packet` | Tunnel header serialization/deserialization, corrupt packet validation | None |
 | `tunnel/replay` | `sequence` comparison and the acceptance window (`protocol.md` 4.4, 4.5). Used by `tunnel/tunnel` | None |
@@ -97,6 +98,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `network/stun_client` | STUN retries and deadlines, server selection and replacement. The clock, socket, random source and name resolution are injected | None |
 | `platform/wait` | Monotonic clock, event handles, waiting on several handles at once (`concurrency.md` chapters 2 and 4) | Win32 |
 | `platform/random` | CSPRNG bytes. Used by the transaction ID and later by epoch and nonce | Win32 |
+| `platform/interfaces` | IPv4 interface enumeration (address, netmask, type, status, GUID) and default route lookup. Used by `peer/candidates` | Win32 (IP Helper) |
 | `platform/resolve` | Name to IPv4 endpoint. Called once at startup (3.5) | Win32 |
 | `platform/console_ctrl` | Receives console control signals, signals the shutdown event and waits for cleanup to finish (`concurrency.md` chapter 7) | Win32 |
 | `control/control_client` | Control plane HTTP/JSON calls and DNS resolution. Owned by the `[control]` thread (`concurrency.md` chapter 8 The `[control]` Thread). Operations and encoding are in [`control_plane.md`](control_plane.md) | Winsock2 |
@@ -1132,9 +1134,9 @@ Sangtachi/
 |   |   +-- log.cpp      log line format (chapter 9)
 |   |   +-- counters.cpp counter table (chapter 9)
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces
 |   |   +-- network/     endpoint, stun, stun_client
-|   |   +-- peer/        peer, hole_punch, session, epoch
+|   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
@@ -1180,7 +1182,7 @@ The two language trees hold the same files. When editing a document, modify both
 | Dependency | Scope provided | Approval status |
 |--------|-----------|-----------|
 | Wintun | Windows virtual network interface access only. Adapter creation, packet read/inject | **Approved** |
-| Windows IP Helper / NetIO API | IP address and route configuration of the virtual adapter. **Wintun does not provide this** | OS built-in |
+| Windows IP Helper / NetIO API | IP address and route configuration of the virtual adapter. **Wintun does not provide this.** Interface enumeration and default route lookup for local candidates (`platform/interfaces`) | OS built-in |
 | Winsock2 | Windows standard socket API | OS built-in |
 | Windows CNG (`BCryptHash`) | The SHA-256 carried by chapter 9 `rx.raw` | OS built-in |
 | Public STUN servers | Binding Response. The server is not implemented, only used | External public service |

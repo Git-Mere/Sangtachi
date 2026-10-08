@@ -9,6 +9,7 @@
 // probe nonce(10.4 (c)) 와 그 표는 여기에 없다. 5.1 이 두 종류를 같은 표에 섞지 말라고
 // 정했으므로 시도 nonce 의 폐기 목록(RetiredNonces)을 probe 쪽에서 쓰지 않는다.
 
+#include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/timer.hpp"
 
 #include <array>
@@ -30,9 +31,10 @@ namespace sangtachi::peer {
 // 둔다. 기본값을 고르는 자리는 epoch.cpp 의 한 곳이다.
 using RandomFn = std::function<bool(std::span<std::byte>)>;
 
-// 폐기 목록 항목의 보관 시간 (4.3, 5.1, 11장 만료 표). 둘 다 2분이다.
-inline constexpr Millis kRetiredEpochTtlMs = 120'000;
-inline constexpr Millis kRetiredNonceTtlMs = 120'000;
+// 폐기 목록 항목의 보관 시간 (4.3, 5.1, 11장 만료 표). 값은 protocol_constants.hpp 의 11장
+// 블록이 갖는다. 같은 값을 두 곳에 두지 않는다.
+inline constexpr Millis kRetiredEpochTtlMs = protocol::kRetiredEpochTtlMs;
+inline constexpr Millis kRetiredNonceTtlMs = protocol::kRetiredNonceTtlMs;
 
 // 새 session_epoch 를 뽑는다 (4.3). 0 이 나오면 다시 뽑는다. 0 은 쓰지 않는다.
 //

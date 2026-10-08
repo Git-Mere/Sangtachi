@@ -42,6 +42,7 @@ add_executable(sangtachi_tests
     platform/stdout_test.cpp
     platform/tcp_test.cpp
     platform/wait_test.cpp
+    tunnel/packet_test.cpp
     tunnel/replay_test.cpp
 )
 

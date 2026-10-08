@@ -21,6 +21,7 @@ target_sources(sangtachi_core PRIVATE
     network/stun.cpp
     network/stun_client.cpp
     peer/epoch.cpp
+    tunnel/packet.cpp
     tunnel/replay.cpp
 )
 

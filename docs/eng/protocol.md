@@ -395,7 +395,7 @@ pending_pings[id] = steady_clock::now();
    0      1   reason    0x00 graceful shutdown, 0x01 user cancel, 0x02 configuration error, 0x03 establishment failure
 ```
 
-Values other than `0x00`~`0x03` are dropped and `drop_bad_reason` is incremented. On graceful shutdown it is sent once, best-effort. No retransmission, no waiting for a response.
+Values other than `0x00`~`0x03` are dropped and `drop_bad_reason` is incremented. This check comes after 8.3 Duplicate Suppression (the order of section 8). On graceful shutdown it is sent once, best-effort. No retransmission, no waiting for a response.
 
 **The receiver removes the routing entry immediately and leaves the session in `CLOSED`.** If the session
 object were deleted too, a packet arriving afterwards would fall to `drop_unknown_peer` instead of the
@@ -533,7 +533,7 @@ between players. In a star with no relay, players do not establish tunnels with 
 > grows the retransmission state per session. A period writes the bound as a single value and adds
 > no session state. **The longest time a screen can be wrong is 15 seconds.**
 
-**Receive validation adds five checks after the 8.1 Common Checks.**
+**Receive validation adds five checks after 8.3 Duplicate Suppression (the order of section 8).**
 
 | # | Check | Failure counter |
 |---|------|-------------|
@@ -692,6 +692,16 @@ Datagrams exceeding `MAX_DATAGRAM` (1472) do not reach this step. The receive lo
 
 Tunnel candidates are checked in the order below. Each step has its own drop counter. If any check fails, drop immediately.
 
+**The order is 8.1 Common Checks, 8.2 Epoch and Source Checks, 8.3 Duplicate Suppression, then the per-type checks.** The per-type
+checks are 8.4 `DATA` Inner Validation, 5.5 `PONG` matching, the 5.6 `CLOSE` reason, and the 5.7 `ROSTER` receive validation. Side
+effects happen only after every check passes. **The one exception is 9.5 Renegotiation.** As 4.5 states, when 8.2 sends a
+`HELLO` with another epoch to 9.5, renegotiation runs before 8.3.
+
+> **Why.** One counter should point to one cause. Network duplication is `drop_duplicate`, a packet with a mismatching epoch is
+> 8.1 `drop_retired_epoch` or an 8.2 counter, and a content error is the per-type counter. With the per-type checks first, a
+> `ROSTER` duplicated by the network would be mixed into `drop_roster_stale`. The decision and the rejected alternative are in
+> [ADR 0021](decisions/0021-per-type-checks-come-after-replay-suppression.md).
+
 ### 8.1 Common Checks
 
 | # | Check | Failure counter |
@@ -747,6 +757,9 @@ punch, the new instance echoes our nonce with a new epoch in reply to our retran
 ### 8.3 Duplicate Suppression
 
 Apply the decision of 4.5 Duplicate Suppression and Loss Accounting. A packet dropped with `drop_duplicate` or `drop_too_old` **does not refresh the idle timer and changes no state.**
+
+**A packet that passed 8.3 is still recorded in the acceptance window even if a later per-type check drops it.** The 4.5 decision
+updates state at this step. Side effects such as the idle timer refresh do not happen.
 
 **Duplicate suppression state is looked up by the epoch the packet carries.** Not the pinned epoch. This is what 4.5 Duplicate Suppression and Loss Accounting means by
 "keeps the state per peer epoch". When the peer restarts and sends again from `sequence = 0` with a new epoch,
@@ -988,6 +1001,7 @@ The notation in Chapter 11 Timers means the same.
 - `DATA` additionally goes through 8.4 `DATA` Inner Validation
 - `PONG` additionally goes through the `ping_id` match of 5.5 `PING` / `PONG`
 - `CLOSE` additionally goes through the reason value check
+- `ROSTER` additionally goes through the five checks of the 5.7 `ROSTER` receive validation
 
 Before `CONNECTED` there is no timer to refresh, so this sentence does not apply there. Valid packets in
 that interval are used only for state transitions and source learning.
@@ -1387,7 +1401,7 @@ v1 uses **learning** instead of fixed nomination.
 peer_endpoint = source endpoint of the most recent packet satisfying all of the conditions below
 
   (a) passed every validation for its type
-      (8.1~8.3 common + 8.4 for DATA, 5.5 matching for PONG, reason validation for CLOSE)
+      (8.1~8.3 common + 8.4 for DATA, 5.5 matching for PONG, reason validation for CLOSE, 5.7 receive validation for ROSTER)
   (b) **advanced** highest in 4.5 Duplicate Suppression and Loss Accounting (reordered accepted packets are excluded)
   (c) the source is in the approved candidate set, or passed path validation (below)
 ```

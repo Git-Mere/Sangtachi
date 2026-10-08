@@ -108,7 +108,11 @@ def _check_path(target: bytes) -> str:
 
 
 def _parse_headers(lines: list[bytes]) -> dict[bytes, bytes]:
-    """검사 순서 5. 표에 있는 헤더만 소문자 이름으로 모은다. 값은 콜론 뒤 바이트 그대로다."""
+    """검사 순서 5. 표에 있는 헤더만 소문자 이름으로 모은다. 값은 콜론 뒤 바이트 그대로다.
+
+    줄 문법은 3.3 의 '헤더 줄 문법' 행이다. 콜론이 없는 줄, 이름 안이나 이름과 콜론 사이에 공백이나 탭이 있는
+    줄은 표 밖 헤더여도 거부한다.
+    """
     seen: dict[bytes, bytes] = {}
     for line in lines:
         if line[:1] in (b" ", b"\t"):
@@ -116,8 +120,10 @@ def _parse_headers(lines: list[bytes]) -> dict[bytes, bytes]:
         name, sep, value = line.partition(b":")
         if not sep:
             raise _bad("bad header line")
-        if name[-1:] in (b" ", b"\t"):
-            raise _bad("whitespace before colon")  # RFC 9112 5.1
+        # 이름 안이나 이름과 콜론 사이의 공백·탭. RFC 9112 5.1, RFC 9110 5.1 의 이름은 토큰이다.
+        # 줄 첫 바이트의 공백·탭은 위 obs-fold 가 먼저 본다.
+        if b" " in name or b"\t" in name:
+            raise _bad("whitespace in header name")
         key = name.lower()
         if key in _TABLE_HEADERS:
             if key in seen:

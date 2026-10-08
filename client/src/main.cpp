@@ -178,6 +178,8 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     deps.host_header = std::move(*host_header);
     deps.stun_servers = std::move(stun_servers);
     deps.nonce = [] { return sangtachi::control::generate_client_nonce(); };
+    // 처음 표시 이름 (architecture.md 3.5 --name). 인자 검사가 Phase 4 이후 필수로 받아 둔 값이다.
+    deps.name = *args.name;
     deps.submit = [&control](sangtachi::control::ControlRequest request) {
         return control.submit(std::move(request));
     };

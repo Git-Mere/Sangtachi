@@ -12,6 +12,7 @@ STATUS: dict[str, int] = {
     "room_not_found": 404,
     "room_expired": 410,
     "room_full": 409,
+    "name_taken": 409,
     "unauthorized": 403,
     "rate_limited": 429,
     "internal": 500,

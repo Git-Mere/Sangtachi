@@ -66,6 +66,9 @@
 // | 성공한 STUN 이 관측을 하나도 주지 않음 | `STUN_DISCOVERY_FAILED` | 이 코드 |
 // | register_candidate 의 후보 | 반사 후보뿐이다 | control_plane.md 8.4 의 Phase 3 범위 |
 // | 명령 뒤에 남은 낱말, 대소문자 | 형식이 틀린 것이다. 명령은 대소문자를 가린다 | architecture.md 3.5 |
+// | `name` 을 받는 때 | 로비에 있을 때다. 미결 요청이 있어도 받는다. 요청을 보내지 않는다 | architecture.md 3.5 로비 명령 표 |
+// | `name` 의 판정 순서 | 로비가 아님(`not_in_lobby`), 남은 낱말(`extra_argument`), 이름 없음(`missing_name`), 형식(`bad_name`). 틀리면 이름을 바꾸지 않는다 | architecture.md 3.5. 순서는 join 과 같은 꼴로 이 코드가 정했다 |
+// | 처음 이름 | 생성자가 받는 값(제품 경로는 --name). 형식이 틀린 값이면 host 와 join 이 본문 생성기의 거부로 FAIL 이다 | 이 코드 |
 //
 // ## 로그
 //
@@ -78,6 +81,7 @@
 // | `session.failed` | ERROR | code | `FAIL CONTROL_PLANE_EXCHANGE_FAILED` 를 낼 때. STUN 실패의 줄은 StunClient 가 이미 낸다 |
 // | `console.rejected` | WARN | reason, command | 받지 않는 명령 (architecture.md 3.5 로비 명령) |
 // | `attempt.start` | INFO | role | host 나 join 을 받았다 |
+// | `lobby.name` | INFO | name | name 명령을 받아 이름을 바꿨다. 이름은 비밀이 아니다 (control_plane.md 2.7) |
 // | `attempt.end` | INFO | reason (`leave`, `failed`) | 로비로 간다 |
 // | `control.reply_mismatch`, `control.unexpected_reply` | WARN | op | 통합 결함 |
 
@@ -137,15 +141,16 @@ enum class LobbyCommandKind : std::uint8_t {
     kHost,
     kJoin,
     kLeave,
+    kName,
 };
 
 struct LobbyCommand {
     LobbyCommandKind kind = LobbyCommandKind::kHost;
-    std::string argument;  // join 의 방 코드. 친 그대로. 없으면 빈 문자열
+    std::string argument;  // join 의 방 코드, name 의 이름. 친 그대로. 없으면 빈 문자열
     bool extra = false;    // 받을 인자 뒤에 낱말이 더 있었다
 };
 
-// 콘솔 줄 하나. 첫 낱말이 정확히 `host`, `join`, `leave` 일 때만 값이 있다. 그 밖은 nullopt 이고
+// 콘솔 줄 하나. 첫 낱말이 정확히 `host`, `join`, `leave`, `name` 일 때만 값이 있다. 그 밖은 nullopt 이고
 // 다른 콘솔 명령(quit, counters, raw)의 몫이다. 낱말은 ASCII 공백과 탭으로 가른다.
 // 인자의 형식은 여기서 보지 않는다. Lobby::on_command 가 보고 WARN 을 낸다.
 [[nodiscard]] std::optional<LobbyCommand> parse_lobby_command(std::string_view line);
@@ -220,7 +225,8 @@ enum class LobbyRole : std::uint8_t {
 
 class Lobby {
 public:
-    explicit Lobby(NonceSource nonce);
+    // name 은 처음 표시 이름이다 (architecture.md 3.5 --name). 다음 host 와 join 이 이것을 싣는다.
+    Lobby(NonceSource nonce, std::string name);
 
     // 로비 명령 하나 (architecture.md 3.5 로비 명령 표).
     [[nodiscard]] LobbyActions on_command(const LobbyCommand& command);
@@ -245,6 +251,8 @@ public:
     [[nodiscard]] bool in_lobby() const noexcept { return stage_ == LobbyStage::kLobby; }
     [[nodiscard]] bool request_pending() const noexcept { return pending_.has_value(); }
     [[nodiscard]] bool host_reporting() const noexcept { return reporting_; }
+    // 다음 host 와 join 이 실을 표시 이름.
+    [[nodiscard]] const std::string& name() const noexcept { return name_; }
 
 private:
     class Batch;
@@ -255,6 +263,7 @@ private:
     };
 
     void start_attempt(Batch& out, LobbyRole role, std::string_view room);
+    void on_name(Batch& out, const LobbyCommand& command);
     void submit(Batch& out, http::Op op, std::string body);
     void send_or_defer_request(Batch& out);
     void send_host_report(Batch& out);
@@ -273,6 +282,9 @@ private:
     void on_host_report(Batch& out, const Reply<HostReport>& reply);
 
     NonceSource nonce_;
+
+    // 표시 이름. 시도와 따로 산다. 시도가 끝나도 지우지 않는다. name 명령만 바꾼다.
+    std::string name_;
 
     LobbyStage stage_ = LobbyStage::kLobby;
     LobbyRole role_ = LobbyRole::kNone;

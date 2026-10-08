@@ -451,7 +451,7 @@ def sk_kind(sk: str) -> str:
         return "ROOM"
     if sk == "NONCE":
         return "NONCE"
-    for prefix in ("PEER", "VIP", "PAIR"):
+    for prefix in ("PEER", "VIP", "NAME", "PAIR"):
         if sk.startswith(prefix + "#"):
             return prefix
     return "OTHER"
@@ -653,7 +653,9 @@ class Harness:
                 room_id = ids.new_room_id()
                 if await asyncio.to_thread(self.store.get_room, room_id) is None:
                     break
-            body = json.dumps({"room_id": room_id, "client_nonce": secrets.token_hex(16)}).encode("ascii")
+            # name 은 2.7 형식이어야 한다. 형식 오류는 room_not_found 전에 bad_request 로 끝나 예산을 쓰지 않는다 (7.3).
+            body = json.dumps({"room_id": room_id, "client_nonce": secrets.token_hex(16),
+                               "name": "burn"}).encode("ascii")
             reader, writer = await asyncio.open_connection(HOST, self.cp_port)
             try:
                 writer.write(b"POST /v1/join_room HTTP/1.1\r\nHost: harness\r\nContent-Type: application/json\r\n"
@@ -679,7 +681,7 @@ class Harness:
             start = resp.get("LastEvaluatedKey")
             if not start:
                 break
-        return {k: counts.get(k, 0) for k in ("ROOM", "PEER", "VIP", "PAIR", "NONCE", "OTHER")}
+        return {k: counts.get(k, 0) for k in ("ROOM", "PEER", "VIP", "NAME", "PAIR", "NONCE", "OTHER")}
 
     def room_items(self, room_id: str) -> dict:
         from boto3.dynamodb.types import TypeDeserializer
@@ -703,8 +705,9 @@ class Harness:
             if kind == "ROOM":
                 room = {"host_peer_id": int(it["host_peer_id"]), "expires_at_ms": int(it["expires_at_ms"])}
             elif kind == "PEER":
+                # name 은 lobby-check 의 표시 이름 확인이 읽는다 (roadmap.md Phase 4 "로비 명령 name"). 없으면 None.
                 peers.append({"peer_id": int(it["peer_id"]), "virtual_ip": it["virtual_ip"],
-                              "candidates": len(it.get("candidates", []))})
+                              "name": it.get("name"), "candidates": len(it.get("candidates", []))})
             elif kind == "VIP":
                 vips.append({"virtual_ip": it["sk"][4:], "peer_id": int(it["peer_id"])})
             elif kind == "PAIR":

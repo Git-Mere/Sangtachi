@@ -70,10 +70,11 @@ def pair_sk(a: int, b: int) -> str:
 def peer_element(peer: dict, pair: dict | None, elapsed_ms: Callable[[dict], int]) -> dict:
     """4.5 peers 원소 하나. pair 는 그 쌍의 PAIR# 항목이고 없으면 None 이다.
 
-    ready 는 PAIR# 의 존재만으로 정한다. 후보 수를 다시 세지 않는다. 나머지 세 필드는 ready 일
-    때만 넣는다. elapsed_ms 는 PAIR# 항목을 받아 7.4 시계의 경과를 돌려주는 함수다.
+    ready 는 PAIR# 의 존재만으로 정한다. 후보 수를 다시 세지 않는다. name 은 등록한 그대로다(2.7). 나머지 세
+    필드는 ready 일 때만 넣는다. elapsed_ms 는 PAIR# 항목을 받아 7.4 시계의 경과를 돌려주는 함수다.
     """
-    element = {"peer_id": peer["peer_id"], "virtual_ip": peer["virtual_ip"], "ready": pair is not None}
+    element = {"peer_id": peer["peer_id"], "virtual_ip": peer["virtual_ip"], "name": peer["name"],
+               "ready": pair is not None}
     if pair is None:
         return element
     element["punch_delay_ms"] = pair["punch_delay_ms"]
@@ -172,6 +173,14 @@ def _peer_id_list(body: dict, name: str) -> list[int]:
     return list(value)
 
 
+def _name_keys(view, target: int) -> list[str]:
+    """4.6 회수가 지울 NAME# 의 키. 1번에서 읽은 방 항목 가운데 peer_id 가 target 인 NAME# 전부다.
+
+    PEER# 의 name 으로 키를 만들지 않는다. 그 값을 읽을 수 없으면 NAME# 를 남긴 채 PEER# 만 지우게 된다 (4.6).
+    """
+    return sorted(key for key, owner in view.names.items() if owner == target)
+
+
 def _check_room(room: dict | None, now_ms: int) -> None:
     """7.3 의 5번과 6번. 없으면 room_not_found, 만료면 room_expired."""
     state = room_state(room, now_ms)
@@ -228,6 +237,8 @@ class Service:
 
     def _create_room(self, body: dict) -> dict:
         nonce = ids.check_client_nonce(body.get("client_nonce"))
+        # 2.7. 다시 온 요청(같은 nonce)의 name 은 형식만 보고 저장된 값과 비교하지 않는다 (4.2 멱등성).
+        name = ids.check_name(body.get("name"))
         now = self._now_ms()
         found = self.store.get_nonce(nonce)  # 6.3 읽기 표. 멱등성 조회가 먼저다
         if found is not None:
@@ -236,7 +247,7 @@ class Service:
         token = ids.new_peer_token()
         for _ in range(MAX_ROOM_ID_ATTEMPTS):
             room_id = ids.new_room_id()
-            result = self.store.create_room(room_id, host_id, token, nonce, now)
+            result = self.store.create_room(room_id, host_id, token, nonce, now, name)
             if result == storage.CREATED:
                 log.emit("INFO", "room.created", peer_id=host_id, virtual_ip=storage.HOST_VIRTUAL_IP)
                 return {"room_id": room_id, "peer_id": host_id, "peer_token": token,
@@ -244,7 +255,7 @@ class Service:
                         "expires_in_s": expires_in_s(storage.created_expires_at(now), now)}
             if result == storage.NONCE_EXISTS:  # 6.3 취소 사유 1번
                 return self._replay(self._reread_nonce(nonce), now)
-            if result != storage.ROOM_ID_TAKEN:  # 5번. 그 밖은 모르는 결과다
+            if result != storage.ROOM_ID_TAKEN:  # 6번. 그 밖은 모르는 결과다
                 raise OpError("internal", "create_room 의 결과를 판정할 수 없다")
         raise OpError("internal", "room_id 재추첨 상한에 닿았다")
 
@@ -252,6 +263,7 @@ class Service:
 
     def _join_room(self, body: dict) -> dict:
         nonce = ids.check_client_nonce(body.get("client_nonce"))
+        name = ids.check_name(body.get("name"))  # 4.3 멱등성. 다시 온 요청의 name 은 형식만 본다
         room_id = ids.normalize_room_id(body.get("room_id"))
         now = self._now_ms()
         found = self.store.get_nonce(nonce)
@@ -265,7 +277,7 @@ class Service:
         index = 0
         while index < len(PARTICIPANT_POOL):
             vip = PARTICIPANT_POOL[index]
-            result = self.store.join_room(room_id, vip, peer_id, token, nonce, now, room["expires_at_ms"])
+            result = self.store.join_room(room_id, vip, peer_id, token, nonce, now, room["expires_at_ms"], name)
             if result == storage.JOINED:
                 log.emit("INFO", "vip.claimed", virtual_ip=vip, peer_id=peer_id)
                 return {"room_id": room_id, "peer_id": peer_id, "peer_token": token, "virtual_ip": vip,
@@ -276,9 +288,11 @@ class Service:
                 if self.store.get_room(room_id) is None:
                     raise OpError("room_not_found")
                 raise OpError("room_expired")
-            if result == storage.VIP_TAKEN:  # 3번. 다음 주소
+            if result == storage.NAME_TAKEN:  # 3번. 다음 주소로 넘어가지 않는다. 주소를 바꿔도 이름은 겹친다 (4.3)
+                raise OpError("name_taken")
+            if result == storage.VIP_TAKEN:  # 4번. 다음 주소
                 index += 1
-            elif result == storage.PEER_ID_TAKEN:  # 4번. peer_id 재추첨
+            elif result == storage.PEER_ID_TAKEN:  # 5번. peer_id 재추첨
                 drawn += 1
                 if drawn > MAX_PEER_ID_ATTEMPTS:
                     raise OpError("internal", "peer_id 재추첨 상한에 닿았다")
@@ -384,9 +398,11 @@ class Service:
             if found is None:
                 continue  # 이미 없던 대상. released 에 담지 않는다
             vip, nonce = found
-            if self.store.release_peer(room_id, target, vip, host_id, nonce):
+            keys = _name_keys(view, target)
+            if self.store.release_peer(room_id, target, vip, host_id, nonce, keys):
                 released.append(target)
-                removed.update({storage.peer_sk(target), storage.vip_sk(vip), pair_sk(host_id, target)})
+                removed.update({storage.peer_sk(target), storage.vip_sk(vip), pair_sk(host_id, target),
+                                *(storage.name_sk(key) for key in keys)})
                 log.emit("INFO", "peer.released", peer_id=target, virtual_ip=vip, by="host")
 
     def _reclaim(self, room_id: str, view, host_id: int, now: int, skip: set, released: list[int],
@@ -401,9 +417,11 @@ class Service:
                 log.emit("WARN", "peer.reclaim_skipped", peer_id=target if _is_int(target) else "", reason=reason)
             elif verdict == RECLAIM:
                 vip = peer["virtual_ip"]
-                if self.store.reclaim_peer(room_id, target, vip, peer["client_nonce"], now):
+                keys = _name_keys(view, target)
+                if self.store.reclaim_peer(room_id, target, vip, peer["client_nonce"], now, keys):
                     released.append(target)
-                    removed.update({storage.peer_sk(target), storage.vip_sk(vip)})
+                    removed.update({storage.peer_sk(target), storage.vip_sk(vip),
+                                    *(storage.name_sk(key) for key in keys)})
                     log.emit("INFO", "peer.released", peer_id=target, virtual_ip=vip, by="server")
 
     def _departed_target(self, view, target: int) -> tuple[str, str | None] | None:

@@ -10,8 +10,8 @@ ConsistentRead 변이는 요청 인자를 보는 시험(test_read_consistent)이
 최종 일관성 읽기를 드러내서가 아니다 (7.6 로컬 시험의 한계). 9장의 코드 읽기 판정을 대신하지 않는다.
 
 변이로 넣지 않은 것과 이유는 .prime/work/worker-store.md 의 "변이로 넣지 않은 것" 에 있다. 조건의
-attribute_exists(pk) 가 같은 조건의 다른 절 때문에 뜻이 없는 자리(동치 변이)와, 15개 항목으로는
-나지 않는 Query 페이지 넘김이다.
+attribute_exists(pk) 가 같은 조건의 다른 절 때문에 뜻이 없는 자리(동치 변이)와, 한 방의 항목 20개(ROOM 1,
+PEER# 5, VIP# 5, NAME# 5, PAIR# 4)로는 나지 않는 Query 페이지 넘김이다.
 """
 
 T = "tests/test_store.py::"
@@ -51,7 +51,16 @@ def rd(*ids):
     return [T + f"test_read_consistent[{i}]" for i in ids]
 
 
-TTL_ALL = [T + f"test_ttl[{i}]" for i in ("ttl-room", "ttl-peer", "ttl-vip", "ttl-pair", "ttl-nonce")]
+TTL_ALL = [T + f"test_ttl[{i}]" for i in ("ttl-room", "ttl-peer", "ttl-vip", "ttl-name", "ttl-pair", "ttl-nonce")]
+CREATE_NAME_PUT = ("            self._put(room_id, name_sk(ids.name_key(name)), claim, _IF_ABSENT),\n"
+                   "            self._put(nonce_pk(client_nonce), NONCE_SK, nonce, _IF_ABSENT),\n"
+                   "        ]\n        kind = self._transact(\"create_room\"")
+JOIN_NAME_PUT = ("            self._put(room_id, name_sk(ids.name_key(name)), claim, _IF_ABSENT),\n"
+                 "            self._put(room_id, peer_sk(peer_id), peer, _IF_ABSENT),")
+RELEASE_NAMES = ("            *(self._delete(room_id, name_sk(key)) for key in keys),\n"
+                 "            self._delete(room_id, ops.pair_sk(host_peer_id, peer_id)),")
+RECLAIM_NAMES = ("            *(self._delete(room_id, name_sk(key)) for key in keys),\n"
+                 "            self._delete(nonce_pk(client_nonce), NONCE_SK),")
 
 MUTANTS = [
     # ---------------------------------------------------------------- create_room
@@ -77,11 +86,28 @@ MUTANTS = [
     {"id": "create-priority-empty", "path": P,
      "old": "_CREATE_PRIORITY = (_ROOM_PUT,)", "new": "_CREATE_PRIORITY = ()",
      "kills": c("room-put-alone", "room-put-with-vip-and-peer") + w("create-room-taken"),
-     "why": "취소 사유 5번. ROOM put 실패를 재추첨으로 읽지 않고 internal 로 끝낸다"},
+     "why": "취소 사유 6번. ROOM put 실패를 재추첨으로 읽지 않고 internal 로 끝낸다"},
     {"id": "create-host-vip", "path": P,
      "old": 'HOST_VIRTUAL_IP = "10.100.0.1"', "new": 'HOST_VIRTUAL_IP = "10.100.0.2"',
      "kills": w("create-ok") + [T + "test_ttl[ttl-vip]"],
      "why": "2.5 호스트의 가상 IP 는 10.100.0.1 이다"},
+    {"id": "create-name-put-missing", "path": P,
+     "old": CREATE_NAME_PUT, "new": CREATE_NAME_PUT.replace(
+         "            self._put(room_id, name_sk(ids.name_key(name)), claim, _IF_ABSENT),\n", "", 1),
+     "kills": w("create-ok") + [T + "test_ttl[ttl-name]"],
+     "why": "6.3 create_room 의 NAME#<호스트 이름 키> put. 없으면 호스트의 이름이 방 안 유일성에 들지 않는다"},
+    {"id": "create-name-put-uncond", "path": P,
+     "old": CREATE_NAME_PUT, "new": CREATE_NAME_PUT.replace("claim, _IF_ABSENT)", f"claim, {ALWAYS})", 1),
+     "kills": w("create-name-alone"),
+     "why": "NAME# put 의 attribute_not_exists(pk). 없으면 남은 NAME# 를 덮어쓴다"},
+    {"id": "create-name-key-raw", "path": P,
+     "old": CREATE_NAME_PUT, "new": CREATE_NAME_PUT.replace("name_sk(ids.name_key(name))", "name_sk(name)", 1),
+     "kills": w("create-ok"),
+     "why": "NAME# 의 키는 이름을 ASCII 소문자로 바꾼 값이다 (6.3)"},
+    {"id": "create-peer-no-name", "path": P,
+     "old": '"virtual_ip": HOST_VIRTUAL_IP, "name": name,', "new": '"virtual_ip": HOST_VIRTUAL_IP,',
+     "kills": w("create-ok"),
+     "why": "6.3 PEER# 는 name 을 등록한 그대로 갖는다"},
     # ---------------------------------------------------------------- join_room
     {"id": "join-room-check-uncond", "path": P,
      "old": '_JOIN_ROOM_IF = "attribute_exists(pk) AND expires_at_ms > :now"',
@@ -116,29 +142,60 @@ MUTANTS = [
     {"id": "join-nonce-put-uncond", "path": P,
      "old": "self._put(nonce_pk(client_nonce), NONCE_SK, nonce, _IF_ABSENT),\n        ]\n        kind = self._transact(\"join_room\"",
      "new": f"self._put(nonce_pk(client_nonce), NONCE_SK, nonce, {ALWAYS}),\n        ]\n        kind = self._transact(\"join_room\"",
-     "kills": w("join-nonce-taken") + c("nonce-with-vip", "nonce-with-room-expired"),
+     "kills": w("join-nonce-taken") + c("nonce-with-vip", "nonce-with-room-expired", "nonce-with-name"),
      "why": "join_room NONCE# put 의 조건. 없으면 재시도가 두 번째 자리를 차지한다"},
+    {"id": "join-name-put-missing", "path": P,
+     "old": JOIN_NAME_PUT, "new": "            self._put(room_id, peer_sk(peer_id), peer, _IF_ABSENT),",
+     "kills": w("join-ok", "join-name-taken", "join-name-taken-other-case") + c("name-alone", "name-with-vip")
+     + [T + "test_ttl[ttl-name]"],
+     "why": "6.3 join_room 의 NAME# put. 없으면 방 안 유일성이 없다"},
+    {"id": "join-name-put-uncond", "path": P,
+     "old": JOIN_NAME_PUT, "new": JOIN_NAME_PUT.replace("claim, _IF_ABSENT)", f"claim, {ALWAYS})", 1),
+     "kills": w("join-name-taken", "join-name-taken-other-case") + c("name-alone", "name-with-vip", "name-with-peer")
+     + r("join-same-name-interleaved"),
+     "why": "2.7 유일성은 NAME# 조건부 쓰기가 보장한다. 없으면 같은 이름의 두 참가가 둘 다 성공한다"},
+    {"id": "join-name-key-raw", "path": P,
+     "old": JOIN_NAME_PUT, "new": JOIN_NAME_PUT.replace("name_sk(ids.name_key(name))", "name_sk(name)", 1),
+     "kills": w("join-ok", "join-name-taken-other-case") + r("join-same-name-interleaved"),
+     "why": "유일성은 대소문자를 무시한다. 키는 ASCII 소문자다 (2.7)"},
+    {"id": "join-peer-no-name", "path": P,
+     "old": '"virtual_ip": virtual_ip, "name": name,', "new": '"virtual_ip": virtual_ip,',
+     "kills": w("join-ok"),
+     "why": "6.3 PEER# 는 name 을 등록한 그대로 갖는다"},
     {"id": "join-priority-vip-before-room", "path": P,
-     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_VIP, _ROOM_CHECK, _PEER)",
+     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _NAME, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_VIP, _ROOM_CHECK, _NAME, _PEER)",
      "kills": c("room-check-with-vip"),
-     "why": "취소 사유 2번이 3번보다 먼저다. 만료된 방에서 다음 주소로 넘어가지 않는다"},
-    {"id": "join-priority-peer-before-vip", "path": P,
-     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_ROOM_CHECK, _PEER, _VIP)",
-     "kills": c("vip-with-peer"),
-     "why": "취소 사유 3번이 4번보다 먼저다"},
+     "why": "취소 사유 2번이 4번보다 먼저다. 만료된 방에서 다음 주소로 넘어가지 않는다"},
+    {"id": "join-priority-name-before-room", "path": P,
+     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _NAME, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_NAME, _ROOM_CHECK, _VIP, _PEER)",
+     "kills": c("room-check-with-name"),
+     "why": "취소 사유 2번이 3번보다 먼저다. 만료된 방은 name_taken 이 아니라 room_expired 다"},
+    {"id": "join-priority-vip-before-name", "path": P,
+     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _NAME, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_ROOM_CHECK, _VIP, _NAME, _PEER)",
+     "kills": c("name-with-vip") + k("name-with-vip"),
+     "why": "취소 사유 3번(NAME#)이 4번(VIP#)보다 먼저다. VIP# 를 먼저 보면 이름이 겹치는 시도를 풀 크기만큼 되풀이한다"},
+    {"id": "join-priority-peer-before-name", "path": P,
+     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _NAME, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_ROOM_CHECK, _PEER, _NAME, _VIP)",
+     "kills": c("name-with-peer", "vip-with-peer"),
+     "why": "취소 사유 3번과 4번이 5번(PEER#)보다 먼저다"},
+    {"id": "join-priority-no-name", "path": P,
+     "old": "_JOIN_PRIORITY = (_ROOM_CHECK, _NAME, _VIP, _PEER)", "new": "_JOIN_PRIORITY = (_ROOM_CHECK, _VIP, _PEER)",
+     "kills": w("join-name-taken", "join-name-taken-other-case") + c("name-alone", "name-with-vip", "name-with-peer")
+     + k("name-with-vip") + r("join-same-name-interleaved"),
+     "why": "취소 사유 3번을 지운다. NAME# 실패가 internal 이나 다음 주소가 된다"},
     {"id": "nonce-not-first", "path": P,
      "old": "    if _NONCE in failed:\n        return _NONCE\n", "new": "",
-     "kills": c("nonce-with-vip", "nonce-with-room-expired", "nonce-with-room-put") + w("join-nonce-taken")
-     + k("nonce-with-conflict"),
+     "kills": c("nonce-with-vip", "nonce-with-room-expired", "nonce-with-room-put", "nonce-with-name")
+     + w("join-nonce-taken") + k("nonce-with-conflict"),
      "why": "취소 사유 1번. NONCE# 는 다른 사유가 무엇이든 먼저다. VIP# 를 먼저 보면 room_full 이 된다"},
     # ---------------------------------------------------------------- 취소 사유 판독
     {"id": "classify-other-ignored", "path": P,
      "old": "    if _OTHER in codes:\n        raise _internal(\"트랜잭션이 조건 실패가 아닌 사유로 취소됐다\")\n", "new": "",
-     "kills": k("vip-with-conflict", "vip-with-unknown"),
+     "kills": k("vip-with-conflict", "vip-with-unknown", "name-with-conflict"),
      "why": "조건 실패가 아닌 사유가 섞이면 internal 이다 (취소 사유 표 - 행)"},
     {"id": "classify-unknown-as-none", "path": P,
      "old": "        if code not in (_CCF, _NO_FAILURE):\n            code = _OTHER\n", "new": "",
-     "kills": k("vip-with-conflict", "vip-with-unknown"),
+     "kills": k("vip-with-conflict", "vip-with-unknown", "name-with-conflict"),
      "why": "허용 목록 밖의 코드를 실패 없음으로 읽는다"},
     {"id": "classify-unknown-as-failure", "path": P,
      "old": "            code = _OTHER\n", "new": "            code = _CCF\n",
@@ -186,6 +243,14 @@ MUTANTS = [
      "new": "self._delete(room_id, ops.pair_sk(peer_id, peer_id)),",
      "kills": w("release-ok"),
      "why": "그 피어가 낀 PAIR# 를 지워야 한다"},
+    {"id": "release-names-kept", "path": P,
+     "old": RELEASE_NAMES, "new": "            self._delete(room_id, ops.pair_sk(host_peer_id, peer_id)),",
+     "kills": w("release-ok", "release-ok-all-names"),
+     "why": "4.6 회수는 NAME# 를 PEER# 와 같은 트랜잭션에서 지운다. 남기면 이름이 방이 끝날 때까지 막힌다"},
+    {"id": "release-name-conditioned", "path": P,
+     "old": RELEASE_NAMES, "new": RELEASE_NAMES.replace("name_sk(key))", "name_sk(key), _IF_EXISTS)", 1),
+     "kills": w("release-ok-no-pair"),
+     "why": "회수의 NAME# delete 는 조건이 없다. 걸면 NAME# 가 없는 피어의 회수가 통째로 취소된다"},
     # ---------------------------------------------------------------- host_report 서버 회수
     {"id": "reclaim-uncond", "path": P,
      "old": "self._delete(room_id, sk, _RECLAIM_IF, {\":zero\": 0, \":cutoff\": cutoff})",
@@ -209,6 +274,14 @@ MUTANTS = [
      "old": " AND joined_at_ms <= :cutoff\")", "new": "\")",
      "kills": w("reclaim-before-cutoff"),
      "why": "유예 절. 없으면 방금 들어온 참가자를 지운다"},
+    {"id": "reclaim-names-kept", "path": P,
+     "old": RECLAIM_NAMES, "new": "            self._delete(nonce_pk(client_nonce), NONCE_SK),",
+     "kills": w("reclaim-ok-at-cutoff"),
+     "why": "4.6 서버 회수도 NAME# 를 지운다"},
+    {"id": "reclaim-name-conditioned", "path": P,
+     "old": RECLAIM_NAMES, "new": RECLAIM_NAMES.replace("name_sk(key))", "name_sk(key), _IF_EXISTS)", 1),
+     "kills": w("reclaim-ok-without-vip", "reclaim-ok-without-nonce", "reclaim-ok-empty-list"),
+     "why": "서버 회수의 NAME# delete 는 조건이 없다"},
     {"id": "reclaim-cutoff-strict", "path": P,
      "old": "joined_at_ms <= :cutoff", "new": "joined_at_ms < :cutoff",
      "kills": w("reclaim-ok-at-cutoff"),
@@ -393,7 +466,7 @@ MUTANTS = [
     {"id": "lenient-swallows-all", "path": P,
      "old": "        except _Unreadable:\n            raise _internal(\"방 항목을 읽을 수 없다\") from None",
      "new": "        except _Unreadable:\n            if not lenient:\n                raise _internal(\"방 항목을 읽을 수 없다\") from None",
-     "kills": v("room-unreadable-lenient", "vip-unreadable"),
+     "kills": v("room-unreadable-lenient", "vip-unreadable", "name-unreadable-lenient"),
      "why": "6.3 예외 2 는 PEER# 뿐이다. ROOM 과 VIP# 는 서버 회수 경로에서도 internal 이다"},
     # ---------------------------------------------------------------- 7.6 설정
     {"id": "env-table-check-removed", "path": P,
@@ -477,8 +550,8 @@ MUTANTS = [
      "kills": w("renew-continues-after-deleted"),
      "why": "지워진 항목은 무시하고 다음 항목으로 간다"},
     {"id": "reclaim-vip-conditioned", "path": P,
-     "old": "self._delete(room_id, vip_sk(virtual_ip)),\n            self._delete(nonce_pk(client_nonce), NONCE_SK),",
-     "new": "self._delete(room_id, vip_sk(virtual_ip), _IF_EXISTS),\n            self._delete(nonce_pk(client_nonce), NONCE_SK),",
+     "old": "self._delete(room_id, vip_sk(virtual_ip)),\n" + RECLAIM_NAMES,
+     "new": "self._delete(room_id, vip_sk(virtual_ip), _IF_EXISTS),\n" + RECLAIM_NAMES,
      "kills": w("reclaim-ok-without-vip"),
      "why": "서버 회수의 VIP# delete 는 조건이 없다"},
     {"id": "reclaim-nonce-conditioned", "path": P,
@@ -508,6 +581,32 @@ MUTANTS = [
      "old": '"joined_at_ms": _to_int, "ttl": _to_int}', "new": '"joined_at_ms": (lambda x: x), "ttl": _to_int}',
      "kills": it("peer"),
      "why": "PEER# 의 joined_at_ms 는 int 로 넘어온다"},
+    {"id": "name-ints-decimal", "path": P,
+     "old": '_NAME_ATTRS = {"peer_id": _to_int, "ttl": _to_int}', "new": '_NAME_ATTRS = {"peer_id": (lambda x: x), "ttl": _to_int}',
+     "kills": it("name"),
+     "why": "NAME# 의 peer_id 는 int 로 넘어온다. 회수가 그 값으로 대상의 NAME# 를 찾는다"},
+    {"id": "peer-name-optional", "path": P,
+     "old": '"virtual_ip": _to_str, "name": _to_str,', "new": '"virtual_ip": _to_str,',
+     "kills": v("peer-name-missing", "peer-name-number") + [T + "test_read_shapes"],
+     "why": "6.3 PEER# 의 name 이 없거나 문자열이 아니면 판정 불가다 (internal)"},
+    {"id": "sk-name-unknown", "path": P,
+     "old": "    if _NAME_SK.fullmatch(sk) is not None:\n        return \"NAME\"\n", "new": "",
+     "kills": sk("name-ok", "name-ok-16") + [T + "test_read_shapes"],
+     "why": "NAME# 는 6.3 항목 표의 sk 다. 모르는 sk 로 읽으면 이름이 있는 방이 전부 internal 이다"},
+    {"id": "sk-name-prefix", "path": P,
+     "old": "    if _NAME_SK.fullmatch(sk) is not None:\n", "new": "    if sk.startswith(\"NAME#\"):\n",
+     "kills": sk("name-upper", "name-17", "name-empty", "name-hyphen", "name-non-ascii"),
+     "why": "접두어만 본다. 이 서버가 쓰지 않는 키를 받는다"},
+    {"id": "sk-name-word", "path": P,
+     "old": '_NAME_SK = re.compile(f"NAME#([a-z0-9_]{{1,{MAX_NAME_LEN}}})")',
+     "new": '_NAME_SK = re.compile(f"NAME#(\\w{{1,{MAX_NAME_LEN}}})")',
+     "kills": sk("name-upper", "name-non-ascii"),
+     "why": "키는 [a-z0-9_] 다. \\w 는 대문자와 유니코드 글자를 받는다"},
+    {"id": "sk-name-len", "path": P,
+     "old": '_NAME_SK = re.compile(f"NAME#([a-z0-9_]{{1,{MAX_NAME_LEN}}})")',
+     "new": '_NAME_SK = re.compile(f"NAME#([a-z0-9_]{{0,{MAX_NAME_LEN + 1}}})")',
+     "kills": sk("name-17", "name-empty"),
+     "why": "키 길이는 1~MAX_NAME_LEN 이다"},
     {"id": "candidate-ip-coerced", "path": P,
      "old": '"ip": _to_str(c.get("ip"))', "new": '"ip": str(c.get("ip"))',
      "kills": v("candidate-ip-missing", "candidate-ip-number"),

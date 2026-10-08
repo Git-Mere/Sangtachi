@@ -39,6 +39,8 @@ H, P, Q = 11, 22, 33
 TOK_H, TOK_P, TOK_Q = "1" * 32, "2" * 32, "3" * 32
 NON_H, NON_P, NON_Q = "a" * 32, "b" * 32, "c" * 32
 VIP_H, VIP_P, VIP_Q = "10.100.0.1", "10.100.0.2", "10.100.0.3"
+NAME_H, NAME_P, NAME_Q = "Hostie", "PlayerP", "PlayerQ"           # 2.7. 등록한 그대로 저장한다
+KEY_H, KEY_P, KEY_Q = "hostie", "playerp", "playerq"              # 6.3 NAME#<이름 키>. ASCII 소문자
 CAND = [{"ip": "203.0.113.7", "port": 51000, "kind": "reflexive"}]
 CAND2 = [{"ip": "192.168.0.10", "port": 40000, "kind": "local"}, {"ip": "203.0.113.9", "port": 1, "kind": "reflexive"}]
 OMIT = object()
@@ -50,18 +52,22 @@ def room_item(exp=EXP, **over):
     return _item(R, "ROOM", dict(created_at_ms=NOW - 1000, expires_at_ms=exp, host_peer_id=H, ttl=EXP_TTL), over)
 
 
-def peer_item(pid, vip, token, nonce, candidates=OMIT, joined=NOW - 1000, **over):
-    base = dict(peer_id=pid, peer_token=token, virtual_ip=vip, client_nonce=nonce, joined_at_ms=joined,
+def peer_item(pid, vip, token, nonce, candidates=OMIT, joined=NOW - 1000, name=NAME_Q, **over):
+    base = dict(peer_id=pid, peer_token=token, virtual_ip=vip, name=name, client_nonce=nonce, joined_at_ms=joined,
                 ttl=EXP_TTL, candidates=candidates)
     return _item(R, f"PEER#{pid}", base, over)
 
 
 def host_item(**over):
-    return peer_item(H, VIP_H, TOK_H, NON_H, **over)
+    return peer_item(H, VIP_H, TOK_H, NON_H, **{"name": NAME_H, **over})
 
 
 def p_item(**over):
-    return peer_item(P, VIP_P, TOK_P, NON_P, **over)
+    return peer_item(P, VIP_P, TOK_P, NON_P, **{"name": NAME_P, **over})
+
+
+def name_item(key, pid, **over):
+    return _item(R, f"NAME#{key}", dict(peer_id=pid, ttl=EXP_TTL), over)
 
 
 def vip_item(ip, pid, **over):
@@ -108,25 +114,27 @@ def outcome(st, call):
 
 
 # 자주 쓰는 호출
-def create(nonce=NON_H, room=R, pid=H):
-    return ("create_room", dict(room_id=room, host_peer_id=pid, peer_token=TOK_H, client_nonce=nonce, now_ms=NOW))
+def create(nonce=NON_H, room=R, pid=H, name=NAME_H):
+    return ("create_room", dict(room_id=room, host_peer_id=pid, peer_token=TOK_H, client_nonce=nonce, now_ms=NOW,
+                                name=name))
 
 
-def join(vip=VIP_P, pid=P, nonce=NON_P, now=NOW):
+def join(vip=VIP_P, pid=P, nonce=NON_P, now=NOW, name=NAME_P):
     return ("join_room", dict(room_id=R, virtual_ip=vip, peer_id=pid, peer_token=TOK_P, client_nonce=nonce,
-                              now_ms=now, expires_at_ms=EXP))
+                              now_ms=now, expires_at_ms=EXP, name=name))
 
 
 def register(pid=P, token=TOK_P, cands=CAND2):
     return ("register_candidates", dict(room_id=R, peer_id=pid, peer_token=token, candidates=cands))
 
 
-def release(pid=P, vip=VIP_P):
-    return ("release_peer", dict(room_id=R, peer_id=pid, virtual_ip=vip, host_peer_id=H))
+def release(pid=P, vip=VIP_P, names=(KEY_P,)):
+    return ("release_peer", dict(room_id=R, peer_id=pid, virtual_ip=vip, host_peer_id=H, name_keys=list(names)))
 
 
-def reclaim(pid=P, vip=VIP_P, nonce=NON_P, now=NOW):
-    return ("reclaim_peer", dict(room_id=R, peer_id=pid, virtual_ip=vip, client_nonce=nonce, now_ms=now))
+def reclaim(pid=P, vip=VIP_P, nonce=NON_P, now=NOW, names=(KEY_P,)):
+    return ("reclaim_peer", dict(room_id=R, peer_id=pid, virtual_ip=vip, client_nonce=nonce, now_ms=now,
+                                 name_keys=list(names)))
 
 
 def confirm(other=P):
@@ -145,6 +153,7 @@ def renew(sks, now=RENEW_NOW, new=RENEW_EXP):
 
 K_ROOM, K_PEER_H, K_PEER_P, K_VIP_H, K_VIP_P = (R, "ROOM"), (R, f"PEER#{H}"), (R, f"PEER#{P}"), (R, f"VIP#{VIP_H}"), (R, f"VIP#{VIP_P}")
 K_PAIR = (R, f"PAIR#{H}-{P}")
+K_NAME_H, K_NAME_P, K_NAME_Q = (R, f"NAME#{KEY_H}"), (R, f"NAME#{KEY_P}"), (R, f"NAME#{KEY_Q}")
 K_NON_H, K_NON_P = (f"NONCE#{NON_H}", "NONCE"), (f"NONCE#{NON_P}", "NONCE")
 INTERNAL = "OpError:internal"
 
@@ -153,27 +162,29 @@ INTERNAL = "OpError:internal"
 # ---------------------------------------------------------------------------
 WRITES = [
     {"id": "create-room", "op": "`create_room`",
-     "write": "트랜잭션: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NONCE#` put",
-     "note": "네 put 전부 `attribute_not_exists(pk)` 다. `ROOM` 실패는 `room_id` 충돌 → 재추첨(2.1). `NONCE#` "
-             "실패는 동시에 같은 nonce 가 들어온 것이므로 다시 읽어 그 결과를 돌려준다. `PEER#`·`VIP#` 는 `ROOM` 이 "
-             "없으면 있을 수 없으므로 실패가 나면 저장소가 앞선 방의 항목을 일부만 지운 상태다. 그때는 `internal` "
-             "이고 재추첨하지 않는다"},
+     "write": "트랜잭션: `ROOM` put, `PEER#host` put, `VIP#10.100.0.1` put, `NAME#<호스트 이름 키>` put, `NONCE#` put",
+     "note": "다섯 put 전부 `attribute_not_exists(pk)` 다. `ROOM` 실패는 `room_id` 충돌 → 재추첨(2.1). `NONCE#` "
+             "실패는 동시에 같은 nonce 가 들어온 것이므로 다시 읽어 그 결과를 돌려준다. `PEER#`·`VIP#`·`NAME#` 는 "
+             "`ROOM` 이 없으면 있을 수 없으므로 실패가 나면 저장소가 앞선 방의 항목을 일부만 지운 상태다. 그때는 "
+             "`internal` 이고 재추첨하지 않는다"},
     {"id": "join-room", "op": "`join_room` 새 참가",
-     "write": "풀의 주소마다 트랜잭션: `ROOM` ConditionCheck, `VIP#<ip>` put, `PEER#<peer_id>` put, `NONCE#` put",
+     "write": "풀의 주소마다 트랜잭션: `ROOM` ConditionCheck, `VIP#<ip>` put, `NAME#<이름 키>` put, "
+              "`PEER#<peer_id>` put, `NONCE#` put",
      "note": "`ROOM` 에 `attribute_exists(pk) AND expires_at_ms > :now`. 사전 읽기와 쓰기 사이에 방이 만료되거나 "
-             "삭제되는 경합을 막는다. `VIP#` 와 `PEER#` 와 `NONCE#` 각각 `attribute_not_exists(pk)`. 실패 처리는 "
-             "아래 취소 사유 표"},
+             "삭제되는 경합을 막는다. `VIP#` 와 `NAME#` 와 `PEER#` 와 `NONCE#` 각각 `attribute_not_exists(pk)`. "
+             "실패 처리는 아래 취소 사유 표"},
     {"id": "register-candidate", "op": "`register_candidate`", "write": "`PEER#` update: `candidates = :list`",
      "note": "`attribute_exists(pk) AND peer_token = :t`. 실패는 `unauthorized` 다. 토큰 검사 뒤 그 피어가 회수된 "
              "경우다(4.6 서버 회수)"},
     {"id": "host-report-release", "op": "`host_report` 회수",
-     "write": "대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, 그 피어가 낀 `PAIR#` delete",
+     "write": "대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, `peer_id` 가 그 피어인 "
+              "`NAME#` delete, 그 피어가 낀 `PAIR#` delete, `NONCE#<그 피어의 client_nonce>` delete",
      "note": "`PEER#` 에만 `attribute_exists(pk)` 를 건다. 그 조건이 실패하면 이미 없던 대상이고 `released` 에 담지 "
-             "않는다(4.6). 나머지 둘은 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 "
-             "그 회수가 통째로 취소된다"},
+             "않는다(4.6). 나머지는 조건 없는 delete 다. 확인 전에 나간 피어는 `PAIR#` 가 아예 없고, 조건을 걸면 "
+             "그 회수가 통째로 취소된다. `client_nonce` 를 읽을 수 없으면 `NONCE#` 만 빼고 지운다"},
     {"id": "host-report-reclaim", "op": "`host_report` 서버 회수",
-     "write": "대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, "
-              "`NONCE#<그 피어의 client_nonce>` delete",
+     "write": "대상마다 트랜잭션: `PEER#<target>` delete, `VIP#<그 피어의 virtual_ip>` delete, `peer_id` 가 그 "
+              "피어인 `NAME#` delete, `NONCE#<그 피어의 client_nonce>` delete",
      "note": "`PEER#` 에 `attribute_exists(pk) AND (attribute_not_exists(candidates) OR size(candidates) = :zero) AND "
              "joined_at_ms <= :cutoff`. `:cutoff` 는 `now - JOIN_REGISTER_GRACE_S * 1000` 이다. 조건이 실패하면 그 "
              "사이 등록했거나 이미 없는 것이므로 `released` 에 담지 않는다. 후보가 없던 피어는 `PAIR#` 가 있을 수 "
@@ -196,50 +207,60 @@ WRITES = [
 WRITE_CASES = [
     # create_room
     {"id": "create-ok", "row": "create-room", "side": "pass", "seed": [], "call": create(), "expect": S.CREATED,
-     "present": [K_ROOM, K_PEER_H, K_VIP_H, K_NON_H], "absent": [],
+     "present": [K_ROOM, K_PEER_H, K_VIP_H, K_NAME_H, K_NON_H], "absent": [],
      "attrs": {K_ROOM: {"created_at_ms": NOW, "expires_at_ms": EXP, "host_peer_id": H},
-               K_PEER_H: {"peer_id": H, "peer_token": TOK_H, "virtual_ip": VIP_H, "client_nonce": NON_H,
-                          "joined_at_ms": NOW},
-               K_VIP_H: {"peer_id": H}, K_NON_H: {"room_id": R, "peer_id": H}},
-     "note": "네 put 이 함께 들어간다"},
+               K_PEER_H: {"peer_id": H, "peer_token": TOK_H, "virtual_ip": VIP_H, "name": NAME_H,
+                          "client_nonce": NON_H, "joined_at_ms": NOW},
+               K_VIP_H: {"peer_id": H}, K_NAME_H: {"peer_id": H}, K_NON_H: {"room_id": R, "peer_id": H}},
+     "note": "다섯 put 이 함께 들어간다. PEER# 의 name 은 등록한 그대로, NAME# 의 키는 소문자다"},
     {"id": "create-room-taken", "row": "create-room", "side": "fail", "seed": [room_item(host_peer_id=99)],
-     "call": create(), "expect": S.ROOM_ID_TAKEN, "present": [], "absent": [K_PEER_H, K_VIP_H, K_NON_H],
+     "call": create(), "expect": S.ROOM_ID_TAKEN, "present": [], "absent": [K_PEER_H, K_VIP_H, K_NAME_H, K_NON_H],
      "attrs": {K_ROOM: {"host_peer_id": 99}}, "note": "ROOM 충돌. 덮어쓰지 않고 재추첨으로 간다"},
     {"id": "create-nonce-taken", "row": "create-room", "side": "fail", "seed": [nonce_item(NON_H, 99, room="ZZZZZZ")],
-     "call": create(), "expect": S.NONCE_EXISTS, "present": [], "absent": [K_ROOM, K_PEER_H, K_VIP_H],
+     "call": create(), "expect": S.NONCE_EXISTS, "present": [], "absent": [K_ROOM, K_PEER_H, K_VIP_H, K_NAME_H],
      "attrs": {K_NON_H: {"room_id": "ZZZZZZ", "peer_id": 99}}, "note": "같은 nonce 가 먼저 성립했다"},
     {"id": "create-peer-alone", "row": "create-room", "side": "fail", "seed": [host_item()],
-     "call": create(), "expect": INTERNAL, "present": [], "absent": [K_ROOM, K_VIP_H, K_NON_H], "attrs": {},
+     "call": create(), "expect": INTERNAL, "present": [], "absent": [K_ROOM, K_VIP_H, K_NAME_H, K_NON_H], "attrs": {},
      "note": "ROOM 없이 PEER# 만 있다. 저장소가 앞선 방을 일부만 지운 상태다. internal, 재추첨하지 않는다"},
     {"id": "create-vip-alone", "row": "create-room", "side": "fail", "seed": [vip_item(VIP_H, 99)],
-     "call": create(), "expect": INTERNAL, "present": [], "absent": [K_ROOM, K_PEER_H, K_NON_H],
+     "call": create(), "expect": INTERNAL, "present": [], "absent": [K_ROOM, K_PEER_H, K_NAME_H, K_NON_H],
      "attrs": {K_VIP_H: {"peer_id": 99}}, "note": "ROOM 없이 VIP# 만 있다. internal"},
+    {"id": "create-name-alone", "row": "create-room", "side": "fail", "seed": [name_item(KEY_H, 99)],
+     "call": create(), "expect": INTERNAL, "present": [], "absent": [K_ROOM, K_PEER_H, K_VIP_H, K_NON_H],
+     "attrs": {K_NAME_H: {"peer_id": 99}},
+     "note": "ROOM 없이 NAME# 만 있다. internal. 이름이 겹친 상대는 다른 방의 피어일 수 없다(NAME# 는 방 파티션)"},
     # join_room
     {"id": "join-ok", "row": "join-room", "side": "pass", "seed": [room_item()], "call": join(),
-     "expect": S.JOINED, "present": [K_VIP_P, K_PEER_P, K_NON_P], "absent": [],
-     "attrs": {K_VIP_P: {"peer_id": P},
-               K_PEER_P: {"peer_id": P, "peer_token": TOK_P, "virtual_ip": VIP_P, "client_nonce": NON_P,
-                          "joined_at_ms": NOW},
+     "expect": S.JOINED, "present": [K_VIP_P, K_NAME_P, K_PEER_P, K_NON_P], "absent": [],
+     "attrs": {K_VIP_P: {"peer_id": P}, K_NAME_P: {"peer_id": P},
+               K_PEER_P: {"peer_id": P, "peer_token": TOK_P, "virtual_ip": VIP_P, "name": NAME_P,
+                          "client_nonce": NON_P, "joined_at_ms": NOW},
                K_NON_P: {"room_id": R, "peer_id": P}},
      "note": "열린 방, 빈 주소"},
     {"id": "join-room-1ms-left", "row": "join-room", "side": "pass", "seed": [room_item(exp=NOW + 1)],
      "call": join(), "expect": S.JOINED, "present": [K_VIP_P], "absent": [], "attrs": {},
      "note": "expires_at_ms > :now. 1ms 남은 방은 살아 있다"},
     {"id": "join-room-at-expiry", "row": "join-room", "side": "fail", "seed": [room_item(exp=NOW)],
-     "call": join(), "expect": S.ROOM_GONE, "present": [], "absent": [K_VIP_P, K_PEER_P, K_NON_P], "attrs": {},
-     "note": "now == expires_at_ms 는 만료 쪽이다 (5.1)"},
+     "call": join(), "expect": S.ROOM_GONE, "present": [], "absent": [K_VIP_P, K_NAME_P, K_PEER_P, K_NON_P],
+     "attrs": {}, "note": "now == expires_at_ms 는 만료 쪽이다 (5.1)"},
     {"id": "join-room-absent", "row": "join-room", "side": "fail", "seed": [], "call": join(),
-     "expect": S.ROOM_GONE, "present": [], "absent": [K_ROOM, K_VIP_P, K_PEER_P, K_NON_P], "attrs": {},
+     "expect": S.ROOM_GONE, "present": [], "absent": [K_ROOM, K_VIP_P, K_NAME_P, K_PEER_P, K_NON_P], "attrs": {},
      "note": "방이 없다. 새 항목을 만들지 않는다"},
     {"id": "join-vip-taken", "row": "join-room", "side": "fail", "seed": [room_item(), vip_item(VIP_P, Q)],
-     "call": join(), "expect": S.VIP_TAKEN, "present": [], "absent": [K_PEER_P, K_NON_P],
+     "call": join(), "expect": S.VIP_TAKEN, "present": [], "absent": [K_NAME_P, K_PEER_P, K_NON_P],
      "attrs": {K_VIP_P: {"peer_id": Q}}, "note": "주소가 선점됐다. 덮어쓰지 않는다"},
+    {"id": "join-name-taken", "row": "join-room", "side": "fail", "seed": [room_item(), name_item(KEY_P, Q)],
+     "call": join(), "expect": S.NAME_TAKEN, "present": [], "absent": [K_VIP_P, K_PEER_P, K_NON_P],
+     "attrs": {K_NAME_P: {"peer_id": Q}}, "note": "이름 키가 선점됐다. 덮어쓰지 않는다"},
+    {"id": "join-name-taken-other-case", "row": "join-room", "side": "fail", "seed": [room_item(), name_item(KEY_P, Q)],
+     "call": join(name=NAME_P.upper()), "expect": S.NAME_TAKEN, "present": [], "absent": [K_VIP_P, K_PEER_P, K_NON_P],
+     "attrs": {K_NAME_P: {"peer_id": Q}}, "note": "유일성은 대소문자를 무시한다. 키는 ASCII 소문자다 (2.7)"},
     {"id": "join-peer-taken", "row": "join-room", "side": "fail",
      "seed": [room_item(), peer_item(P, VIP_Q, TOK_Q, NON_Q)], "call": join(), "expect": S.PEER_ID_TAKEN,
-     "present": [], "absent": [K_VIP_P, K_NON_P], "attrs": {K_PEER_P: {"peer_token": TOK_Q}},
+     "present": [], "absent": [K_VIP_P, K_NAME_P, K_NON_P], "attrs": {K_PEER_P: {"peer_token": TOK_Q}},
      "note": "peer_id 충돌. 덮어쓰지 않는다"},
     {"id": "join-nonce-taken", "row": "join-room", "side": "fail", "seed": [room_item(), nonce_item(NON_P, Q)],
-     "call": join(), "expect": S.NONCE_EXISTS, "present": [], "absent": [K_VIP_P, K_PEER_P],
+     "call": join(), "expect": S.NONCE_EXISTS, "present": [], "absent": [K_VIP_P, K_NAME_P, K_PEER_P],
      "attrs": {K_NON_P: {"peer_id": Q}}, "note": "같은 nonce 가 먼저 성립했다"},
     # register_candidate
     {"id": "register-ok", "row": "register-candidate", "side": "pass",
@@ -256,22 +277,36 @@ WRITE_CASES = [
     # host_report 회수
     {"id": "release-ok", "row": "host-report-release", "side": "pass",
      "seed": [room_item(), host_item(candidates=CAND), p_item(candidates=CAND), vip_item(VIP_P, P),
-              pair_item(H, P)],
-     "call": release(), "expect": True, "present": [K_PEER_H, K_ROOM], "absent": [K_PEER_P, K_VIP_P, K_PAIR],
-     "attrs": {}, "note": "PEER#, VIP#, PAIR# 를 함께 지운다"},
+              name_item(KEY_H, H), name_item(KEY_P, P), pair_item(H, P)],
+     "call": release(), "expect": True, "present": [K_PEER_H, K_ROOM, K_NAME_H],
+     "absent": [K_PEER_P, K_VIP_P, K_NAME_P, K_PAIR],
+     "attrs": {}, "note": "PEER#, VIP#, NAME#, PAIR# 를 함께 지운다. 호스트의 NAME# 는 남는다"},
+    {"id": "release-ok-all-names", "row": "host-report-release", "side": "pass",
+     "seed": [room_item(), p_item(), vip_item(VIP_P, P), name_item(KEY_P, P), name_item("alias", P)],
+     "call": release(names=(KEY_P, "alias")), "expect": True, "present": [], "absent": [K_PEER_P, K_NAME_P, (R, "NAME#alias")],
+     "attrs": {}, "note": "4.6. peer_id 가 그 피어인 NAME# 를 모두 지운다. 키 목록은 부르는 쪽이 첫 Query 에서 고른다"},
+    {"id": "release-ok-no-name", "row": "host-report-release", "side": "pass",
+     "seed": [room_item(), p_item(), vip_item(VIP_P, P)], "call": release(names=()), "expect": True,
+     "present": [], "absent": [K_PEER_P, K_VIP_P], "attrs": {},
+     "note": "4.6. peer_id 가 그 피어인 NAME# 가 하나도 없으면 NAME# 없이 지운다"},
     {"id": "release-ok-no-pair", "row": "host-report-release", "side": "pass",
      "seed": [room_item(), p_item(), vip_item(VIP_P, P)], "call": release(), "expect": True,
      "present": [], "absent": [K_PEER_P, K_VIP_P], "attrs": {},
      "note": "확인 전에 나간 피어. PAIR# 가 없어도 회수가 취소되지 않는다"},
     {"id": "release-gone", "row": "host-report-release", "side": "fail",
-     "seed": [room_item(), vip_item(VIP_P, Q), pair_item(H, P)], "call": release(), "expect": False,
-     "present": [K_VIP_P, K_PAIR], "absent": [], "attrs": {K_VIP_P: {"peer_id": Q}},
-     "note": "이미 없던 대상. 그 주소를 이미 받은 다른 피어의 VIP# 를 지우지 않는다"},
+     "seed": [room_item(), vip_item(VIP_P, Q), name_item(KEY_P, Q), pair_item(H, P)], "call": release(),
+     "expect": False, "present": [K_VIP_P, K_NAME_P, K_PAIR], "absent": [],
+     "attrs": {K_VIP_P: {"peer_id": Q}, K_NAME_P: {"peer_id": Q}},
+     "note": "이미 없던 대상. 그 주소와 이름을 이미 받은 다른 피어의 VIP# 와 NAME# 를 지우지 않는다"},
     # host_report 서버 회수
     {"id": "reclaim-ok-at-cutoff", "row": "host-report-reclaim", "side": "pass",
+     "seed": [room_item(), p_item(joined=NOW - G), vip_item(VIP_P, P), name_item(KEY_P, P), nonce_item(NON_P, P)],
+     "call": reclaim(), "expect": True, "present": [], "absent": [K_PEER_P, K_VIP_P, K_NAME_P, K_NON_P], "attrs": {},
+     "note": "joined_at_ms <= :cutoff 의 경계. 후보 속성 없음. NAME# 도 같이 지운다"},
+    {"id": "reclaim-ok-without-name", "row": "host-report-reclaim", "side": "pass",
      "seed": [room_item(), p_item(joined=NOW - G), vip_item(VIP_P, P), nonce_item(NON_P, P)],
-     "call": reclaim(), "expect": True, "present": [], "absent": [K_PEER_P, K_VIP_P, K_NON_P], "attrs": {},
-     "note": "joined_at_ms <= :cutoff 의 경계. 후보 속성 없음"},
+     "call": reclaim(names=()), "expect": True, "present": [], "absent": [K_PEER_P, K_VIP_P, K_NON_P], "attrs": {},
+     "note": "4.6. peer_id 가 그 피어인 NAME# 가 없으면 NAME# 없이 지운다"},
     {"id": "reclaim-ok-empty-list", "row": "host-report-reclaim", "side": "pass",
      "seed": [room_item(), p_item(candidates=[], joined=NOW - G - 1), vip_item(VIP_P, P), nonce_item(NON_P, P)],
      "call": reclaim(), "expect": True, "present": [], "absent": [K_PEER_P, K_VIP_P, K_NON_P], "attrs": {},
@@ -285,17 +320,18 @@ WRITE_CASES = [
      "call": reclaim(), "expect": True, "present": [], "absent": [K_PEER_P, K_VIP_P], "attrs": {},
      "note": "NONCE# delete 도 조건이 없다. TTL 이 먼저 지운 NONCE# 때문에 회수가 취소되지 않는다 (6.5)"},
     {"id": "reclaim-has-candidates", "row": "host-report-reclaim", "side": "fail",
-     "seed": [room_item(), p_item(candidates=CAND, joined=NOW - G - 1), vip_item(VIP_P, P), nonce_item(NON_P, P)],
-     "call": reclaim(), "expect": False, "present": [K_PEER_P, K_VIP_P, K_NON_P], "absent": [], "attrs": {},
-     "note": "등록한 피어는 지우지 않는다"},
+     "seed": [room_item(), p_item(candidates=CAND, joined=NOW - G - 1), vip_item(VIP_P, P), name_item(KEY_P, P),
+              nonce_item(NON_P, P)],
+     "call": reclaim(), "expect": False, "present": [K_PEER_P, K_VIP_P, K_NAME_P, K_NON_P], "absent": [], "attrs": {},
+     "note": "등록한 피어는 지우지 않는다. 이름도 풀리지 않는다"},
     {"id": "reclaim-before-cutoff", "row": "host-report-reclaim", "side": "fail",
      "seed": [room_item(), p_item(joined=NOW - G + 1), vip_item(VIP_P, P), nonce_item(NON_P, P)],
      "call": reclaim(), "expect": False, "present": [K_PEER_P, K_VIP_P, K_NON_P], "absent": [], "attrs": {},
      "note": "유예가 1ms 남았다"},
     {"id": "reclaim-gone", "row": "host-report-reclaim", "side": "fail",
-     "seed": [room_item(), vip_item(VIP_P, Q), nonce_item(NON_P, Q)], "call": reclaim(), "expect": False,
-     "present": [K_VIP_P, K_NON_P], "absent": [], "attrs": {},
-     "note": "이미 없는 피어. 다른 피어의 VIP# 와 NONCE# 를 지우지 않는다"},
+     "seed": [room_item(), vip_item(VIP_P, Q), name_item(KEY_P, Q), nonce_item(NON_P, Q)], "call": reclaim(),
+     "expect": False, "present": [K_VIP_P, K_NAME_P, K_NON_P], "absent": [], "attrs": {},
+     "note": "이미 없는 피어. 다른 피어의 VIP#, NAME#, NONCE# 를 지우지 않는다"},
     # host_report 확인
     {"id": "confirm-ok", "row": "host-report-confirm", "side": "pass",
      "seed": [room_item(), host_item(candidates=CAND), p_item(candidates=CAND)], "call": confirm(),
@@ -338,12 +374,13 @@ WRITE_CASES = [
      "note": "put 조건'만' 실패해야 이미 확인된 쌍이다. 호스트 조건도 실패하면 확인 대상이 아니다"},
     # host_report 갱신
     {"id": "renew-ok", "row": "host-report-renew", "side": "pass",
-     "seed": [room_item(), host_item(), p_item(), vip_item(VIP_P, P)],
-     "call": renew(["ROOM", f"PEER#{H}", f"PEER#{P}", f"VIP#{VIP_P}"]), "expect": True,
-     "present": [K_ROOM, K_PEER_H, K_PEER_P, K_VIP_P], "absent": [],
+     "seed": [room_item(), host_item(), p_item(), vip_item(VIP_P, P), name_item(KEY_P, P)],
+     "call": renew(["ROOM", f"PEER#{H}", f"PEER#{P}", f"VIP#{VIP_P}", f"NAME#{KEY_P}"]), "expect": True,
+     "present": [K_ROOM, K_PEER_H, K_PEER_P, K_VIP_P, K_NAME_P], "absent": [],
      "attrs": {K_ROOM: {"expires_at_ms": RENEW_EXP, "ttl": RENEW_TTL},
-               K_PEER_H: {"ttl": RENEW_TTL}, K_PEER_P: {"ttl": RENEW_TTL}, K_VIP_P: {"ttl": RENEW_TTL}},
-     "note": "ROOM 을 밀고 나머지 항목의 ttl 을 같이 민다 (6.5)"},
+               K_PEER_H: {"ttl": RENEW_TTL}, K_PEER_P: {"ttl": RENEW_TTL}, K_VIP_P: {"ttl": RENEW_TTL},
+               K_NAME_P: {"ttl": RENEW_TTL}},
+     "note": "ROOM 을 밀고 나머지 항목(NAME# 포함)의 ttl 을 같이 민다 (6.5)"},
     {"id": "renew-at-expiry", "row": "host-report-renew", "side": "fail",
      "seed": [room_item(exp=RENEW_NOW), p_item()], "call": renew(["ROOM", f"PEER#{P}"]), "expect": False,
      "present": [], "absent": [],
@@ -396,10 +433,12 @@ CANCEL_ORDER = [
              "`bad_request` 다. nonce 를 다른 방에 재사용한 것이고, 사전 읽기 경로가 같은 입력에 내는 답과 같아야 한다"},
     {"id": "order-2-room-check", "order": "2", "failed": "`ROOM` ConditionCheck (`join_room`)",
      "note": "방을 다시 읽는다. 없으면 `room_not_found`, 있으면 `room_expired`. 다음 주소로 넘어가지 않는다"},
-    {"id": "order-3-vip", "order": "3", "failed": "`VIP#`", "note": "다음 주소. 풀이 끝나면 `room_full`"},
-    {"id": "order-4-peer", "order": "4", "failed": "`PEER#`",
+    {"id": "order-3-name", "order": "3", "failed": "`NAME#` (`join_room`)",
+     "note": "`name_taken`. 다음 주소로 넘어가지 않는다(4.3)"},
+    {"id": "order-4-vip", "order": "4", "failed": "`VIP#`", "note": "다음 주소. 풀이 끝나면 `room_full`"},
+    {"id": "order-5-peer", "order": "5", "failed": "`PEER#`",
      "note": "`peer_id` 재추첨. 상한은 `MAX_PEER_ID_ATTEMPTS`"},
-    {"id": "order-5-room-put", "order": "5", "failed": "`ROOM` put (`create_room`)",
+    {"id": "order-6-room-put", "order": "6", "failed": "`ROOM` put (`create_room`)",
      "note": "`room_id` 재추첨. 상한은 `MAX_ROOM_ID_ATTEMPTS`"},
     {"id": "order-other", "order": "-", "failed": "조건 실패가 아닌 사유 (`TransactionConflict`, 스로틀)",
      "note": "`internal`. 클라이언트가 8.3 오류 분류와 재시도의 규칙대로 재시도한다"},
@@ -414,6 +453,10 @@ CANCEL_CASES = [
     {"id": "nonce-with-room-expired", "row": "order-1-nonce",
      "seed": [room_item(exp=NOW), nonce_item(NON_P, P)], "call": join(), "expect": S.NONCE_EXISTS,
      "note": "방이 만료됐어도 1번이다. room_expired 는 다시 읽은 방으로 부르는 쪽이 낸다"},
+    {"id": "nonce-with-name", "row": "order-1-nonce",
+     "seed": [room_item(), p_item(), vip_item(VIP_P, P), name_item(KEY_P, P), nonce_item(NON_P, P)], "call": join(pid=44),
+     "expect": S.NONCE_EXISTS,
+     "note": "응답을 잃은 참가자가 같은 nonce 와 같은 이름으로 다시 왔다. NAME# 를 먼저 보면 name_taken 이 된다"},
     {"id": "nonce-with-room-put", "row": "order-1-nonce",
      "seed": [room_item(), nonce_item(NON_H, H)], "call": create(), "expect": S.NONCE_EXISTS,
      "note": "create_room 에서도 1번이다. room_id 재추첨으로 가지 않는다"},
@@ -422,20 +465,35 @@ CANCEL_CASES = [
      "note": "만료된 방의 선점된 주소. 다음 주소로 넘어가지 않는다"},
     {"id": "room-check-alone", "row": "order-2-room-check", "seed": [], "call": join(), "expect": S.ROOM_GONE,
      "note": "방이 없다"},
-    {"id": "vip-with-peer", "row": "order-3-vip",
+    {"id": "room-check-with-name", "row": "order-2-room-check",
+     "seed": [room_item(exp=NOW), name_item(KEY_P, Q)], "call": join(), "expect": S.ROOM_GONE,
+     "note": "만료된 방에서 이름이 겹친다. name_taken 이 아니라 방을 다시 읽는다"},
+    {"id": "name-with-vip", "row": "order-3-name",
+     "seed": [room_item(), vip_item(VIP_P, Q), name_item(KEY_P, Q)], "call": join(), "expect": S.NAME_TAKEN,
+     "note": "NAME# 가 VIP# 보다 먼저다. VIP# 를 먼저 보면 다음 주소로 넘어가 이름이 계속 겹치는 시도를 되풀이한다"},
+    {"id": "name-with-peer", "row": "order-3-name",
+     "seed": [room_item(), name_item(KEY_P, Q), peer_item(P, VIP_Q, TOK_Q, NON_Q)], "call": join(),
+     "expect": S.NAME_TAKEN, "note": "NAME# 가 PEER# 보다 먼저다. peer_id 를 다시 뽑아도 이름은 그대로 겹친다"},
+    {"id": "name-alone", "row": "order-3-name", "seed": [room_item(), name_item(KEY_P, Q)], "call": join(),
+     "expect": S.NAME_TAKEN, "note": "name_taken"},
+    {"id": "vip-with-peer", "row": "order-4-vip",
      "seed": [room_item(), vip_item(VIP_P, Q), peer_item(P, VIP_Q, TOK_Q, NON_Q)], "call": join(),
-     "expect": S.VIP_TAKEN, "note": "3번이 4번보다 먼저다. 다음 주소로 간다"},
-    {"id": "vip-alone", "row": "order-3-vip", "seed": [room_item(), vip_item(VIP_P, Q)], "call": join(),
+     "expect": S.VIP_TAKEN, "note": "4번이 5번보다 먼저다. 다음 주소로 간다"},
+    {"id": "vip-alone", "row": "order-4-vip", "seed": [room_item(), vip_item(VIP_P, Q)], "call": join(),
      "expect": S.VIP_TAKEN, "note": "다음 주소"},
-    {"id": "peer-alone", "row": "order-4-peer", "seed": [room_item(), peer_item(P, VIP_Q, TOK_Q, NON_Q)],
+    {"id": "peer-alone", "row": "order-5-peer", "seed": [room_item(), peer_item(P, VIP_Q, TOK_Q, NON_Q)],
      "call": join(), "expect": S.PEER_ID_TAKEN, "note": "peer_id 재추첨"},
-    {"id": "room-put-alone", "row": "order-5-room-put", "seed": [room_item()], "call": create(),
+    {"id": "room-put-alone", "row": "order-6-room-put", "seed": [room_item()], "call": create(),
      "expect": S.ROOM_ID_TAKEN, "note": "room_id 재추첨"},
-    {"id": "room-put-with-vip-and-peer", "row": "order-5-room-put",
+    {"id": "room-put-with-name", "row": "order-6-room-put",
+     "seed": [room_item(), host_item(), vip_item(VIP_H, H), name_item(KEY_H, H)], "call": create(),
+     "expect": S.ROOM_ID_TAKEN,
+     "note": "6.3 '`create_room` 은 1번 다음에 6번을 본다'. room_id 가 살아 있는 방과 부딪히면 NAME# 도 실패할 수 "
+             "있는데 create_room 에는 다음 주소가 없고 이름이 겹친 상대도 앞선 방의 피어다. name_taken 이 아니다"},
+    {"id": "room-put-with-vip-and-peer", "row": "order-6-room-put",
      "seed": [room_item(), host_item(), vip_item(VIP_H, H)], "call": create(), "expect": S.ROOM_ID_TAKEN,
-     "note": "앞선 방이 살아 있으면 VIP#10.100.0.1 과 그 호스트 PEER# 도 같이 실패한다. 표의 순서로는 3번(다음 "
-             "주소)이 먼저지만 create_room 에는 다음 주소가 없다. 쓰기 표의 create_room 행대로 재추첨이다. 보고서의 "
-             "DOC GAP 1"},
+     "note": "앞선 방이 살아 있으면 VIP#10.100.0.1 과 그 호스트 PEER# 도 같이 실패한다. 표의 순서로는 4번(다음 "
+             "주소)이 먼저지만 create_room 에는 다음 주소가 없다. 6.3 표 아래 첫 불릿대로 재추첨이다"},
 ]
 
 
@@ -447,32 +505,36 @@ def test_cancel(store, case):
 
 
 # 순서 "-" 행. DynamoDB local 은 TransactionConflict 를 내지 않으므로(7.6 로컬 시험의 한계) 사유 목록을
-# 직접 만들어 판정 함수에 넣는다. join_room 트랜잭션의 위치: ROOM 확인, VIP#, PEER#, NONCE#.
-JOIN_LAYOUT = ("room_check", "vip", "peer", "nonce")
+# 직접 만들어 판정 함수에 넣는다. join_room 트랜잭션의 위치: ROOM 확인, VIP#, NAME#, PEER#, NONCE#.
+JOIN_LAYOUT = ("room_check", "vip", "name", "peer", "nonce")
 JOIN_PRIORITY = S._JOIN_PRIORITY
 NONE, CCF, CONFLICT = {"Code": "None"}, {"Code": "ConditionalCheckFailed"}, {"Code": "TransactionConflict"}
 
 CLASSIFY_CASES = [
-    {"id": "conflict-only", "row": "order-other", "reasons": [NONE, CONFLICT, NONE, NONE], "expect": INTERNAL,
+    {"id": "conflict-only", "row": "order-other", "reasons": [NONE, CONFLICT, NONE, NONE, NONE], "expect": INTERNAL,
      "note": "조건 실패가 없다"},
     {"id": "throttled", "row": "order-other",
-     "reasons": [NONE, NONE, {"Code": "ProvisionedThroughputExceeded"}, NONE], "expect": INTERNAL,
+     "reasons": [NONE, NONE, NONE, {"Code": "ProvisionedThroughputExceeded"}, NONE], "expect": INTERNAL,
      "note": "스로틀"},
-    {"id": "vip-with-conflict", "row": "order-other", "reasons": [NONE, CCF, CONFLICT, NONE], "expect": INTERNAL,
-     "note": "다른 항목의 사유가 일시 오류면 VIP# 실패를 믿고 다음 주소로 가지 않는다. 보고서의 DOC GAP 2"},
-    {"id": "nonce-with-conflict", "row": "order-1-nonce", "reasons": [CONFLICT, NONE, NONE, CCF],
+    {"id": "vip-with-conflict", "row": "order-other", "reasons": [NONE, CCF, NONE, CONFLICT, NONE], "expect": INTERNAL,
+     "note": "다른 항목의 사유가 일시 오류면 VIP# 실패를 믿고 다음 주소로 가지 않는다 (6.3 표 아래 마지막 불릿)"},
+    {"id": "name-with-conflict", "row": "order-other", "reasons": [NONE, NONE, CCF, CONFLICT, NONE],
+     "expect": INTERNAL, "note": "NAME# 실패도 같다. 일시 오류가 섞이면 name_taken 으로 확정하지 않는다"},
+    {"id": "name-with-vip", "row": "order-3-name", "reasons": [NONE, CCF, CCF, NONE, NONE], "expect": "name",
+     "note": "NAME# 가 VIP# 보다 먼저다"},
+    {"id": "nonce-with-conflict", "row": "order-1-nonce", "reasons": [CONFLICT, NONE, NONE, NONE, CCF],
      "expect": "nonce", "note": "1번은 다른 사유가 무엇이든 먼저다"},
-    {"id": "unknown-code", "row": "order-other", "reasons": [NONE, {"Code": "SomethingNew"}, NONE, NONE],
+    {"id": "unknown-code", "row": "order-other", "reasons": [NONE, {"Code": "SomethingNew"}, NONE, NONE, NONE],
      "expect": INTERNAL, "note": "모르는 코드는 판정 불가다"},
-    {"id": "vip-with-unknown", "row": "order-other", "reasons": [NONE, CCF, {"Code": "SomethingNew"}, NONE],
+    {"id": "vip-with-unknown", "row": "order-other", "reasons": [NONE, CCF, NONE, {"Code": "SomethingNew"}, NONE],
      "expect": INTERNAL, "note": "모르는 코드가 섞이면 VIP# 실패를 믿지 않는다. 허용 목록 밖은 판정 불가다"},
-    {"id": "reason-not-dict", "row": "order-other", "reasons": [NONE, "x", NONE, NONE], "expect": INTERNAL,
+    {"id": "reason-not-dict", "row": "order-other", "reasons": [NONE, "x", NONE, NONE, NONE], "expect": INTERNAL,
      "note": "모양을 모르면 판정 불가다"},
-    {"id": "length-mismatch", "row": "order-other", "reasons": [CCF, NONE, NONE], "expect": INTERNAL,
+    {"id": "length-mismatch", "row": "order-other", "reasons": [CCF, NONE, NONE, NONE], "expect": INTERNAL,
      "note": "위치로 항목을 식별할 수 없다"},
     {"id": "reasons-missing", "row": "order-other", "reasons": None, "expect": INTERNAL,
      "note": "취소 사유가 없다"},
-    {"id": "all-none", "row": "order-other", "reasons": [NONE, NONE, NONE, NONE], "expect": INTERNAL,
+    {"id": "all-none", "row": "order-other", "reasons": [NONE, NONE, NONE, NONE, NONE], "expect": INTERNAL,
      "note": "취소됐는데 실패한 항목이 없다"},
 ]
 
@@ -529,7 +591,8 @@ class Spy:
 
 
 FULL_ROOM = [room_item(), host_item(candidates=CAND), p_item(candidates=CAND), vip_item(VIP_H, H),
-             vip_item(VIP_P, P), pair_item(H, P), nonce_item(NON_H, H), nonce_item(NON_P, P)]
+             vip_item(VIP_P, P), name_item(KEY_H, H), name_item(KEY_P, P), pair_item(H, P), nonce_item(NON_H, H),
+             nonce_item(NON_P, P)]
 
 
 @pytest.mark.store
@@ -558,13 +621,14 @@ def test_read_shapes(store):
     view = store.query_room(R)
     assert view.room["expires_at_ms"] == EXP
     assert set(view.peers) == {H, P}
-    assert view.peers[P] == {"peer_id": P, "peer_token": TOK_P, "virtual_ip": VIP_P, "client_nonce": NON_P,
-                             "joined_at_ms": NOW - 1000, "ttl": EXP_TTL, "candidates": CAND}
+    assert view.peers[P] == {"peer_id": P, "peer_token": TOK_P, "virtual_ip": VIP_P, "name": NAME_P,
+                             "client_nonce": NON_P, "joined_at_ms": NOW - 1000, "ttl": EXP_TTL, "candidates": CAND}
     assert view.vips == {VIP_H: H, VIP_P: P}
+    assert view.names == {KEY_H: H, KEY_P: P}
     assert view.pairs == {f"PAIR#{H}-{P}": {"ready_at_wall_ms": NOW - 500, "ready_at_mono_ns": 123,
                                              "ready_boot_id": "boot-x", "punch_delay_ms": 777, "ttl": EXP_TTL}}
     assert sorted(view.sks) == sorted(["ROOM", f"PEER#{H}", f"PEER#{P}", f"VIP#{VIP_H}", f"VIP#{VIP_P}",
-                                       f"PAIR#{H}-{P}"])
+                                       f"NAME#{KEY_H}", f"NAME#{KEY_P}", f"PAIR#{H}-{P}"])
     assert view.unreadable_peers == []
 
 
@@ -573,7 +637,7 @@ def test_read_absent(store):
     assert store.get_nonce(NON_P) is None
     assert store.get_room(R) is None
     view = store.query_room(R)
-    assert view.room is None and view.peers == {} and view.sks == []
+    assert view.room is None and view.peers == {} and view.names == {} and view.sks == []
 
 
 # ---------------------------------------------------------------------------
@@ -623,6 +687,16 @@ CONVERT_CASES = [
      "expect": INTERNAL, "note": "PEER# 의 속성이 없다"},
     {"id": "vip-unreadable", "seed": [room_item(), vip_item(VIP_P, "x")], "read": "lenient", "expect": INTERNAL,
      "note": "VIP# 는 서버 회수 경로에서도 internal"},
+    {"id": "peer-name-missing", "seed": [room_item(), p_item(name=OMIT)], "read": "query", "expect": INTERNAL,
+     "note": "6.3 항목 표의 PEER# 는 name 을 갖는다. 표시 이름 이전에 만든 방의 PEER# 가 이 행이다 (roadmap Phase 4)"},
+    {"id": "peer-name-number", "seed": [room_item(), p_item(name=5)], "read": "query", "expect": INTERNAL,
+     "note": "name 은 문자열이다"},
+    {"id": "name-peer-id-string", "seed": [room_item(), name_item(KEY_P, str(P))], "read": "query",
+     "expect": INTERNAL, "note": "NAME# 의 peer_id 는 정수다"},
+    {"id": "name-ttl-missing", "seed": [room_item(), name_item(KEY_P, P, ttl=OMIT)], "read": "query",
+     "expect": INTERNAL, "note": "NAME# 의 속성이 없다"},
+    {"id": "name-unreadable-lenient", "seed": [room_item(), name_item(KEY_P, "x")], "read": "lenient",
+     "expect": INTERNAL, "note": "NAME# 는 서버 회수 경로에서도 internal. 예외는 PEER# 뿐이다"},
     {"id": "pair-unreadable", "seed": [room_item(), pair_item(H, P, punch_delay_ms=OMIT)], "read": "query",
      "expect": INTERNAL, "note": "PAIR# 의 속성이 없다"},
     {"id": "unknown-sk", "seed": [room_item(), _item(R, "WHAT#1", {"ttl": EXP_TTL}, {})], "read": "query",
@@ -638,6 +712,9 @@ CONVERT_CASES = [
      "expect": "unreadable", "verdict": (SKIP, "joined_at_unreadable"), "note": "형이 다르다"},
     {"id": "lenient-peer-id-missing", "seed": [room_item(), p_item(peer_id=OMIT)], "read": "lenient",
      "expect": "unreadable", "verdict": (SKIP, "peer_id_unreadable"), "note": "호스트인지 알 수 없다"},
+    {"id": "lenient-name-missing-reclaimable", "seed": [room_item(), p_item(name=OMIT, joined=NOW - G)],
+     "read": "lenient", "expect": "unreadable", "verdict": (RECLAIM, None),
+     "note": "name 은 회수 판정에 쓰지 않는다. 지울 NAME# 는 peer_id 로 찾는다 (4.6)"},
     {"id": "lenient-token-missing-reclaimable", "seed": [room_item(), p_item(peer_token=OMIT, joined=NOW - G)],
      "read": "lenient", "expect": "unreadable", "verdict": (RECLAIM, None),
      "note": "판정에 쓰지 않는 속성만 빠졌다. 정수 속성은 int 로 넘어와 회수 판정이 된다"},
@@ -684,12 +761,15 @@ def test_convert(store, case):
 # ---------------------------------------------------------------------------
 # 출처: control_plane.md 6.3 항목 표의 sk 열과 그 아래 문단 "방 파티션에서 위 항목 표에 없는 sk 가
 # 나오면 판정 불가이고 internal 이다". 접두어가 아니라 전체 형식을 본다.
-#   ROOM / PEER#<peer_id 10진> / VIP#<점 십진> / PAIR#<lo>-<hi> (수의 오름차순, 10진)
+#   ROOM / PEER#<peer_id 10진> / VIP#<점 십진> / NAME#<이름 키> / PAIR#<lo>-<hi> (수의 오름차순, 10진)
+# 이름 키는 2.7 의 63자 이름을 ASCII 소문자로 바꾼 값이다. 그래서 [a-z0-9_] 1~16자다.
 # peer_id 는 2.2 대로 0 이 아닌 uint32 다. 10진 표기는 선행 0 이 없는 하나로 본다.
 # ---------------------------------------------------------------------------
-PEER_ATTRS = dict(peer_id=P, peer_token=TOK_P, virtual_ip=VIP_P, client_nonce=NON_P, joined_at_ms=NOW, ttl=EXP_TTL)
+PEER_ATTRS = dict(peer_id=P, peer_token=TOK_P, virtual_ip=VIP_P, name=NAME_P, client_nonce=NON_P, joined_at_ms=NOW,
+                  ttl=EXP_TTL)
 PAIR_ATTRS = dict(ready_at_wall_ms=NOW, ready_at_mono_ns=1, ready_boot_id="b", punch_delay_ms=1000, ttl=EXP_TTL)
 VIP_ATTRS = dict(peer_id=P, ttl=EXP_TTL)
+NAME_ATTRS = dict(peer_id=P, ttl=EXP_TTL)
 
 SK_CASES = [
     {"id": "peer-uint32-max", "sk": "PEER#4294967295", "attrs": PEER_ATTRS, "read": "query", "expect": "ok",
@@ -719,6 +799,19 @@ SK_CASES = [
      "note": "선행 0 은 받지 않는다 (7.1 의 후보 파싱과 같은 규칙)"},
     {"id": "vip-suffix", "sk": "VIP#10.100.0.2x", "attrs": VIP_ATTRS, "read": "query", "expect": INTERNAL,
      "note": "전체 일치"},
+    {"id": "name-ok", "sk": "NAME#alice_9", "attrs": NAME_ATTRS, "read": "query", "expect": "ok",
+     "note": "소문자, 숫자, 밑줄"},
+    {"id": "name-ok-16", "sk": "NAME#" + "a" * 16, "attrs": NAME_ATTRS, "read": "query", "expect": "ok",
+     "note": "MAX_NAME_LEN 자"},
+    {"id": "name-upper", "sk": "NAME#Alice", "attrs": NAME_ATTRS, "read": "query", "expect": INTERNAL,
+     "note": "키는 소문자로 바꾼 값이다. 대문자가 든 키는 이 서버가 쓴 것이 아니다"},
+    {"id": "name-17", "sk": "NAME#" + "a" * 17, "attrs": NAME_ATTRS, "read": "query", "expect": INTERNAL,
+     "note": "MAX_NAME_LEN 을 넘는다"},
+    {"id": "name-empty", "sk": "NAME#", "attrs": NAME_ATTRS, "read": "query", "expect": INTERNAL, "note": "빈 키"},
+    {"id": "name-hyphen", "sk": "NAME#al-ice", "attrs": NAME_ATTRS, "read": "query", "expect": INTERNAL,
+     "note": "63자 밖의 글자"},
+    {"id": "name-non-ascii", "sk": "NAME#\u00e9", "attrs": NAME_ATTRS, "read": "query", "expect": INTERNAL,
+     "note": "ASCII 밖의 글자. \\w 는 받는다"},
     {"id": "pair-reversed", "sk": f"PAIR#{P}-{H}", "attrs": PAIR_ATTRS, "read": "query", "expect": INTERNAL,
      "note": "lo 가 hi 보다 작아야 한다. 같은 쌍의 두 번째 표기를 받지 않는다"},
     {"id": "pair-equal", "sk": f"PAIR#{H}-{H}", "attrs": PAIR_ATTRS, "read": "query", "expect": INTERNAL,
@@ -756,6 +849,7 @@ INT_TYPES = [
     {"id": "room", "note": "ROOM 의 created_at_ms, expires_at_ms, host_peer_id, ttl"},
     {"id": "peer", "note": "PEER# 의 peer_id, joined_at_ms, ttl, 후보의 port"},
     {"id": "vip", "note": "VIP# 의 peer_id. ttl 은 RoomView 에 싣지 않는다"},
+    {"id": "name", "note": "NAME# 의 peer_id. ttl 은 RoomView 에 싣지 않는다"},
     {"id": "pair", "note": "PAIR# 의 ready_at_wall_ms, ready_at_mono_ns, punch_delay_ms, ttl"},
     {"id": "nonce", "note": "NONCE# 의 peer_id, ttl"},
 ]
@@ -773,6 +867,8 @@ def test_int_types(store, case):
         values = [peer["peer_id"], peer["joined_at_ms"], peer["ttl"]] + [c["port"] for c in peer["candidates"]]
     elif case["id"] == "vip":
         values = list(view.vips.values())  # RoomView 는 VIP# 의 peer_id 만 넘긴다
+    elif case["id"] == "name":
+        values = list(view.names.values())  # NAME# 도 peer_id 만 넘긴다
     elif case["id"] == "pair":
         pair = view.pairs[f"PAIR#{H}-{P}"]
         values = [pair[k] for k in ("ready_at_wall_ms", "ready_at_mono_ns", "punch_delay_ms", "ttl")]
@@ -783,7 +879,7 @@ def test_int_types(store, case):
 
 
 # ---------------------------------------------------------------------------
-# 출처: control_plane.md 6.5 TTL 표 (항목 | ttl 값). 한 행이고 항목 다섯을 나열한다. 항목마다 한 원소.
+# 출처: control_plane.md 6.5 TTL 표 (항목 | ttl 값). 한 행이고 항목 여섯을 나열한다. 항목마다 한 원소.
 #   방의 모든 항목: floor(expires_at_ms / 1000) + STORAGE_GRACE_S
 # via 는 그 항목을 만드는 쓰기다. EXP 는 초 경계에서 999ms 떨어져 있어 올림이나 반올림을 가른다.
 # ---------------------------------------------------------------------------
@@ -793,6 +889,8 @@ TTL = [
     {"id": "ttl-peer", "item": "`PEER#`", "via": "create-join", "keys": [K_PEER_H, K_PEER_P],
      "note": "같은 방의 항목은 같은 `ttl` 을 갖는다"},
     {"id": "ttl-vip", "item": "`VIP#`", "via": "create-join", "keys": [K_VIP_H, K_VIP_P],
+     "note": "같은 방의 항목은 같은 `ttl` 을 갖는다"},
+    {"id": "ttl-name", "item": "`NAME#`", "via": "create-join", "keys": [K_NAME_H, K_NAME_P],
      "note": "같은 방의 항목은 같은 `ttl` 을 갖는다"},
     {"id": "ttl-pair", "item": "`PAIR#`", "via": "confirm", "keys": [K_PAIR],
      "note": "같은 방의 항목은 같은 `ttl` 을 갖는다"},
@@ -831,6 +929,9 @@ RACES = [
      "PEER#·VIP# 를 ttl 만 가진 항목으로 되살리지 않는다. ROOM 갱신은 그대로 성공한다"},
     {"id": "join-after-room-deleted", "note": "6.3 join_room 행. 사전 읽기와 쓰기 사이에 방이 삭제됐다. 새 항목을 "
      "만들지 않는다"},
+    {"id": "join-same-name-interleaved", "note": "roadmap Phase 4 '같은 이름의 두 참가를 동시에 보내면 하나만 "
+     "성공한다'. 사전 읽기 뒤 트랜잭션 직전에 같은 이름(다른 대소문자)의 다른 참가가 커밋됐다. NAME# 조건부 쓰기 "
+     "하나만 성공한다 (6.3)"},
     {"id": "after-hook-fails-after-commit", "note": "roadmap Phase 3 의 커밋 뒤 응답 직전 실패 주입점. after 에서 "
      "던진 예외가 그대로 올라가고 쓰기는 커밋돼 있다"},
 ]
@@ -893,6 +994,13 @@ def test_race(store, case):
         assert run(st, join()) == S.ROOM_GONE
         assert state["done"]
         assert raw(st, *K_VIP_P) is None and raw(st, *K_PEER_P) is None and raw(st, *K_NON_P) is None
+    elif rid == "join-same-name-interleaved":
+        seed(st, [room_item()])
+        state = once_before(st, "join_room", lambda: run(st, join(vip=VIP_Q, pid=Q, nonce=NON_Q, name=NAME_P.upper())))
+        assert run(st, join()) == S.NAME_TAKEN
+        assert state["done"]
+        assert raw(st, *K_NAME_P)["peer_id"] == Q
+        assert raw(st, *K_PEER_P) is None and raw(st, *K_VIP_P) is None and raw(st, *K_NON_P) is None
     elif rid == "after-hook-fails-after-commit":
         seed(st, [room_item()])
 
@@ -1121,4 +1229,4 @@ def test_every_doc_row_is_exercised():
         assert sides == {"pass", "fail"}, row["id"]
     cancel_rows = {c["row"] for c in CANCEL_CASES} | {c["row"] for c in CLASSIFY_CASES}
     assert cancel_rows == {r["id"] for r in CANCEL_ORDER}
-    assert len(WRITES) == 7 and len(CANCEL_ORDER) == 6 and len(READS) == 5 and len(TTL) == 5
+    assert len(WRITES) == 7 and len(CANCEL_ORDER) == 7 and len(READS) == 5 and len(TTL) == 6

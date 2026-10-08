@@ -40,6 +40,7 @@
 // | `rejected` | JSON 정수, 0 이상이고 `accepted + rejected <= MAX_CANDIDATES` | 4.4. 보낸 것이 8개 이하이고 중복 제거는 둘 다 줄인다 |
 // | `ready` | JSON 불 | 4.5 |
 // | `peers` | 배열, 길이 `MAX_PEERS - 1` 이하, `peer_id` 중복 없음 | 4.5, 2.2 방 안 유일 |
+// | `peers` 원소의 `name` | JSON 문자열이고 2.7 의 형식(tunnel::is_valid_name). 받은 그대로 두고 대소문자를 바꾸지 않는다 | 3.5 의 7, 4.5 |
 // | `peers` 원소의 필드 집합 | `ready` 가 거짓이면 `punch_delay_ms`·`elapsed_since_ready_ms`·`candidates` 가 없어야 하고, 참이면 셋 다 있어야 한다 | 4.5 "원소의 필드 집합은 `ready` 가 가른다" |
 // | `get_peers` 의 `ready` | `peers` 에 `ready` 인 원소가 하나라도 있는 것과 같아야 한다 | 4.5 |
 // | `punch_delay_ms` | JSON 정수, 0 이상 4294967295 이하 | 4.5 |
@@ -142,14 +143,17 @@ struct Candidate {
 // 를 돌려줄 것이 확실한 입력이다. 보내 봐야 확정 오류이고 그 사이 속도 제한 예산만 쓴다.
 //
 // - room_id 는 2.1 의 형식이어야 한다. 대소문자는 가리지 않는다 (서버가 정규화한다)
+// - name 은 2.7 의 형식이어야 한다 (tunnel::is_valid_name). 받은 그대로 싣는다
 // - candidates 는 1개 이상 MAX_CANDIDATES(8) 이하. 넘으면 부르는 쪽이 먼저 자른다 (8.4 의 6번)
 // - departed, confirm 은 MAX_PEERS - 1 이하
 //
 // 후보의 값(포트 0, 루프백)은 보지 않는다. 그것은 서버의 위생 거부이고 형 위반이 아니다 (4.4).
 
-[[nodiscard]] std::optional<std::string> create_room_body(const ClientNonce& nonce);
+[[nodiscard]] std::optional<std::string> create_room_body(const ClientNonce& nonce,
+                                                          std::string_view name);
 [[nodiscard]] std::optional<std::string> join_room_body(std::string_view room_id,
-                                                        const ClientNonce& nonce);
+                                                        const ClientNonce& nonce,
+                                                        std::string_view name);
 [[nodiscard]] std::optional<std::string> register_candidate_body(
     std::string_view room_id, std::uint32_t peer_id, const PeerToken& token,
     std::span<const Candidate> candidates);
@@ -183,6 +187,7 @@ enum class Failure : std::uint8_t {
     kRoomNotFound,
     kRoomExpired,
     kRoomFull,
+    kNameTaken,
     kUnauthorized,
     kRateLimited,
     kInternal,
@@ -239,6 +244,7 @@ struct Registered {
 struct PeerView {
     std::uint32_t peer_id = 0;
     std::uint32_t virtual_ip = 0;
+    std::string name;  // control_plane.md 2.7 형식을 지난 표시 이름. 표시에만 쓴다 (spec.md FR-16)
     bool ready = false;
     // 아래 셋은 ready 일 때만 뜻이 있다.
     std::uint32_t punch_delay_ms = 0;

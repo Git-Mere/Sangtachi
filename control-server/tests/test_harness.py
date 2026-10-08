@@ -537,16 +537,16 @@ def test_injections_reach_the_real_server(running):
     # 커밋 뒤 실패: 클라이언트는 internal 을 받지만 방은 생겼다. 같은 nonce 의 재시도가 같은 방을 돌려준다.
     nonce = secrets.token_hex(16)
     assert h.admin("after_commit label=create_room count=1")["ok"]
-    status, body = h.post("create_room", {"client_nonce": nonce})
+    status, body = h.post("create_room", {"client_nonce": nonce, "name": "Host"})
     assert (status, body["error"]) == (500, "internal")
     assert h.admin("count")["items"]["ROOM"] == 1
-    status, body = h.post("create_room", {"client_nonce": nonce})
+    status, body = h.post("create_room", {"client_nonce": nonce, "name": "Host"})
     assert status == 200 and h.admin("count")["items"]["ROOM"] == 1
     # 커밋 뒤 실패 다음에 재생 뒤 실패. store 주입점은 재생에 걸리지 않으므로 둘째는 dispatch 뒤 오류로 만든다.
     nonce2 = secrets.token_hex(16)
     assert h.admin("after_commit label=create_room count=1")["ok"]
     assert h.admin("error op=create_room count=1 code=internal when=after")["ok"]
-    statuses = [h.post("create_room", {"client_nonce": nonce2})[0] for _ in range(3)]
+    statuses = [h.post("create_room", {"client_nonce": nonce2, "name": "Host2"})[0] for _ in range(3)]
     assert statuses == [500, 500, 200] and h.admin("count")["items"]["ROOM"] == 2
     room = h.admin(f"room id={body['room_id']}")
     assert room["room"]["host_peer_id"] == body["peer_id"] and room["vips"] == [
@@ -554,12 +554,17 @@ def test_injections_reach_the_real_server(running):
 
     # 오류 주입은 그 연산의 다음 요청 하나에만 걸린다.
     assert h.admin("error op=join_room count=1 code=unauthorized when=before")["ok"]
-    status, other = h.post("create_room", {"client_nonce": secrets.token_hex(16)})
+    status, other = h.post("create_room", {"client_nonce": secrets.token_hex(16), "name": "Other"})
     assert status == 200
-    status, err = h.post("join_room", {"room_id": body["room_id"], "client_nonce": secrets.token_hex(16)})
+    status, err = h.post("join_room", {"room_id": body["room_id"], "client_nonce": secrets.token_hex(16),
+                                       "name": "Joiner"})
     assert (status, err["error"]) == (403, "unauthorized")
-    status, joined = h.post("join_room", {"room_id": body["room_id"], "client_nonce": secrets.token_hex(16)})
+    status, joined = h.post("join_room", {"room_id": body["room_id"], "client_nonce": secrets.token_hex(16),
+                                          "name": "Joiner"})
     assert status == 200 and joined["virtual_ip"] == "10.100.0.2"
+    # 관리 명령 room 의 peers 는 등록한 그대로의 name 을 싣는다. lobby-check 의 장면 name 이 읽는다.
+    names = {p["peer_id"]: p["name"] for p in h.admin(f"room id={body['room_id']}")["peers"]}
+    assert names == {body["peer_id"]: "Host", joined["peer_id"]: "Joiner"}
 
     # 지연 주입.
     assert h.admin("delay op=get_peers count=1 ms=700 when=after")["ok"]
@@ -750,7 +755,7 @@ def test_stopping_during_a_maximum_delay_still_deletes_the_table(request, tmp_pa
 
         def call():
             try:
-                h.post("create_room", {"client_nonce": secrets.token_hex(16)}, timeout=90)
+                h.post("create_room", {"client_nonce": secrets.token_hex(16), "name": "Host"}, timeout=90)
             except (OSError, IndexError, ValueError):
                 pass  # 하네스가 멈추며 답 없이 닫는다
 

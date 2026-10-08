@@ -254,6 +254,10 @@ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_      (63자)
 - 후보 없이 떠났으면 4.6 서버 회수의 유예 `JOIN_REGISTER_GRACE_S` 가 지나야 풀린다
 - 그동안 다시 들어오려면 다른 이름을 쓴다
 
+**형식 케이스 표는 [`test_name.py`](../../control-server/tests/test_name.py) 의 `NAME_CASES` 다.** 표 밖 규칙(소문자
+변환 순서, 유니코드 술어)은 같은 파일의 `NAME_EXTRA_CASES` 가 보고, 방 안 유일성과 회수는 `test_ops.py` 의
+`NAME_SCENARIOS` 가 저장소에서 본다.
+
 **이름은 표시 전용이다.** 서버는 이름으로 피어를 찾지 않는다. 인증과 회수와 확인은 `peer_id` 와
 `peer_token` 으로 한다. 클라이언트 쪽의 같은 규칙은 [`protocol.md`](protocol.md) 5.7 ROSTER 의
 "명부는 표시 전용이다" 에 있다.
@@ -1134,7 +1138,7 @@ Connection: close\r\n
 | `PAIR#<lo>-<hi>` | `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms`, `ttl` | 쌍의 준비 완료. `lo` 와 `hi` 는 두 `peer_id` 를 수의 오름차순으로 놓고 10진수로 적는다. `9` 가 `10` 보다 앞이다. 7.4 시계가 세 값을 쓴다 |
 | `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `name`, `candidates`(리스트), `client_nonce`, `joined_at_ms`, `ttl` | 피어. `peer_id` 는 `sk` 에서 10진수로 적는다. `peer_token` 은 원문이다(2.3). `name` 은 등록한 그대로다(2.7). `candidates` 는 첫 `register_candidate` 전에는 쓰지 않는다 |
 | `VIP#<virtual_ip>` | `peer_id`, `ttl` | 가상 IP 선점 표식. `<virtual_ip>` 는 점 십진 |
-| `NAME#<이름 키>` | `peer_id`, `ttl` | 표시 이름 선점 표식. `<이름 키>` 는 이름을 ASCII 소문자로 바꾼 값이다(2.7). 회수는 `peer_id` 로 이 항목을 찾는다(4.6) |
+| `NAME#<이름 키>` | `peer_id`, `ttl` | 표시 이름 선점 표식. `<이름 키>` 는 이름을 ASCII 소문자로 바꾼 값이다(2.7). 2.7 의 형식 검사를 지난 이름만 키가 되므로 키는 `[a-z0-9_]` 의 1~16자이고, 저장소에서 읽은 키가 그 밖이면 항목 표에 없는 `sk` 로 본다. 회수는 `peer_id` 로 이 항목을 찾는다(4.6) |
 | (pk = `NONCE#<client_nonce>`, sk = `NONCE`) | `room_id`, `peer_id`, `ttl` | 멱등성 키 → 방과 피어 대응. **pk 가 방이 아니라 nonce 다** |
 
 토큰 비교는 상수 시간 비교(`hmac.compare_digest`)로 한다. 조건식에 넣는 비교(`peer_token
@@ -1343,7 +1347,7 @@ Connection: close\r\n
 |------|------|-----------|
 | `server.py` | 수락 루프, 3.3 HTTP 파싱과 응답 직렬화, 연산 디스패치, 시간 제한, `MAX_INFLIGHT`, 속도 제한 표(6.4) | `asyncio` |
 | `ops.py` | 4장의 연산 다섯. 요청 검증, 상태 판정(5장), 응답 조립 | 없음 |
-| `ids.py` | `room_id`, `peer_id`, `peer_token` 생성, `room_id` 정규화(2.1), `client_nonce`·`peer_token` 형식 검사 | `secrets` |
+| `ids.py` | `room_id`, `peer_id`, `peer_token` 생성, `room_id` 정규화(2.1), `client_nonce`·`peer_token` 형식 검사, `name` 형식 검사와 비교 키(2.7) | `secrets` |
 | `candidates.py` | 4.4 위생. 후보 형식 검사와 10.1 규칙 | `ipaddress` 는 쓰지 않는다. 아래 |
 | `clock.py` | 7.4 시계의 세 값 | `time`, `/proc/sys/kernel/random/boot_id` |
 | `store.py` | `boto3` 호출 전부. 6.3 항목의 조건식이 **이 파일에만** 있다 | `boto3` |
@@ -1793,7 +1797,7 @@ Phase 3 의 검증 항목은 [`roadmap.md`](roadmap.md) 가 갖는다. 그 항�
 `control-server/tests/` 에 있다.** 이 문서는 규칙을 갖고, 각 절이 자기 표의 파일을 가리킨다. 문서에
 표 한 벌, 시험에 한 벌을 두지 않는다.
 
-- 케이스 표가 있는 자리는 2.1 `room_id`, 3.3 HTTP 부분집합, 4.4 `register_candidate`(후보
+- 케이스 표가 있는 자리는 2.1 `room_id`, 2.7 `name`, 3.3 HTTP 부분집합, 4.4 `register_candidate`(후보
   위생), 4.5 `get_peers`(원소의 필드 집합), 4.6 `host_report`(회수·확인 경합), 5.1 방,
   6.4 속도 제한, 7.4 시계다
 - 저장소가 있어야 도는 행은 `needs="store"` 로 표시되어 있고 그때까지 건너뛴다

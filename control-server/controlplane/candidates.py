@@ -67,15 +67,16 @@ def _check_shape(raw: object) -> list[tuple[tuple[int, int, int, int], dict]]:
 def _sanitation_reject(octets: tuple[int, int, int, int], port: int) -> bool:
     """protocol.md 10.1 위생 규칙. 걸리면 그 후보만 버린다.
 
-    브로드캐스트는 255.255.255.255 하나다. 서버는 피어의 prefix 를 받지 않아 directed broadcast 를
-    가릴 수 없다. 미지정은 0.0.0.0 하나다 (10.1 이 그 값을 적었다).
+    서버가 판정하는 대역은 10.1 의 목록에서 자기 서브넷 행을 뺀 그대로다 (control_plane.md 4.4). 서버는
+    피어의 prefix 를 받지 않아 directed broadcast 를 가릴 수 없다. 제한 브로드캐스트 255.255.255.255 는
+    예약 대역이, 미지정 0.0.0.0 은 "이 네트워크" 대역이 덮는다 (10.1).
     """
     first = octets[0]
-    if octets == (255, 255, 255, 255):  # 브로드캐스트
+    if first == 0:  # "이 네트워크" 0.0.0.0/8. 미지정 0.0.0.0 을 포함한다
         return True
     if 224 <= first <= 239:  # 멀티캐스트 224.0.0.0/4
         return True
-    if octets == (0, 0, 0, 0):  # 미지정
+    if first >= 240:  # 예약 240.0.0.0/4. 제한 브로드캐스트 255.255.255.255 를 포함한다
         return True
     if first == 127:  # 루프백 127.0.0.0/8
         return True

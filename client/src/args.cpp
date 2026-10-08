@@ -1,6 +1,7 @@
 #include "sangtachi/args.hpp"
 
 #include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/tunnel/packet.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -164,6 +165,8 @@ std::string_view to_token(ArgError error) noexcept {
         case ArgError::MissingServer:   return "missing_server";
         case ArgError::MissingRoom:     return "missing_room";
         case ArgError::RoomWithoutRole: return "room_without_role";
+        case ArgError::BadName:         return "bad_name";
+        case ArgError::MissingName:     return "missing_name";
     }
     return "unknown";
 }
@@ -192,7 +195,7 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
 
         const bool takes_value =
             token == "--server" || token == "--room" ||
-            token == "--stun" || token == "--peer";
+            token == "--stun" || token == "--peer" || token == "--name";
         if (!takes_value) {
             return fail(ArgError::UnknownOption, token);
         }
@@ -220,6 +223,13 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
                 return fail(ArgError::BadRoom, value);
             }
             args.room = std::move(*room);
+        } else if (token == "--name") {
+            // control_plane.md 2.7. 판정은 ROSTER 의 이름과 같은 함수다. 규칙을 두 벌 두지 않는다.
+            // 앞뒤 공백을 지워 주지 않고 대소문자를 바꾸지 않는다.
+            if (!tunnel::is_valid_name(value)) {
+                return fail(ArgError::BadName, value);
+            }
+            args.name = std::string(value);
         } else {  // --peer
             // Endpoint::parse 를 쓰지 않는다. 그것은 성공과 실패만 돌려주므로 주소가
             // 틀린 것인지 포트가 틀린 것인지를 오류 코드로 가를 수 없다.
@@ -258,6 +268,12 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
     // 한 번이고 역할 인자가 없어도 한다 (control_plane.md 8.4 의 2번).
     if (!args.server) {
         return fail(ArgError::MissingServer, "--server");
+    }
+    // 표시 이름은 Phase 4 이후 필수다 (architecture.md 3.5 의 "필수" 열). 기본값을 지어내지 않는다.
+    // 지어낸 이름은 같은 방의 다른 프로세스와 겹쳐 name_taken 이 되고, 사람이 정하지 않은 이름이
+    // FAIL 줄의 <상대> 에 나간다 (spec.md FR-16).
+    if (!args.name) {
+        return fail(ArgError::MissingName, "--name");
     }
 
     ParseResult result;

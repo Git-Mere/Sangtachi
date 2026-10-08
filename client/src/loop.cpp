@@ -274,7 +274,7 @@ void EventLoop::handle_command(std::string_view line) {
     if (command.empty()) {
         return;
     }
-    // 로비 명령이 먼저다. 첫 낱말이 정확히 host, join, leave 일 때만 값이 있다
+    // 로비 명령이 먼저다. 첫 낱말이 정확히 host, join, leave, name 일 때만 값이 있다
     // (control/lobby.hpp 의 parse_lobby_command). 형식 검사와 WARN 은 로비가 한다.
     if (on_lobby_command_) {
         if (const auto lobby_command = control::parse_lobby_command(command)) {

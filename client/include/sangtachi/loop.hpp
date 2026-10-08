@@ -140,7 +140,7 @@ public:
 
     [[nodiscard]] control::ControlChannel* control() const noexcept { return control_; }
 
-    // 로비 명령(`host`, `join`, `leave`)을 넘길 곳 (architecture.md 3.5 로비 명령).
+    // 로비 명령(`host`, `join`, `leave`, `name`)을 넘길 곳 (architecture.md 3.5 로비 명령).
     //
     // 콘솔 줄은 control::parse_lobby_command 가 먼저 본다. 로비 명령이면 여기로 가고, 아니면
     // quit, counters, raw 의 기존 경로다. 비워 두면 로비 명령도 기존 경로로 가서

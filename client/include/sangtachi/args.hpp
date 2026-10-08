@@ -3,7 +3,7 @@
 // 기동 인자 파싱 (architecture.md 3.5 기동 입력).
 //
 // 이 파일은 형식과 필수 여부를 판정한다. 필수 판정은 architecture.md 3.5 표의 "필수" 열이
-// 정한다. 이 코드는 Phase 3 이후의 열을 따른다.
+// 정한다. 이 코드는 Phase 4 이후의 열을 따른다.
 //
 // | 입력 | 필수 | 없거나 어긋나면 |
 // |------|------|-----------------|
@@ -11,6 +11,10 @@
 // | `--room` | `player` 는 항상 | MissingRoom |
 // | `--room` 을 `host` 에 | 주면 기동 실패 | RoomWithHost |
 // | `--room` 을 역할 없이 | 주면 기동 실패 | RoomWithoutRole |
+// | `--name` | 예 (Phase 4 이후) | MissingName |
+//
+// 필수 판정의 순서는 위 표의 순서다. 문서는 순서를 정하지 않는다. `--name` 을 맨 뒤에 둔 것은
+// Phase 3 까지의 오류 토큰이 같은 입력에서 그대로 나오게 하려는 것이다.
 //
 // 역할은 어느 구간에서나 없어도 기동하고, 그때는 로비에서 시작한다.
 //
@@ -55,6 +59,9 @@ struct Args {
     std::optional<std::string> room;   // control_plane.md 2.1 대로 대문자로 정규화한 값
     std::vector<HostPort> stun;        // 비어 있으면 architecture.md 3.5 의 기본 목록
     std::optional<network::Endpoint> peer;
+    // 표시 이름. control_plane.md 2.7 의 형식을 지난 값이고 대소문자는 받은 그대로다.
+    // 이 프로세스의 모든 방 만들기와 참가가 이 이름으로 시작한다. 로비 명령 name 이 바꾼다.
+    std::optional<std::string> name;
 };
 
 // 실패 이유. 로그에 싣는 값이라 토큰이 바뀌면 시험도 같이 낡는다.
@@ -77,6 +84,8 @@ enum class ArgError {
     MissingServer,    // --server 가 없다. Phase 3 이후 필수다
     MissingRoom,      // player 인데 --room 이 없다
     RoomWithoutRole,  // 역할 없이 --room 을 줬다. Phase 3 이후 기동 실패다
+    BadName,          // --name 이 control_plane.md 2.7 의 형식이 아니다
+    MissingName,      // --name 이 없다. Phase 4 이후 필수다
 };
 
 // 로그와 시험이 쓰는 고정 토큰.

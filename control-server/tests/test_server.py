@@ -932,7 +932,7 @@ def test_process_stops_without_waiting_for_dispatch(tmp_path):
     try:
         proc, err_lines, port = _launch(env, root)
         client = socket.create_connection((HOST, port), timeout=DEADLINE_S)
-        client.sendall(http("create_room", {"client_nonce": "d" * 32}))
+        client.sendall(http("create_room", {"client_nonce": "d" * 32, "name": "Host"}))
         deadline = time.monotonic() + 20
         while not hole.accepted:
             assert time.monotonic() < deadline, "dispatch 가 저장소에 닿지 않았다"
@@ -1116,9 +1116,9 @@ def test_smoke_with_real_ops(store, lines):
     async def go():
         server = Server(service.dispatch, service_counters=service.counters)
         async with Running(server) as running:
-            created = parse(await running.exchange(http("create_room", {"client_nonce": host_nonce})))
+            created = parse(await running.exchange(http("create_room", {"client_nonce": host_nonce, "name": "Host"})))
             room_id = created[1].get("room_id", "")
-            joined = parse(await running.exchange(http("join_room", {"room_id": room_id,
+            joined = parse(await running.exchange(http("join_room", {"room_id": room_id, "name": "Joiner",
                                                                      "client_nonce": join_nonce})))
         return created, joined
 

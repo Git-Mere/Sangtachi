@@ -44,7 +44,8 @@ CANDIDATE_CASES = [
     dict(id="reflexive-ok", send=[C("203.0.113.7", 51000, "reflexive")], expect=(1, 0),
          stored=[("203.0.113.7", 51000, "reflexive")], result="저장. `accepted`+1", note="정상 반사 후보"),
     dict(id="broadcast", send=[GOOD, C("255.255.255.255", 51000, "local")], expect=(1, 1),
-         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1", note="10.1 브로드캐스트"),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1",
+         note="10.1 예약 `240.0.0.0/4` 가 제한 브로드캐스트를 덮는다"),
     dict(id="multicast-224", send=[GOOD, C("224.0.0.1", 51000, "local")], expect=(1, 1),
          stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1",
          note="10.1 멀티캐스트 `224.0.0.0/4`"),
@@ -52,7 +53,8 @@ CANDIDATE_CASES = [
          stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1",
          note="10.1 멀티캐스트 `224.0.0.0/4`"),
     dict(id="unspecified", send=[GOOD, C("0.0.0.0", 51000, "local")], expect=(1, 1),
-         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1", note="10.1 미지정"),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1",
+         note="10.1 \"이 네트워크\" `0.0.0.0/8` 이 미지정을 덮는다"),
     dict(id="loopback", send=[GOOD, C("127.0.0.1", 51000, "local")], expect=(1, 1),
          stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기. `rejected`+1",
          note="10.1 루프백. 수신 출발지 위생(7장)과 달리 후보 목록은 루프백을 거부한다"),
@@ -127,18 +129,32 @@ ORDER_CASES = [
 ]
 
 # 출처: control_plane.md 4.4 의 "서버가 판정하는 대역은 10.1 의 목록에서 자기 서브넷 행을 뺀 그대로다" 문단.
+# 멀티캐스트 224.0.0.0/4, 예약 240.0.0.0/4(제한 브로드캐스트 포함), "이 네트워크" 0.0.0.0/8(미지정 포함),
+# 루프백 127.0.0.0/8. 대역의 양 끝과 바로 바깥을 본다.
 BAND_CASES = [
     dict(id="loopback-127-8", send=[GOOD, C("127.1.2.3", 51000, "local")], expect=(1, 1),
          stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기",
          note="루프백은 `127.0.0.0/8` 전체다 (protocol.md 10.1). 위생 표 행은 127.0.0.1 뿐이다"),
     dict(id="octet-255-ok", send=[C("10.0.0.255")], expect=(1, 0), stored=[("10.0.0.255", 51000, "local")],
          result="저장", note="서버는 피어의 prefix 를 받지 않으므로 directed broadcast 를 판정할 수 없다. 10.0.0.255 는 저장한다. 7.1 옥텟 상한 안쪽이기도 하다"),
-    dict(id="zero-net-not-unspecified", send=[C("0.0.0.1")], expect=(1, 0), stored=[("0.0.0.1", 51000, "local")],
-         result="저장", note="미지정은 0.0.0.0 하나다. 0.0.0.0/8 의 나머지는 10.1 목록에 없어 저장한다"),
+    dict(id="this-network-0-0-0-1", send=[GOOD, C("0.0.0.1")], expect=(1, 1),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기",
+         note="\"이 네트워크\" 0.0.0.0/8 은 미지정 0.0.0.0 하나가 아니라 대역 전체다. 미지정만 거부하는 구현이 걸린다"),
+    dict(id="this-network-top", send=[GOOD, C("0.255.255.255")], expect=(1, 1),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기", note="0.0.0.0/8 의 위 끝"),
+    dict(id="above-this-network", send=[C("1.0.0.0")], expect=(1, 0), stored=[("1.0.0.0", 51000, "local")],
+         result="저장", note="0.0.0.0/8 의 바로 위. 대역을 넓게 잡은 구현이 걸린다"),
     dict(id="below-multicast", send=[C("223.255.255.255")], expect=(1, 0),
          stored=[("223.255.255.255", 51000, "local")], result="저장", note="멀티캐스트 224.0.0.0/4 의 바로 아래"),
-    dict(id="above-multicast", send=[C("240.0.0.1")], expect=(1, 0), stored=[("240.0.0.1", 51000, "local")],
-         result="저장", note="240.0.0.0/4 는 10.1 목록에 없어 저장한다. 멀티캐스트 바로 위"),
+    dict(id="reserved-240-0-0-0", send=[GOOD, C("240.0.0.0")], expect=(1, 1),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기",
+         note="예약 240.0.0.0/4 의 아래 끝. 멀티캐스트 바로 위다"),
+    dict(id="reserved-240-0-0-1", send=[GOOD, C("240.0.0.1")], expect=(1, 1),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기",
+         note="예약 240.0.0.0/4. 제한 브로드캐스트 하나만 거부하는 구현이 걸린다"),
+    dict(id="reserved-255-255-255-254", send=[GOOD, C("255.255.255.254")], expect=(1, 1),
+         stored=[("192.168.0.10", 51000, "local")], result="그 후보만 폐기",
+         note="예약 240.0.0.0/4 의 위 끝 바로 아래. 제한 브로드캐스트는 broadcast 행이 본다"),
 ]
 
 # 문서 표에 없는 행. 각 note 에 출처를 적는다. 표의 행만으로는 지키지 못하는 규칙을 지킨다.
@@ -162,13 +178,16 @@ CANDIDATE_EXTRA_CASES = [
 ]
 
 # 출처: control_plane.md 4.4 의 거부 정책 표. 두 행이고 각 행이 나열한 경우마다 한 원소다.
-# 각 원소는 그 경우를 대표하는 CANDIDATE_CASES 의 id 를 가리킨다. 여기서는 결과의 종류만 본다.
+# 각 원소는 그 경우를 대표하는 CANDIDATE_CASES 나 BAND_CASES 의 id 를 가리킨다. 여기서는 결과의 종류만 본다.
 #   ok        True 면 응답 ok 에 rejected 가 0 이 아니고, False 면 요청 전체 bad_request
 POLICY_CASES = [
     dict(id="sanitation-broadcast", row="위생 거부", case="broadcast", ok=True,
          note="그 후보만 버리고 나머지를 저장한다. `rejected` 를 올리고 응답은 `ok` 다"),
     dict(id="sanitation-multicast", row="위생 거부", case="multicast-224", ok=True, note="위와 같다"),
     dict(id="sanitation-unspecified", row="위생 거부", case="unspecified", ok=True, note="위와 같다"),
+    dict(id="sanitation-reserved", row="위생 거부", case="reserved-240-0-0-1", ok=True, note="예약. 위와 같다"),
+    dict(id="sanitation-this-network", row="위생 거부", case="this-network-0-0-0-1", ok=True,
+         note="\"이 네트워크\". 위와 같다"),
     dict(id="sanitation-loopback", row="위생 거부", case="loopback", ok=True, note="위와 같다"),
     dict(id="sanitation-port-0", row="위생 거부", case="port-0", ok=True,
          note="`10.0.0.5:0` 은 형으로는 정수 `0` 이고 규칙이 그 값을 거부하는 것이라 위생 거부다"),
@@ -182,7 +201,7 @@ POLICY_CASES = [
     dict(id="type-empty", row="형 위반", case="empty", ok=False, note="목록이 비었다"),
 ]
 
-_BY_ID = {c["id"]: c for c in CANDIDATE_CASES}
+_BY_ID = {c["id"]: c for c in CANDIDATE_CASES + BAND_CASES}
 
 
 def _run(send):

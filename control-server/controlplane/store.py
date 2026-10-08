@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -30,8 +30,8 @@ import boto3.session
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from botocore.exceptions import ClientError
 
-from controlplane import ops
-from controlplane.constants import JOIN_REGISTER_GRACE_S, PUNCH_DELAY_MS, ROOM_LEASE_S, STORAGE_GRACE_S
+from controlplane import ids, ops
+from controlplane.constants import JOIN_REGISTER_GRACE_S, MAX_NAME_LEN, PUNCH_DELAY_MS, ROOM_LEASE_S, STORAGE_GRACE_S
 from controlplane.errors import OpError
 
 # 2.5 가상 IP 풀. 호스트(방 생성자)의 주소다. 참가자 풀의 순회는 부르는 쪽이 한다.
@@ -40,13 +40,15 @@ HOST_VIRTUAL_IP = "10.100.0.1"
 ROOM_SK = "ROOM"
 NONCE_SK = "NONCE"
 
-# 6.3 항목 표의 sk 형식. 방 파티션의 sk 는 이 넷 가운데 하나와 전체 일치해야 한다. 아니면 판정 불가다.
+# 6.3 항목 표의 sk 형식. 방 파티션의 sk 는 이 다섯 가운데 하나와 전체 일치해야 한다. 아니면 판정 불가다.
 # [0-9] 를 쓴다. \d 는 ASCII 밖의 숫자도 받는다. 선행 0 은 받지 않는다 (10진수 표기가 하나여야 한다).
 _DEC = "(?:[1-9][0-9]{0,9})"
 _OCTET = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])"
 _PEER_SK = re.compile(f"PEER#({_DEC})")
 _VIP_SK = re.compile(f"VIP#({_OCTET}(?:\\.{_OCTET}){{3}})")
 _PAIR_SK = re.compile(f"PAIR#({_DEC})-({_DEC})")
+# NAME#<이름 키>. 키는 2.7 의 63자 이름을 ASCII 소문자로 바꾼 값이라 [a-z0-9_] 1~MAX_NAME_LEN 자다.
+_NAME_SK = re.compile(f"NAME#([a-z0-9_]{{1,{MAX_NAME_LEN}}})")
 _UINT32_MAX = 2**32 - 1
 
 # ---------------------------------------------------------------- 결과 값
@@ -55,9 +57,10 @@ CREATED = "created"
 JOINED = "joined"
 NONCE_EXISTS = "nonce_exists"      # 취소 사유 1. NONCE# 를 다시 읽어 같은 응답을 조립한다
 ROOM_GONE = "room_gone"            # 취소 사유 2. 방을 다시 읽어 room_not_found / room_expired
-VIP_TAKEN = "vip_taken"            # 취소 사유 3. 다음 주소. 풀이 끝나면 room_full
-PEER_ID_TAKEN = "peer_id_taken"    # 취소 사유 4. peer_id 재추첨 (MAX_PEER_ID_ATTEMPTS)
-ROOM_ID_TAKEN = "room_id_taken"    # 취소 사유 5. room_id 재추첨 (MAX_ROOM_ID_ATTEMPTS)
+NAME_TAKEN = "name_taken"          # 취소 사유 3. name_taken. 다음 주소로 넘어가지 않는다
+VIP_TAKEN = "vip_taken"            # 취소 사유 4. 다음 주소. 풀이 끝나면 room_full
+PEER_ID_TAKEN = "peer_id_taken"    # 취소 사유 5. peer_id 재추첨 (MAX_PEER_ID_ATTEMPTS)
+ROOM_ID_TAKEN = "room_id_taken"    # 취소 사유 6. room_id 재추첨 (MAX_ROOM_ID_ATTEMPTS)
 CONFIRMED = "confirmed"
 ALREADY_CONFIRMED = "already_confirmed"   # PAIR# put 조건만 실패. 오류가 아니다
 NOT_ELIGIBLE = "not_eligible"             # 두 ConditionCheck 중 하나가 실패. 쓰지 않는다
@@ -66,6 +69,7 @@ NOT_ELIGIBLE = "not_eligible"             # 두 ConditionCheck 중 하나가 실
 _NONCE = "nonce"
 _ROOM_CHECK = "room_check"
 _VIP = "vip"
+_NAME = "name"
 _PEER = "peer"
 _ROOM_PUT = "room_put"
 _PEER_CHECK = "peer_check"
@@ -73,10 +77,11 @@ _PAIR = "pair"
 _OTHER = "other"   # 조건 없는 delete. 조건 실패가 날 수 없다
 
 # 6.3 취소 사유 표의 2번부터의 순서. 1번(NONCE#)은 classify_cancel 이 다른 사유보다 먼저 본다.
-# 연산마다 그 연산의 트랜잭션에 있는 행만 쓴다.
-_JOIN_PRIORITY = (_ROOM_CHECK, _VIP, _PEER)
-# create_room 은 6.3 쓰기 표의 행을 따른다. ROOM put 실패가 PEER#·VIP# 실패를 설명한다(앞선 방이
-# 있다). ROOM 없이 PEER#·VIP# 만 실패하면 순서에 없으므로 internal 이다.
+# 연산마다 그 연산의 트랜잭션에 있는 행만 쓴다. NAME#(3번)가 VIP#(4번)보다 먼저다. VIP# 를 먼저 보면 다음
+# 주소로 넘어가 이름이 계속 겹치는 시도를 풀 크기만큼 되풀이한 뒤 room_full 을 돌려준다.
+_JOIN_PRIORITY = (_ROOM_CHECK, _NAME, _VIP, _PEER)
+# create_room 은 1번 다음에 6번을 본다 (6.3 표 아래 첫 불릿). ROOM put 실패가 PEER#·VIP#·NAME# 실패를
+# 설명한다(앞선 방이 있다). ROOM 없이 PEER#·VIP#·NAME# 만 실패하면 순서에 없으므로 internal 이다.
 _CREATE_PRIORITY = (_ROOM_PUT,)
 _CONFIRM_PRIORITY = (_PEER_CHECK, _PAIR)
 _DELETE_PRIORITY = (_PEER,)
@@ -151,6 +156,11 @@ def vip_sk(virtual_ip: str) -> str:
     return f"VIP#{virtual_ip}"
 
 
+def name_sk(key: str) -> str:
+    """6.3 NAME#<이름 키>. key 는 ids.name_key 의 결과다."""
+    return f"NAME#{key}"
+
+
 def nonce_pk(client_nonce: str) -> str:
     return f"NONCE#{client_nonce}"
 
@@ -186,16 +196,17 @@ def _to_candidates(value: object) -> list[dict]:
 
 
 _ROOM_ATTRS = {"created_at_ms": _to_int, "expires_at_ms": _to_int, "host_peer_id": _to_int, "ttl": _to_int}
-_PEER_ATTRS = {"peer_id": _to_int, "peer_token": _to_str, "virtual_ip": _to_str, "client_nonce": _to_str,
-               "joined_at_ms": _to_int, "ttl": _to_int}
+_PEER_ATTRS = {"peer_id": _to_int, "peer_token": _to_str, "virtual_ip": _to_str, "name": _to_str,
+               "client_nonce": _to_str, "joined_at_ms": _to_int, "ttl": _to_int}
 _VIP_ATTRS = {"peer_id": _to_int, "ttl": _to_int}
+_NAME_ATTRS = {"peer_id": _to_int, "ttl": _to_int}
 _PAIR_ATTRS = {"ready_at_wall_ms": _to_int, "ready_at_mono_ns": _to_int, "ready_boot_id": _to_str,
                "punch_delay_ms": _to_int, "ttl": _to_int}
 _NONCE_ATTRS = {"room_id": _to_str, "peer_id": _to_int, "ttl": _to_int}
 
 
 def sk_kind(sk: str) -> str:
-    """방 파티션 sk 의 종류. "ROOM", "PEER", "VIP", "PAIR". 6.3 항목 표의 형식과 전체 일치하지 않으면
+    """방 파티션 sk 의 종류. "ROOM", "PEER", "VIP", "NAME", "PAIR". 6.3 항목 표의 형식과 전체 일치하지 않으면
     판정 불가(_Unreadable)다. 접두어만 보지 않는다.
     """
     if sk == ROOM_SK:
@@ -205,6 +216,8 @@ def sk_kind(sk: str) -> str:
         return "PEER"
     if _VIP_SK.fullmatch(sk) is not None:
         return "VIP"
+    if _NAME_SK.fullmatch(sk) is not None:
+        return "NAME"
     m = _PAIR_SK.fullmatch(sk)
     if m is not None and int(m.group(1)) < int(m.group(2)) <= _UINT32_MAX:
         return "PAIR"
@@ -258,6 +271,7 @@ class RoomView:
     room: dict | None = None
     peers: dict[int, dict] = field(default_factory=dict)
     vips: dict[str, int] = field(default_factory=dict)          # virtual_ip -> peer_id
+    names: dict[str, int] = field(default_factory=dict)         # 이름 키 -> peer_id. 회수가 peer_id 로 찾는다 (4.6)
     pairs: dict[str, dict] = field(default_factory=dict)        # PAIR#<lo>-<hi> -> 항목
     unreadable_peers: list[dict] = field(default_factory=list)  # lenient 일 때만 찬다
     sks: list[str] = field(default_factory=list)                # 이 파티션의 모든 sk. 갱신 쓰기의 목록
@@ -412,6 +426,8 @@ class Store:
                     view.peers[peer["peer_id"]] = peer
             elif kind == "VIP":
                 view.vips[sk[len("VIP#"):]] = _convert(item, _VIP_ATTRS)["peer_id"]
+            elif kind == "NAME":
+                view.names[sk[len("NAME#"):]] = _convert(item, _NAME_ATTRS)["peer_id"]
             else:
                 view.pairs[sk] = _convert(item, _PAIR_ATTRS)
         except _Unreadable:
@@ -420,8 +436,10 @@ class Store:
     # ------------------------------------------------------------ 쓰기 (6.3 쓰기 표)
 
     def create_room(self, room_id: str, host_peer_id: int, peer_token: str, client_nonce: str,
-                    now_ms: int) -> str:
+                    now_ms: int, name: str) -> str:
         """create_room 트랜잭션. CREATED, NONCE_EXISTS, ROOM_ID_TAKEN. 그 밖은 internal.
+
+        name 은 ids.check_name 을 통과한 표시 이름이다. PEER# 에는 그대로, NAME# 의 키는 소문자다 (2.7, 6.3).
 
         처음 expires_at_ms 는 now + ROOM_LEASE_S * 1000 이다 (6.3 ROOM 행). store 가 계산한다. 부르는 쪽은
         응답의 expires_in_s 를 get_room 이나 이 값으로 다시 만든다 (같은 공식: created_expires_at).
@@ -429,40 +447,47 @@ class Store:
         expires_at_ms = created_expires_at(now_ms)
         ttl = ttl_for(expires_at_ms)
         room = {"created_at_ms": now_ms, "expires_at_ms": expires_at_ms, "host_peer_id": host_peer_id, "ttl": ttl}
-        host = {"peer_id": host_peer_id, "peer_token": peer_token, "virtual_ip": HOST_VIRTUAL_IP,
+        host = {"peer_id": host_peer_id, "peer_token": peer_token, "virtual_ip": HOST_VIRTUAL_IP, "name": name,
                 "client_nonce": client_nonce, "joined_at_ms": now_ms, "ttl": ttl}
         vip = {"peer_id": host_peer_id, "ttl": ttl}
+        claim = {"peer_id": host_peer_id, "ttl": ttl}
         nonce = {"room_id": room_id, "peer_id": host_peer_id, "ttl": ttl}
         items = [
             self._put(room_id, ROOM_SK, room, _IF_ABSENT),
             self._put(room_id, peer_sk(host_peer_id), host, _IF_ABSENT),
             self._put(room_id, vip_sk(HOST_VIRTUAL_IP), vip, _IF_ABSENT),
+            self._put(room_id, name_sk(ids.name_key(name)), claim, _IF_ABSENT),
             self._put(nonce_pk(client_nonce), NONCE_SK, nonce, _IF_ABSENT),
         ]
-        kind = self._transact("create_room", ROOM_SK, items, (_ROOM_PUT, _PEER, _VIP, _NONCE), _CREATE_PRIORITY)
+        kind = self._transact("create_room", ROOM_SK, items, (_ROOM_PUT, _PEER, _VIP, _NAME, _NONCE),
+                              _CREATE_PRIORITY)
         return {None: CREATED, _NONCE: NONCE_EXISTS, _ROOM_PUT: ROOM_ID_TAKEN}[kind]
 
     def join_room(self, room_id: str, virtual_ip: str, peer_id: int, peer_token: str, client_nonce: str,
-                  now_ms: int, expires_at_ms: int) -> str:
-        """join_room 새 참가의 한 주소. JOINED, NONCE_EXISTS, ROOM_GONE, VIP_TAKEN, PEER_ID_TAKEN.
+                  now_ms: int, expires_at_ms: int, name: str) -> str:
+        """join_room 새 참가의 한 주소. JOINED, NONCE_EXISTS, ROOM_GONE, NAME_TAKEN, VIP_TAKEN, PEER_ID_TAKEN.
+
+        name 은 ids.check_name 을 통과한 표시 이름이다. NAME# 조건부 쓰기가 방 안 유일성을 보장한다 (2.7, 6.3).
 
         expires_at_ms 는 사전 읽기의 ROOM 값이다. 새 항목의 ttl 을 거기서 만든다 (6.5).
         후보 속성(candidates)은 쓰지 않는다. 등록 전 피어는 그 속성이 없다 (6.3 형 변환의 예외 1).
         """
         ttl = ttl_for(expires_at_ms)
         vip = {"peer_id": peer_id, "ttl": ttl}
-        peer = {"peer_id": peer_id, "peer_token": peer_token, "virtual_ip": virtual_ip,
+        peer = {"peer_id": peer_id, "peer_token": peer_token, "virtual_ip": virtual_ip, "name": name,
                 "client_nonce": client_nonce, "joined_at_ms": now_ms, "ttl": ttl}
+        claim = {"peer_id": peer_id, "ttl": ttl}
         nonce = {"room_id": room_id, "peer_id": peer_id, "ttl": ttl}
         items = [
             self._check(room_id, ROOM_SK, _JOIN_ROOM_IF, {":now": now_ms}),
             self._put(room_id, vip_sk(virtual_ip), vip, _IF_ABSENT),
+            self._put(room_id, name_sk(ids.name_key(name)), claim, _IF_ABSENT),
             self._put(room_id, peer_sk(peer_id), peer, _IF_ABSENT),
             self._put(nonce_pk(client_nonce), NONCE_SK, nonce, _IF_ABSENT),
         ]
-        kind = self._transact("join_room", vip_sk(virtual_ip), items, (_ROOM_CHECK, _VIP, _PEER, _NONCE),
+        kind = self._transact("join_room", vip_sk(virtual_ip), items, (_ROOM_CHECK, _VIP, _NAME, _PEER, _NONCE),
                               _JOIN_PRIORITY)
-        return {None: JOINED, _NONCE: NONCE_EXISTS, _ROOM_CHECK: ROOM_GONE, _VIP: VIP_TAKEN,
+        return {None: JOINED, _NONCE: NONCE_EXISTS, _ROOM_CHECK: ROOM_GONE, _NAME: NAME_TAKEN, _VIP: VIP_TAKEN,
                 _PEER: PEER_ID_TAKEN}[kind]
 
     def register_candidates(self, room_id: str, peer_id: int, peer_token: str, candidates: list[dict]) -> bool:
@@ -474,38 +499,47 @@ class Store:
                                                                                   ":t": peer_token})))
 
     def release_peer(self, room_id: str, peer_id: int, virtual_ip: str, host_peer_id: int,
-                     client_nonce: str | None = None) -> bool:
-        """host_report 회수 (departed). PEER#, 그 VIP#, 그 쌍의 PAIR#, 그 피어의 NONCE# 를 지운다.
-        이미 없던 대상이면 False.
+                     client_nonce: str | None = None, name_keys: Sequence[str] = ()) -> bool:
+        """host_report 회수 (departed). PEER#, 그 VIP#, 그 피어의 NAME#, 그 쌍의 PAIR#, 그 피어의 NONCE# 를
+        지운다. 이미 없던 대상이면 False.
+
+        name_keys 는 부르는 쪽이 첫 Query 에서 peer_id 가 그 피어인 NAME# 를 고른 키다. PEER# 의 name 으로
+        만들지 않는다 (4.6). 비어 있으면 NAME# 없이 지운다. NAME# delete 는 조건이 없다.
 
         NONCE# 는 서버 회수와 같이 조건 없는 delete 다. 그래서 회수된 피어가 같은 nonce 로 다시 오면 새
         참가다. client_nonce 가 None 이면 부르는 쪽이 PEER# 의 client_nonce 를 읽지 못한 것이다. 그때는
         NONCE# 만 건너뛰고 나머지는 지운다 (디렉터 결정. 피어를 남기는 것보다 낫다).
         """
         sk = peer_sk(peer_id)
+        keys = list(name_keys)
         items = [
             self._delete(room_id, sk, _IF_EXISTS),
             self._delete(room_id, vip_sk(virtual_ip)),
+            *(self._delete(room_id, name_sk(key)) for key in keys),
             self._delete(room_id, ops.pair_sk(host_peer_id, peer_id)),
         ]
-        layout = (_PEER, _OTHER, _OTHER)
+        layout = (_PEER, _OTHER, *(_OTHER for _ in keys), _OTHER)
         if client_nonce is not None:
             items.append(self._delete(nonce_pk(client_nonce), NONCE_SK))
             layout = (*layout, _OTHER)
         return self._transact("release_peer", sk, items, layout, _DELETE_PRIORITY) is None
 
-    def reclaim_peer(self, room_id: str, peer_id: int, virtual_ip: str, client_nonce: str, now_ms: int) -> bool:
-        """host_report 서버 회수. PEER#, 그 VIP#, 그 NONCE# 를 지운다. 조건이 실패하면 False
-        (그 사이 등록했거나, 유예가 안 지났거나, 이미 없다).
+    def reclaim_peer(self, room_id: str, peer_id: int, virtual_ip: str, client_nonce: str, now_ms: int,
+                     name_keys: Sequence[str] = ()) -> bool:
+        """host_report 서버 회수. PEER#, 그 VIP#, 그 피어의 NAME#, 그 NONCE# 를 지운다. 조건이 실패하면 False
+        (그 사이 등록했거나, 유예가 안 지났거나, 이미 없다). name_keys 는 release_peer 와 같다.
         """
         sk = peer_sk(peer_id)
         cutoff = now_ms - JOIN_REGISTER_GRACE_S * 1000
+        keys = list(name_keys)
         items = [
             self._delete(room_id, sk, _RECLAIM_IF, {":zero": 0, ":cutoff": cutoff}),
             self._delete(room_id, vip_sk(virtual_ip)),
+            *(self._delete(room_id, name_sk(key)) for key in keys),
             self._delete(nonce_pk(client_nonce), NONCE_SK),
         ]
-        return self._transact("reclaim_peer", sk, items, (_PEER, _OTHER, _OTHER), _DELETE_PRIORITY) is None
+        layout = (_PEER, _OTHER, *(_OTHER for _ in keys), _OTHER)
+        return self._transact("reclaim_peer", sk, items, layout, _DELETE_PRIORITY) is None
 
     def confirm_pair(self, room_id: str, host_peer_id: int, other_peer_id: int, ready_at_wall_ms: int,
                      ready_at_mono_ns: int, ready_boot_id: str, expires_at_ms: int) -> str:

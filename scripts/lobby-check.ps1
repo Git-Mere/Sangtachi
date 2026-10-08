@@ -1,5 +1,5 @@
 ﻿# Phase 3 의 로비와 클라이언트 쪽 계약을 끝에서 끝까지 본다 (roadmap.md Phase 3 검증의 "로비" 와
-# "클라이언트 쪽 계약"). Phase 2 의 STUN 확인 셋도 여기 있다. 통합 뒤 STUN 은 기동 시가 아니라 시도마다
+# "클라이언트 쪽 계약"). Phase 4 의 표시 이름(로비 명령 name, name_taken)도 여기 있다 (장면 name). Phase 2 의 STUN 확인 셋도 여기 있다. 통합 뒤 STUN 은 기동 시가 아니라 시도마다
 # create_room 이나 join_room 뒤에 돌기 때문이다 (control_plane.md 8.4).
 # 이 스크립트가 출력하는 문자열은 ASCII 로만 적는다. 이유는 build.ps1 머리에 있다.
 #
@@ -49,7 +49,7 @@ if (-not (Test-Path -LiteralPath $py -PathType Leaf)) {
     throw "control-server venv not found: $py. See control-server/README.md (Tests) to create it."
 }
 
-$scenarioNames = @('no-role', 'bad-room-join', 'rejoin', 'in-room', 'leave-pending', 'host-report-stop',
+$scenarioNames = @('no-role', 'bad-room-join', 'rejoin', 'name', 'in-room', 'leave-pending', 'host-report-stop',
     'host-report-rate', 'retry-definite', 'retry-transient', 'retry-after-commit', 'loop-alive', 'stun')
 # pwsh -File 은 쉼표 목록을 문자열 하나로 넘긴다. 여기서 가른다.
 $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -230,8 +230,16 @@ function New-MissingRoom {
     }
 }
 
+# 클라이언트마다 다른 표시 이름. --name 은 Phase 4 이후 필수이고 방 안에서 유일해야 한다 (architecture.md 3.5,
+# control_plane.md 2.7). 장면 이름에는 2.7 밖의 글자(붙임표)가 있어 그대로 쓰지 않는다.
+$script:nameSeq = 0
+
 function Start-Client([string]$name, [string[]]$clientArgs = @(), [string]$exePath = $script:exe) {
     if ($clientArgs -notcontains '--server') { $clientArgs = @('--server', "127.0.0.1:$script:cpPort") + $clientArgs }
+    if ($clientArgs -notcontains '--name') {
+        $script:nameSeq++
+        $clientArgs = @('--name', "c$($script:nameSeq)") + $clientArgs
+    }
     if ($clientArgs -notcontains '--stun') {
         $clientArgs = $clientArgs + @('--stun', "127.0.0.1:$($script:stunPorts[0])", '--stun', "127.0.0.1:$($script:stunPorts[1])")
     }
@@ -339,6 +347,9 @@ function Scenario-Rejoin {
     Check 'first join: register_candidate succeeded' (Wait-Count $p.err $em 'control\.result op=register_candidate ok=true' 1 15000)
     Send-Line $p 'leave'
     Check 'leave ends the attempt' (Wait-Count $p.err $em 'attempt\.end reason=leave')
+    # 옛 자리는 아직 회수되지 않았으므로 그 이름도 아직 잡혀 있다. 다른 이름으로 들어온다 (control_plane.md 2.7).
+    Send-Line $p 'name Rejoined'
+    Check 'rejoin: the lobby takes the new name' (Wait-Count $p.err $em '^INFO lobby\.name name=Rejoined\r?$')
     $hm = H-Mark
     Send-Line $p "join $room"
     $second = Wait-Match $script:harness.err $hm '^HARNESS issued op=join_room peer_id=(\d+) ' 10000
@@ -349,6 +360,7 @@ function Scenario-Rejoin {
     Check 'rejoin: STUN requests go out again' (Wait-Count $script:harness.err $hm "^HARNESS stun\.request port=\d+ src=127\.0\.0\.1:$($p.port)\r?$" 2 10000)
     $roomItems = Invoke-Admin "room id=$room"
     Check 'rejoin: the server holds two player peers (old seat not yet reclaimed)' (@($roomItems.peers | Where-Object { $_.virtual_ip -ne '10.100.0.1' }).Count -eq 2)
+    Check 'rejoin: the new seat carries the new name' (@($roomItems.peers | Where-Object { $_.name -ceq 'Rejoined' }).Count -eq 1)
     Stop-Client $p
     Stop-Client $hostC
 }
@@ -570,6 +582,67 @@ function Scenario-RetryAfterCommit {
     Stop-Client $c
 }
 
+function Scenario-Name {
+    # 표시 이름 (roadmap.md Phase 4 검증 "로비 명령 name", architecture.md 3.5, control_plane.md 2.7, 4.2, 4.3).
+    # (1) --name 이 create_room 의 name 으로 나가고 서버가 대소문자를 그대로 저장한다.
+    $hostC = Start-Client 'nm-host' @('--name', 'HostName_1')
+    $room = Start-Room $hostC
+    $hostPeer = @((Invoke-Admin "room id=$room").peers | Where-Object { $_.virtual_ip -eq '10.100.0.1' })
+    Check 'name: --name reaches create_room as given (case kept)' ($hostPeer.Count -eq 1 -and $hostPeer[0].name -ceq 'HostName_1')
+
+    # (2) 로비의 틀린 name 은 WARN 한 줄이고 이름을 바꾸지 않는다. 요청을 보내지 않는다.
+    $p = Start-Client 'nm-player' @('--name', 'Alice')
+    $hm = H-Mark
+    $bad = @(
+        @{ line = 'name a-b'; reason = 'bad_name' }, @{ line = 'name abcdefghijklmnopq'; reason = 'bad_name' },
+        @{ line = 'name'; reason = 'missing_name' }, @{ line = 'name Bob Carol'; reason = 'extra_argument' }
+    )
+    foreach ($k in $bad) {
+        $em = Get-Mark $p.err
+        Send-Line $p $k.line
+        Check "name: '$($k.line)' is a WARN reason=$($k.reason)" (Wait-Count $p.err $em "^WARN console\.rejected reason=$($k.reason) command=name")
+        Start-Sleep -Milliseconds 200
+        Check "name: '$($k.line)' is exactly one WARN and no rename" (((Get-Count $p.err $em '^WARN ') -eq 1) -and ((Get-Count $p.err $em 'lobby\.name ') -eq 0))
+    }
+
+    # (3) 대소문자만 다른 이름은 name_taken 이다(2.7). 확정 오류라 재시도 없이 FAIL 한 줄이다(8.3).
+    $em = Get-Mark $p.err
+    Send-Line $p 'name hostname_1'
+    Check 'name: a valid name is taken in the lobby' (Wait-Count $p.err $em '^INFO lobby\.name name=hostname_1\r?$')
+    Start-Sleep -Milliseconds 200
+    Check 'name: the lobby name commands sent nothing' ((H-Count $hm '^INFO http\.request ') -eq 0)
+    $hm = H-Mark
+    $om = Get-Mark $p.out
+    $em = Get-Mark $p.err
+    Send-Line $p "join $room"
+    Check 'name_taken: a name that differs only in case is refused' (Wait-Count $script:harness.err $hm (Req 'join_room' 'name_taken'))
+    Check 'name_taken: one FAIL CONTROL_PLANE_EXCHANGE_FAILED line' (Wait-Count $p.out $om $failCpef)
+    Check 'name_taken: the client logs error=name_taken' (Wait-Count $p.err $em 'control\.result op=join_room ok=false error=name_taken')
+    Start-Sleep -Milliseconds 1500
+    Check 'name_taken: exactly one join_room (no retry)' ((H-Count $hm (Req 'join_room')) -eq 1)
+    Check 'name_taken: no ROOM line' ((Get-Count $p.out $om '^ROOM ') -eq 0)
+
+    # (4) name 으로 바꾸면 다음 join 이 새 이름을 싣는다.
+    $em = Get-Mark $p.err
+    Send-Line $p 'name Bob'
+    Check 'name: rename to Bob' (Wait-Count $p.err $em '^INFO lobby\.name name=Bob\r?$')
+    $hm = H-Mark
+    $om = Get-Mark $p.out
+    Send-Line $p "join $room"
+    Check 'renamed join: answered 200' (Wait-Count $script:harness.err $hm (Req 'join_room' '-'))
+    Check 'renamed join: ROOM line' (Wait-Count $p.out $om "^ROOM $room\r?$")
+    $players = @((Invoke-Admin "room id=$room").peers | Where-Object { $_.virtual_ip -ne '10.100.0.1' })
+    Check 'renamed join: the server holds the player as Bob' ($players.Count -eq 1 -and $players[0].name -ceq 'Bob')
+
+    # (5) 방에 있는 동안의 name 은 WARN 이다 (로비에 있을 때만 받는다).
+    $em = Get-Mark $p.err
+    Send-Line $p 'name Carol'
+    Check 'name in a room is a WARN not_in_lobby' (Wait-Count $p.err $em '^WARN console\.rejected reason=not_in_lobby command=name')
+    Check 'name in a room: no rename' ((Get-Count $p.err $em 'lobby\.name ') -eq 0)
+    Stop-Client $p
+    Stop-Client $hostC
+}
+
 function Get-FreeTcpPort {
     $l = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
     $l.Start()
@@ -706,7 +779,7 @@ try {
 
         $plan = [ordered]@{
             'no-role' = { Scenario-NoRole }; 'bad-room-join' = { Scenario-BadRoomJoin }; 'rejoin' = { Scenario-Rejoin }
-            'in-room' = { Scenario-InRoom }; 'leave-pending' = { Scenario-LeavePending }
+            'name' = { Scenario-Name }; 'in-room' = { Scenario-InRoom }; 'leave-pending' = { Scenario-LeavePending }
             'host-report-stop' = { Scenario-HostReportStop }; 'host-report-rate' = { Scenario-HostReportRate }
             'retry-definite' = { Scenario-RetryDefinite }; 'retry-transient' = { Scenario-RetryTransient }
             'retry-after-commit' = { Scenario-RetryAfterCommit }; 'loop-alive' = { Scenario-LoopAlive }; 'stun' = { Scenario-Stun }

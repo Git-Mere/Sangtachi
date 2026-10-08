@@ -50,6 +50,8 @@ using sangtachi::network::StunServer;
 namespace {
 
 constexpr std::string_view kHostHeader = "127.0.0.1:9";
+// 이 프로세스의 표시 이름 (architecture.md 3.5 --name).
+constexpr std::string_view kName = "Alice";
 
 constexpr std::string_view kIssued =
     "{\"room_id\":\"ABCDEF\",\"peer_id\":123,\"peer_token\":\"0123456789abcdef0123456789abcdef\","
@@ -94,6 +96,7 @@ struct Rig {
                 StunServer{"stun" + std::to_string(i), Endpoint(0xCB007100u + static_cast<std::uint32_t>(i), 3478)});
         }
         deps.nonce = [] { return std::optional<ClientNonce>(fixed_nonce()); };
+        deps.name = std::string(kName);
         deps.submit = [this](ControlRequest r) {
             if (queue_full) {
                 counters.increment(Counter::ControlQueueDropped);
@@ -180,7 +183,8 @@ TEST_CASE("control_runner: host submits create_room with the Host header and the
     REQUIRE(rig.submitted.size() == 1);
     REQUIRE(rig.submitted[0].op == Op::kCreateRoom);
     // 바이트는 build_request(Host 헤더, op, 로비가 만든 본문) 그대로다 (control_plane.md 3.3).
-    const auto body = sangtachi::control::create_room_body(fixed_nonce());
+    // 로비의 처음 이름은 RunnerDeps::name 이다 (architecture.md 3.5 --name).
+    const auto body = sangtachi::control::create_room_body(fixed_nonce(), kName);
     REQUIRE(body.has_value());
     const auto expected = sangtachi::control::http::build_request(kHostHeader, Op::kCreateRoom, *body);
     REQUIRE(expected.has_value());
@@ -300,7 +304,7 @@ TEST_CASE("control_runner: get_peers is interpreted with the echoed self peer id
     REQUIRE(rig.submitted.back().self_peer_id == 123);
 
     const std::string self_in_peers =
-        "{\"ready\":false,\"peers\":[{\"peer_id\":123,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}],\"ok\":true}";
+        "{\"ready\":false,\"peers\":[{\"peer_id\":123,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Host\",\"ready\":false}],\"ok\":true}";
     rig.reply(Op::kGetPeers, respond(self_in_peers), rig.submitted.back().self_peer_id);
     REQUIRE(rig.printed_starts_with("FAIL CONTROL_PLANE_EXCHANGE_FAILED "));
 }
@@ -326,7 +330,7 @@ TEST_CASE("control_runner: get_peers hygiene uses the own subnet set of the loop
         rig.runner->on_timer("control.poll");
         REQUIRE(rig.submitted.back().op == Op::kGetPeers);
         const std::string ready =
-            "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"ready\":true,"
+            "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"name\":\"Host\",\"ready\":true,"
             "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,\"candidates\":["
             "{\"ip\":\"192.168.0.255\",\"port\":5000,\"kind\":\"local\"}]}],\"ok\":true}";
         rig.reply(Op::kGetPeers, respond(ready), rig.submitted.back().self_peer_id);
@@ -369,7 +373,7 @@ TEST_CASE("control_runner: host_report is interpreted with the echoed self peer 
 
     const std::string self_in_peers =
         "{\"expires_in_s\":120,\"released\":[],\"confirmed\":[],\"peers\":[{\"peer_id\":123,"
-        "\"virtual_ip\":\"10.100.0.1\",\"ready\":false}],\"ok\":true}";
+        "\"virtual_ip\":\"10.100.0.1\",\"name\":\"Host\",\"ready\":false}],\"ok\":true}";
     rig.reply(Op::kHostReport, respond(self_in_peers), rig.submitted.back().self_peer_id);
 
     std::size_t fails = 0;

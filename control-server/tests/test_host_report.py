@@ -87,7 +87,8 @@ def test_confirm_race(env, case):
         env.register(player)
         result = env.report(host)
         assert result["confirmed"] == []
-        assert result["peers"] == [{"peer_id": pid, "virtual_ip": player["virtual_ip"], "ready": False}]
+        assert result["peers"] == [{"peer_id": pid, "virtual_ip": player["virtual_ip"], "name": env.names[pid],
+                                    "ready": False}]
     elif rid == "h-twice-same-p":
         env.register(player)
         first = env.report(host, confirm=[pid])

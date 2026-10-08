@@ -63,7 +63,7 @@ void emit_transport(const ControlResponse& response) {
 }  // namespace
 
 ControlRunner::ControlRunner(RunnerDeps deps, TimerSet& timers, Counters& counters)
-    : deps_(std::move(deps)), timers_(timers), counters_(counters), lobby_(deps_.nonce) {}
+    : deps_(std::move(deps)), timers_(timers), counters_(counters), lobby_(deps_.nonce, deps_.name) {}
 
 ControlRunner::~ControlRunner() {
     // 루프의 타이머 집합은 이 객체보다 오래 산다. 남긴 STUN 타이머가 버린 객체를 부르지 않게 한다.

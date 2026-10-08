@@ -290,6 +290,10 @@ as `PEER#` (4.6, 6.3). Before that, even the same person joining again with the 
   server reclaim passes
 - To come in again during that time, use a different name
 
+**The format case table is `NAME_CASES` in [`test_name.py`](../../control-server/tests/test_name.py).** Rules outside the
+table (the order of lowercasing, Unicode predicates) are checked by `NAME_EXTRA_CASES` in the same file, and uniqueness within a
+room and reclaim are checked against the store by `NAME_SCENARIOS` in `test_ops.py`.
+
 **The name is for display only.** The server does not look up peers by name. Authentication,
 reclaim, and confirmation use `peer_id` and `peer_token`. The same rule on the client side is
 "The roster is for display only" in [`protocol.md`](protocol.md) 5.7 ROSTER.
@@ -1273,7 +1277,7 @@ count is at most `1 + MAX_PEERS × 3 + (MAX_PEERS - 1)` (one `ROOM`, a `PEER#`, 
 | `PAIR#<lo>-<hi>` | `ready_at_wall_ms`, `ready_at_mono_ns`, `ready_boot_id`, `punch_delay_ms`, `ttl` | Ready state of a pair. `lo` and `hi` are the two `peer_id`s placed in ascending numeric order and written in decimal. `9` comes before `10`. 7.4 Clocks uses the three values |
 | `PEER#<peer_id>` | `peer_id`, `peer_token`, `virtual_ip`, `name`, `candidates` (list), `client_nonce`, `joined_at_ms`, `ttl` | Peer. `peer_id` is written in decimal in `sk`. `peer_token` is the raw value (2.3). `name` is as registered (2.7). `candidates` is not written before the first `register_candidate` |
 | `VIP#<virtual_ip>` | `peer_id`, `ttl` | Virtual IP claim marker. `<virtual_ip>` is dotted-decimal |
-| `NAME#<name key>` | `peer_id`, `ttl` | Display name claim marker. `<name key>` is the name converted to ASCII lowercase (2.7). Reclaim finds this item by `peer_id` (4.6) |
+| `NAME#<name key>` | `peer_id`, `ttl` | Display name claim marker. `<name key>` is the name converted to ASCII lowercase (2.7). Only a name that passed the 2.7 format check becomes a key, so a key is 1-16 characters of `[a-z0-9_]`, and a key read from the store outside that is treated as an `sk` not in the item table. Reclaim finds this item by `peer_id` (4.6) |
 | (pk = `NONCE#<client_nonce>`, sk = `NONCE`) | `room_id`, `peer_id`, `ttl` | Idempotency key → room and peer mapping. **The pk is the nonce, not the room** |
 
 Token comparison uses a constant-time comparison (`hmac.compare_digest`). A comparison inside a
@@ -1515,7 +1519,7 @@ The modules are under the `control-server/controlplane/` package.
 |------|------|-----------|
 | `server.py` | Accept loop, 3.3 HTTP parsing and response serialization, operation dispatch, time limits, `MAX_INFLIGHT`, rate limit table (6.4) | `asyncio` |
 | `ops.py` | The five operations of section 4. Request validation, state decisions (section 5), response assembly | None |
-| `ids.py` | Generation of `room_id`, `peer_id`, `peer_token`, `room_id` normalization (2.1), format checks of `client_nonce` and `peer_token` | `secrets` |
+| `ids.py` | Generation of `room_id`, `peer_id`, `peer_token`, `room_id` normalization (2.1), format checks of `client_nonce` and `peer_token`, the `name` format check and comparison key (2.7) | `secrets` |
 | `candidates.py` | 4.4 hygiene. Candidate format checks and the 10.1 rules | `ipaddress` is not used. See below |
 | `clock.py` | The three values of 7.4 Clocks | `time`, `/proc/sys/kernel/random/boot_id` |
 | `store.py` | All `boto3` calls. The condition expressions of 6.3 Items live **only in this file** | `boto3` |
@@ -2023,7 +2027,7 @@ The Phase 3 verification items are owned by [`roadmap.md`](roadmap.md). **The ca
 run are in `control-server/tests/`.** This document owns the rules, and each section points to the
 file of its own table. There is not one set of tables in the document and another in the tests.
 
-- The case tables sit in 2.1 `room_id`, 3.3 HTTP Subset, 4.4 `register_candidate` (candidate
+- The case tables sit in 2.1 `room_id`, 2.7 `name`, 3.3 HTTP Subset, 4.4 `register_candidate` (candidate
   hygiene), 4.5 `get_peers` (the field set of an element), 4.6 `host_report` (the reclaim and
   confirmation race), 5.1 Room, 6.4 Rate Limit, and 7.4 Clocks
 - Rows that need the store to run are marked `needs="store"` and are skipped until then

@@ -389,6 +389,7 @@ TEST_CASE("control_channel: a host command typed into the loop sends create_room
     deps.stun_servers = {{"a", sangtachi::network::Endpoint(0x7F000001u, 9)},
                          {"b", sangtachi::network::Endpoint(0x7F000001u, 19)}};
     deps.nonce = [] { return sangtachi::control::generate_client_nonce(); };
+    deps.name = "Alice";  // architecture.md 3.5 --name. 없으면 요청 본문 생성기가 거부한다
     deps.submit = [&channel](ControlRequest r) { return channel->submit(std::move(r)); };
     deps.send = [&rig](const sangtachi::network::Endpoint& to, std::span<const std::byte> p) {
         return rig.loop->send_datagram(to, p);
@@ -417,6 +418,8 @@ TEST_CASE("control_channel: a host command typed into the loop sends create_room
     const auto requests = server.requests();
     REQUIRE_FALSE(requests.empty());
     REQUIRE(requests[0].rfind("POST /v1/create_room HTTP/1.1\r\nHost: 127.0.0.1:", 0) == 0);
+    // RunnerDeps::name 이 create_room 본문의 name 으로 나간다 (control_plane.md 4.2).
+    REQUIRE(requests[0].find("\"name\":\"Alice\"") != std::string::npos);
 
     rig.loop->set_lobby_command_handler(nullptr);
     rig.loop->set_control_handler(nullptr);

@@ -45,6 +45,8 @@ constexpr std::string_view kToken = "0123456789abcdef0123456789abcdef";
 constexpr std::string_view kRoom = "ABCDEF";
 constexpr std::uint32_t kSelf = 11;
 constexpr std::uint32_t kHostId = 7;
+// 이 프로세스의 표시 이름 (architecture.md 3.5 --name). Sim 이 로비에 처음 주는 값이다.
+constexpr std::string_view kName = "Alice";
 constexpr Millis kHostReportOpenMs = Millis{kHostReportOpenS} * 1000;
 constexpr Millis kHostReportFullMs = Millis{kHostReportFullS} * 1000;
 
@@ -80,6 +82,7 @@ PeerView unready(std::uint32_t peer_id) {
     PeerView v;
     v.peer_id = peer_id;
     v.virtual_ip = ip("10.100.0.1");
+    v.name = "Host";
     v.ready = false;
     return v;
 }
@@ -88,6 +91,7 @@ PeerView ready(std::uint32_t peer_id, std::vector<Candidate> candidates) {
     PeerView v;
     v.peer_id = peer_id;
     v.virtual_ip = ip("10.100.0.3");
+    v.name = "Host";
     v.ready = true;
     v.punch_delay_ms = 1000;
     v.elapsed_since_ready_ms = 10;
@@ -151,7 +155,10 @@ struct Sent {
 
 class Sim {
 public:
-    Sim() : lobby([this] { return next_nonce(); }) { secrets.emplace_back(kToken); }
+    explicit Sim(std::string name = std::string(kName))
+        : lobby([this] { return next_nonce(); }, std::move(name)) {
+        secrets.emplace_back(kToken);
+    }
 
     Lobby lobby;
     Millis now = 0;
@@ -413,6 +420,15 @@ TEST_CASE("lobby: parse_lobby_command table") {
         {"join ABCDEF GHJKLM", true, K::kJoin, "ABCDEF", true},
         {"leave", true, K::kLeave, "", false},
         {"leave now", true, K::kLeave, "", true},
+        {"name Bob", true, K::kName, "Bob", false},
+        {"name\tbob_01", true, K::kName, "bob_01", false},
+        {"name", true, K::kName, "", false},
+        {"name   ", true, K::kName, "", false},
+        {"name Bob Carol", true, K::kName, "Bob", true},
+        {"name a-b", true, K::kName, "a-b", false},
+        {"Name Bob", false, K::kHost, "", false},
+        {"nameBob", false, K::kHost, "", false},
+        {"names Bob", false, K::kHost, "", false},
         {"quit", false, K::kHost, "", false},
         {"counters", false, K::kHost, "", false},
         {"hostx", false, K::kHost, "", false},
@@ -875,7 +891,7 @@ TEST_CASE("lobby: definite failures fail at once without retry") {
     const Failure failures[] = {Failure::kRateLimited, Failure::kRoomFull,    Failure::kUnauthorized,
                                 Failure::kBadRequest,  Failure::kRoomNotFound, Failure::kRoomExpired,
                                 Failure::kUnknownCode, Failure::kSelfInPeers,  Failure::kTooLarge,
-                                Failure::kUnknownOp};
+                                Failure::kUnknownOp,   Failure::kNameTaken};
     for (const auto op : ops) {
         for (const auto failure : failures) {
             INFO("op=" << http::op_name(op) << " failure=" << to_token(failure));
@@ -1412,5 +1428,169 @@ TEST_CASE("lobby: secrets never reach a log line") {
     // peer_token 과 client_nonce 는 요청 본문 밖으로 나가지 않는다.
     for (const auto& p : sim.printed) {
         CHECK(p.find(kToken) == std::string::npos);
+    }
+}
+
+// ---------------------------------------------------------------- 표시 이름 (architecture.md 3.5 --name 과 로비 명령 name)
+
+TEST_CASE("lobby: the start name goes into create_room and join_room") {
+    // control_plane.md 4.2, 4.3: 두 요청이 name 을 싣는다. 대소문자는 바꾸지 않는다 (2.7).
+    Sim host;
+    host.command("host");
+    REQUIRE(host.in_flight.has_value());
+    CHECK(body_string(host.in_flight->body, "name") == "Alice");
+
+    Sim player(std::string("bob_01"));
+    player.command("join ABCDEF");
+    REQUIRE(player.in_flight.has_value());
+    CHECK(body_string(player.in_flight->body, "name") == "bob_01");
+    CHECK(player.lobby.name() == "bob_01");
+}
+
+TEST_CASE("lobby: name command table") {
+    // architecture.md 3.5 로비 명령 표의 name. 받는 때는 "로비에 있을 때" 다. 미결 요청은 보지 않는다.
+    // 요청을 보내지 않는다. 형식 검사는 --name 과 같다 (control_plane.md 2.7). 틀리면 WARN 한 줄이고
+    // 이름을 바꾸지 않는다. reason 이 비면 받은 것이다.
+    struct Row {
+        Setup setup;
+        std::string_view line;
+        std::string_view reason;
+        std::string_view name_after;
+    };
+    using S = Setup;
+    const Row rows[] = {
+        {S::kLobby, "name Bob", "", "Bob"},
+        {S::kLobby, "name bob_01", "", "bob_01"},
+        {S::kLobby, "name a", "", "a"},
+        {S::kLobby, "name abcdefghijklmnop", "", "abcdefghijklmnop"},
+        {S::kLobby, "name Alice", "", "Alice"},
+        {S::kLobby, "name", "missing_name", "Alice"},
+        {S::kLobby, "name a-b", "bad_name", "Alice"},
+        {S::kLobby, "name abcdefghijklmnopq", "bad_name", "Alice"},
+        {S::kLobby, "name -", "bad_name", "Alice"},
+        {S::kLobby, "name \xED\x95\x9C", "bad_name", "Alice"},
+        {S::kLobby, "name Bob Carol", "extra_argument", "Alice"},
+        {S::kLobbyPending, "name Bob", "", "Bob"},
+        {S::kLobbyPending, "name a-b", "bad_name", "Alice"},
+        {S::kIssuing, "name Bob", "not_in_lobby", "Alice"},
+        {S::kIssuing, "name a-b", "not_in_lobby", "Alice"},
+        {S::kRetryWait, "name Bob", "not_in_lobby", "Alice"},
+        {S::kStun, "name Bob", "not_in_lobby", "Alice"},
+        {S::kRegistering, "name Bob", "not_in_lobby", "Alice"},
+        {S::kPolling, "name Bob", "not_in_lobby", "Alice"},
+        {S::kPlayerSettled, "name Bob", "not_in_lobby", "Alice"},
+        {S::kHostSettled, "name Bob", "not_in_lobby", "Alice"},
+    };
+    for (const auto& row : rows) {
+        INFO("setup=" << static_cast<int>(row.setup) << " line=[" << row.line << "]");
+        Sim sim;
+        setup(sim, row.setup);
+        const auto sent_before = sim.sent.size();
+        const auto warn_before = sim.count_log("console.rejected");
+        const auto named_before = sim.count_log("lobby.name");
+        const auto printed_before = sim.printed.size();
+        const auto timers_before = sim.timers;
+        const LobbyStage stage_before = sim.lobby.stage();
+        const bool pending_before = sim.lobby.request_pending();
+        sim.command(row.line);
+
+        // 요청을 보내지 않고 줄을 내지 않는다. 상태와 타이머는 그대로다.
+        CHECK(sim.sent.size() == sent_before);
+        CHECK(sim.printed.size() == printed_before);
+        CHECK(sim.lobby.stage() == stage_before);
+        CHECK(sim.lobby.request_pending() == pending_before);
+        CHECK(sim.timers == timers_before);
+        CHECK(sim.lobby.name() == row.name_after);
+        if (row.reason.empty()) {
+            CHECK(sim.count_log("console.rejected") == warn_before);
+            REQUIRE(sim.count_log("lobby.name") == named_before + 1);
+            const LogLine* named = sim.last_log("lobby.name");
+            REQUIRE(named != nullptr);
+            CHECK(named->level == LogLevel::Info);
+            REQUIRE(named->fields.size() == 1);
+            CHECK(named->fields[0].name == "name");
+            CHECK(named->fields[0].value == row.name_after);
+        } else {
+            CHECK(sim.count_log("lobby.name") == named_before);
+            REQUIRE(sim.count_log("console.rejected") == warn_before + 1);
+            const LogLine* warn = sim.last_log("console.rejected");
+            REQUIRE(warn != nullptr);
+            CHECK(warn->level == LogLevel::Warn);
+            REQUIRE(warn->fields.size() == 2);
+            CHECK(warn->fields[0].name == "reason");
+            CHECK(warn->fields[0].value == row.reason);
+            CHECK(warn->fields[1].name == "command");
+            CHECK(warn->fields[1].value == "name");
+        }
+
+        // 이름이 실제로 다음 요청에 실리는지 본다. 시도를 끝내고 미결 응답을 버린 뒤 host 를 친다.
+        if (!sim.lobby.in_lobby()) {
+            sim.command("leave");
+        }
+        if (sim.in_flight) {
+            reply_error(sim, Outcome::kTransient, Failure::kInternal);  // 끝난 시도의 응답이라 버린다
+        }
+        REQUIRE(sim.lobby.in_lobby());
+        REQUIRE_FALSE(sim.lobby.request_pending());
+        sim.command("host");
+        REQUIRE(sim.in_flight.has_value());
+        REQUIRE(sim.in_flight->op == http::Op::kCreateRoom);
+        CHECK(body_string(sim.in_flight->body, "name") == row.name_after);
+    }
+}
+
+TEST_CASE("lobby: after name_taken a renamed join carries the new name") {
+    // roadmap.md Phase 4 검증: 로비 명령 name 으로 이름을 바꾸면 다음 join 요청이 새 이름을 싣는다.
+    // 같은 이름으로 다시 들어오려면 다른 이름을 써야 한다 (control_plane.md 2.7).
+    Sim sim;
+    sim.command("join ABCDEF");
+    REQUIRE(sim.in_flight.has_value());
+    CHECK(body_string(sim.in_flight->body, "name") == "Alice");
+    sim.reply(err<Issued>(Outcome::kDefinite, Failure::kNameTaken));
+    CHECK(sim.printed == std::vector<std::string>{kCpefLine});
+    CHECK(sim.lobby.in_lobby());
+    sim.advance(10000);
+    CHECK(sim.count_sent(http::Op::kJoinRoom) == 1);  // 8.3: 확정 오류는 재시도하지 않는다
+
+    sim.command("name Bob");
+    sim.command("join ABCDEF");
+    REQUIRE(sim.in_flight.has_value());
+    CHECK(body_string(sim.in_flight->body, "name") == "Bob");
+    const std::string first_body = sim.in_flight->body;
+
+    // 재시도는 같은 본문이다. 이름도 같다 (8.3).
+    sim.reply(err<Issued>(Outcome::kTransient, Failure::kInternal));
+    sim.advance(kRetryIntervalMs);
+    REQUIRE(sim.in_flight.has_value());
+    CHECK(sim.in_flight->body == first_body);
+    sim.reply(issued());
+    CHECK(sim.printed.back() == "ROOM ABCDEF");
+
+    // 틀린 name 은 이름을 바꾸지 않는다. 다음 시도도 Bob 이다.
+    sim.command("leave");
+    sim.command("name a-b");
+    sim.command("join ABCDEF");
+    REQUIRE(sim.in_flight.has_value());
+    CHECK(body_string(sim.in_flight->body, "name") == "Bob");
+}
+
+TEST_CASE("lobby: an invalid start name never reaches the server") {
+    // 요청 본문 생성기가 거부하면 요청을 보내지 않고 FAIL 뒤 로비다 (lobby.hpp 경계의 거동 표).
+    // 제품 경로에서는 --name 검사가 먼저 막는다. 이 행은 그 검사가 빠졌을 때의 마지막 방어다.
+    const std::string_view bad[] = {"", "a-b", "abcdefghijklmnopq"};
+    for (const auto name : bad) {
+        INFO("name=[" << name << "]");
+        Sim sim{std::string(name)};
+        sim.command("host");
+        CHECK(sim.sent.empty());
+        CHECK(sim.printed == std::vector<std::string>{kCpefLine});
+        CHECK(sim.lobby.in_lobby());
+        sim.command("join ABCDEF");
+        CHECK(sim.sent.empty());
+
+        sim.command("name Bob");
+        sim.command("host");
+        REQUIRE(sim.in_flight.has_value());
+        CHECK(body_string(sim.in_flight->body, "name") == "Bob");
     }
 }

@@ -1,11 +1,12 @@
 """식별자 생성과 정규화. 출처는 control_plane.md 2.1 room_id, 2.2 peer_id, 2.3 peer_token,
-2.4 client_nonce 다. 케이스 표는 tests/test_room_id.py 에 있다.
+2.4 client_nonce, 2.7 name 이다. 케이스 표는 tests/test_room_id.py 와 tests/test_name.py 에 있다.
 """
 
 from __future__ import annotations
 
 import re
 import secrets
+from controlplane.constants import MAX_NAME_LEN
 from controlplane.errors import OpError
 
 # 2.1. 32자. I, O, 0, 1 을 뺐다.
@@ -14,6 +15,10 @@ ROOM_ID_LEN = 6
 
 # 2.3, 2.4. 소문자 16진수 32자. [0-9a-f] 는 ASCII 범위다. \d 를 쓰지 않는다 (유니코드 숫자를 받는다).
 _LOWER_HEX32 = re.compile(r"[0-9a-f]{32}")
+
+# 2.7. ASCII 영문자, 숫자, 밑줄 63자. 집합을 직접 대조한다. str.isalnum() 과 정규식 \w 는 유니코드 글자를
+# 받고 $ 는 끝 줄바꿈 앞에서도 맞는다 (9장 "코드를 읽어서만 판정할 수 있는 것").
+NAME_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
 
 
 def normalize_room_id(value: object) -> str:
@@ -48,6 +53,30 @@ def check_peer_token(value: object) -> str:
     if not isinstance(value, str) or _LOWER_HEX32.fullmatch(value) is None:
         raise OpError("bad_request", "peer_token 은 소문자 16진수 32자다")
     return value
+
+
+def check_name(value: object) -> str:
+    """2.7 name. 문자열이고, 63자 집합 밖의 글자가 없고, 1자 이상 MAX_NAME_LEN 자 이하. 등록한 그대로 돌려준다.
+
+    셋 다 bad_request 이고 저장소를 읽기 전에 본다 (7.3 의 1번). 앞뒤 공백을 지워 주지 않는다. 메시지에 값을
+    싣지 않는다 (4.1). 글자가 전부 ASCII 이므로 글자 수와 바이트 수가 같다.
+    """
+    if not isinstance(value, str):
+        raise OpError("bad_request", "name 은 문자열이어야 한다")
+    # 문자 집합 검사가 소문자 변환(name_key)보다 먼저다. 'K'(U+212A) 는 lower() 로 'k' 가 된다.
+    if any(ch not in NAME_ALPHABET for ch in value):
+        raise OpError("bad_request", "name 에 허용 밖의 글자가 있다")
+    if not 1 <= len(value) <= MAX_NAME_LEN:
+        raise OpError("bad_request", "name 은 1자 이상 16자 이하다")
+    return value
+
+
+def name_key(name: str) -> str:
+    """2.7 방 안 유일성의 비교 키. ASCII 소문자로 바꾼 값이다 (6.3 NAME#<이름 키>).
+
+    check_name 을 통과한 값만 받는다. 그 값은 ASCII 이므로 lower() 가 ASCII 대문자만 바꾼다.
+    """
+    return name.lower()
 
 
 def new_room_id() -> str:

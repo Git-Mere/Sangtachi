@@ -83,6 +83,8 @@ class Env:
         st.on_write = self._hook
         self.svc = make_service(st, self.clock)
         self._nonce = iter(NONCES)
+        self._seq = 0
+        self.names = {}       # peer_id -> 등록한 표시 이름 (2.7). 원소의 name 을 맞춰 볼 때 쓴다
 
     def _hook(self, phase, label, sk):
         if phase == "before":
@@ -104,6 +106,11 @@ class Env:
     def nonce(self):
         return next(self._nonce)
 
+    def name(self, prefix="P"):
+        """방마다 겹치지 않는 형식상 맞는 이름. 시험이 이름을 고르지 않는 자리에 쓴다."""
+        self._seq += 1
+        return f"{prefix}{self._seq}"
+
     def call(self, op, **body):
         return self.svc.dispatch(Req(op, body))
 
@@ -114,11 +121,17 @@ class Env:
             return exc.code
 
     # 연산
-    def create(self, nonce=None):
-        return self.call("create_room", client_nonce=nonce or self.nonce())
+    def create(self, nonce=None, name=None):
+        name = name or self.name("H")
+        result = self.call("create_room", client_nonce=nonce or self.nonce(), name=name)
+        self.names.setdefault(result["peer_id"], name)
+        return result
 
-    def join(self, room, nonce=None):
-        return self.call("join_room", room_id=room["room_id"], client_nonce=nonce or self.nonce())
+    def join(self, room, nonce=None, name=None):
+        name = name or self.name("P")
+        result = self.call("join_room", room_id=room["room_id"], client_nonce=nonce or self.nonce(), name=name)
+        self.names.setdefault(result["peer_id"], name)
+        return result
 
     def register(self, who, room=None, cands=CAND):
         return self.call("register_candidate", room_id=(room or who)["room_id"], peer_id=who["peer_id"],
@@ -189,8 +202,8 @@ def pair_of(env, room, a, b):
 # set 은 유효한 본문에 덮어쓸 필드, drop 은 지울 필드다.
 # ---------------------------------------------------------------------------
 VALID = {
-    "create_room": {"client_nonce": "a" * 32},
-    "join_room": {"room_id": "QWERTY", "client_nonce": "a" * 32},
+    "create_room": {"client_nonce": "a" * 32, "name": "Alice"},
+    "join_room": {"room_id": "QWERTY", "client_nonce": "a" * 32, "name": "Bob"},
     "register_candidate": {"room_id": "QWERTY", "peer_id": 7, "peer_token": TOKEN, "candidates": CAND},
     "get_peers": {"room_id": "QWERTY", "peer_id": 7, "peer_token": TOKEN},
     "host_report": {"room_id": "QWERTY", "peer_id": 7, "peer_token": TOKEN, "departed": [], "confirm": []},
@@ -212,6 +225,14 @@ FIELDS = [
     {"id": "join-room-id-not-str", "op": "join_room", "set": {"room_id": 123456},
      "note": "2.1 케이스 표 밖 행. 문자열이 아니면 bad_request"},
     {"id": "join-nonce-missing", "op": "join_room", "drop": "client_nonce", "note": "4.3 요청 표. 필수"},
+    {"id": "create-name-missing", "op": "create_room", "drop": "name", "note": "4.2 요청 표. name 은 필수다"},
+    {"id": "create-name-space", "op": "create_room", "set": {"name": "Al ice"},
+     "note": "2.7. 63자 밖의 글자. 저장소를 읽기 전에 본다 (7.3 의 1번)"},
+    {"id": "create-name-17", "op": "create_room", "set": {"name": "a" * 17}, "note": "2.7. MAX_NAME_LEN 을 넘는다"},
+    {"id": "create-name-int", "op": "create_room", "set": {"name": 7}, "note": "2.7. JSON 문자열이 아니다"},
+    {"id": "join-name-missing", "op": "join_room", "drop": "name", "note": "4.3 요청 표. name 은 필수다"},
+    {"id": "join-name-hangul", "op": "join_room", "set": {"name": "\ubc25"}, "note": "2.7. 63자 밖의 글자"},
+    {"id": "join-name-empty", "op": "join_room", "set": {"name": ""}, "note": "2.7. 1자 미만"},
     {"id": "register-peer-id-missing", "op": "register_candidate", "drop": "peer_id",
      "note": "4.4 요청 표. peer_id 는 필수다"},
     {"id": "register-peer-id-negative", "op": "register_candidate", "set": {"peer_id": -1},
@@ -330,8 +351,8 @@ FIELD_ACCEPT = [
 @pytest.mark.parametrize("case", FIELD_ACCEPT, ids=[c["id"] for c in FIELD_ACCEPT])
 def test_field_accept(env, case):
     host = env.create()
-    body = {"create_room": {"client_nonce": env.nonce()},
-            "join_room": {"room_id": host["room_id"], "client_nonce": env.nonce()},
+    body = {"create_room": {"client_nonce": env.nonce(), "name": env.name()},
+            "join_room": {"room_id": host["room_id"], "client_nonce": env.nonce(), "name": env.name()},
             "register_candidate": {"room_id": host["room_id"], "peer_id": host["peer_id"],
                                    "peer_token": host["peer_token"], "candidates": CAND},
             "get_peers": {"room_id": host["room_id"], "peer_id": host["peer_id"], "peer_token": host["peer_token"]},
@@ -413,9 +434,9 @@ def test_allowed(env, case):
     op = case["op"]
     if op == "create_room":
         nonce = host_nonce if case["state"] != "absent" else env.nonce()
-        result = env.outcome(op, client_nonce=nonce)
+        result = env.outcome(op, client_nonce=nonce, name=env.name())
     elif op == "join_room":
-        result = env.outcome(op, room_id=room_id, client_nonce=env.nonce())
+        result = env.outcome(op, room_id=room_id, client_nonce=env.nonce(), name=env.name())
     elif op == "register_candidate":
         result = env.outcome(op, room_id=room_id, peer_id=player["peer_id"], peer_token=player["peer_token"],
                              candidates=CAND)
@@ -439,7 +460,7 @@ def test_allowed(env, case):
         assert result == {"accepted": 1, "rejected": 0}
     elif rid == "get-peers-open":
         assert result == {"ready": False, "peers": [{"peer_id": host["peer_id"], "virtual_ip": "10.100.0.1",
-                                                      "ready": False}]}
+                                                      "name": env.names[host["peer_id"]], "ready": False}]}
     elif rid == "host-report-open":
         assert result["expires_in_s"] == ROOM_LEASE_S
     elif rid == "host-report-expired":
@@ -515,7 +536,7 @@ def test_order(env, case):
         peer_id = 4_000_000_000 if who["peer_id"] != 4_000_000_000 else 4_000_000_001
     env.writes.clear()
     if case["op"] == "join_room":
-        result = env.outcome("join_room", room_id=room_id, client_nonce=other_nonce)
+        result = env.outcome("join_room", room_id=room_id, client_nonce=other_nonce, name=env.name())
     elif case["op"] == "register_candidate":
         result = env.outcome("register_candidate", room_id=room_id, peer_id=peer_id, peer_token=token, candidates=CAND_2)
     elif case["op"] == "get_peers":
@@ -756,6 +777,133 @@ SCENARIOS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# 출처: control_plane.md 2.7 name, 4.3 join_room 의 "name_taken 의 판정은 NAME# 선점 결과뿐이다", 4.6 의 NAME#
+# 회수, 6.3 항목과 취소 사유 표 3번, 그리고 roadmap.md Phase 4 검증의 "방 안 유일성" 과 "이름은 자리와 함께
+# 풀린다". note 는 그 불릿이다. 판정(어느 사유를 먼저 보나)은 test_store.py 의 CANCEL_ORDER 가 본다.
+# ---------------------------------------------------------------------------
+NAME_SCENARIOS = [
+    {"id": "name-taken-case-insensitive", "note": "Alice 가 있는 방에 alice 로 참가하면 name_taken 이다. 다른 방에서는 "
+     "성공한다. 그 요청의 트랜잭션 시도가 한 번이고 VIP#·PEER#·NONCE# 를 남기지 않는다"},
+    {"id": "name-taken-host-name", "note": "호스트의 이름도 방 안 유일성에 든다. create_room 이 NAME# 를 쓴다"},
+    {"id": "name-taken-one-attempt", "note": "name_taken 은 풀의 다음 주소로 넘어가지 않는다. 겹친 이름의 피어가 첫 주소를 "
+     "가진 경우에도 시도가 한 번이다. VIP# 를 먼저 보는 구현은 시도 수에서 걸린다"},
+    {"id": "name-taken-concurrent", "note": "같은 이름의 두 참가를 동시에 보내면 하나만 성공한다. 나머지는 name_taken 이다"},
+    {"id": "name-freed-by-departed", "note": "회수 전에는 같은 이름이 name_taken 이다. 호스트가 departed 로 알린 피어의 "
+     "이름으로 새 참가가 성공한다. NAME# 는 PEER# 와 같은 트랜잭션에서 지워진다"},
+    {"id": "name-freed-by-server-reclaim", "note": "서버 회수된 피어의 이름으로 새 참가가 성공한다. 회수 전에는 name_taken"},
+    {"id": "name-release-by-peer-id", "note": "4.6. 회수가 지우는 NAME# 는 peer_id 로 찾는다. PEER# 의 name 이 다른 피어의 "
+     "이름을 가리켜도 그 피어의 NAME# 를 지우지 않고, 대상의 NAME# 는 모두 지운다"},
+    {"id": "name-release-without-name-item", "note": "4.6. peer_id 가 대상인 NAME# 가 하나도 없으면 NAME# 없이 지운다"},
+    {"id": "name-replay-ignores-name", "note": "4.2, 4.3 멱등성. 다시 온 요청의 name 은 형식만 보고 저장된 값과 비교하지 "
+     "않는다. 처음 발급한 것을 그대로 준다"},
+    {"id": "name-in-peers", "note": "get_peers 와 host_report 의 peers 원소에 등록한 그대로의 name 이 있다 (4.5)"},
+]
+
+
+@pytest.mark.store
+@pytest.mark.parametrize("case", NAME_SCENARIOS, ids=[c["id"] for c in NAME_SCENARIOS])
+def test_name_scenario(env, case):
+    rid = case["id"]
+    if rid == "name-taken-case-insensitive":
+        host = env.create(name="Hostie")
+        env.join(host, name="Alice")
+        env.writes.clear()
+        before = env.sks(host["room_id"])
+        assert code_of(lambda: env.join(host, name="alice")) == "name_taken"
+        assert len(env.labels("join_room")) == 1
+        assert env.sks(host["room_id"]) == before
+        other = env.create(name="Other")
+        assert env.join(other, name="alice")["virtual_ip"] == POOL[0]
+    elif rid == "name-taken-host-name":
+        host = env.create(name="Alice")
+        assert env.raw(host["room_id"], "NAME#alice")["peer_id"] == host["peer_id"]
+        assert env.raw(host["room_id"], f"PEER#{host['peer_id']}")["name"] == "Alice"
+        assert code_of(lambda: env.join(host, name="ALICE")) == "name_taken"
+    elif rid == "name-taken-one-attempt":
+        host = env.create()
+        bob = env.join(host, name="Bob")
+        assert bob["virtual_ip"] == POOL[0]
+        env.writes.clear()
+        assert code_of(lambda: env.join(host, name="BOB")) == "name_taken"
+        assert env.labels("join_room") == [f"VIP#{POOL[0]}"]
+    elif rid == "name-taken-concurrent":
+        host = env.create()
+        nonces = [env.nonce(), env.nonce()]
+        names = ["Carol", "CAROL"]
+
+        def go(i):
+            return retry_internal(lambda: env.svc.dispatch(Req("join_room", {
+                "room_id": host["room_id"], "client_nonce": nonces[i], "name": names[i]})))
+        results = run_threads(2, go)
+        ok = [r for r in results if isinstance(r, dict)]
+        assert len(ok) == 1 and [r for r in results if not isinstance(r, dict)] == ["name_taken"]
+        assert env.raw(host["room_id"], "NAME#carol")["peer_id"] == ok[0]["peer_id"]
+        assert len([sk for sk in env.sks(host["room_id"]) if sk.startswith("PEER#")]) == 2
+    elif rid == "name-freed-by-departed":
+        host = env.create()
+        dave = env.join(host, name="Dave")
+        env.register(dave)
+        assert code_of(lambda: env.join(host, name="dave")) == "name_taken"
+        assert env.report(host, departed=[dave["peer_id"]])["released"] == [dave["peer_id"]]
+        assert env.raw(host["room_id"], "NAME#dave") is None
+        again = env.join(host, name="dave")
+        assert env.raw(host["room_id"], "NAME#dave")["peer_id"] == again["peer_id"]
+    elif rid == "name-freed-by-server-reclaim":
+        host = env.create()
+        erin = env.join(host, name="Erin")
+        env.clock.now += G
+        assert code_of(lambda: env.join(host, name="ERIN")) == "name_taken"
+        env.writes.clear()
+        assert env.report(host)["released"] == [erin["peer_id"]]
+        assert env.raw(host["room_id"], "NAME#erin") is None
+        assert "NAME#erin" not in env.labels("renew_item")   # 4.6 갱신의 목록은 2번이 지운 NAME# 를 뺀다
+        assert env.join(host, name="ERIN")["peer_id"] != erin["peer_id"]
+    elif rid == "name-release-by-peer-id":
+        host = env.create(name="Hostie")
+        frank = env.join(host, name="Frank")
+        room_id = host["room_id"]
+        # 같은 피어를 가리키는 NAME# 를 하나 더 두고, PEER# 의 name 은 호스트의 이름으로 바꿔 둔다.
+        env.store.client.put_item(TableName=env.store.table, Item=env.store._values(
+            {"pk": room_id, "sk": "NAME#frankie", "peer_id": frank["peer_id"], "ttl": 2_000_000_000}))
+        env.store.client.update_item(TableName=env.store.table, Key={"pk": {"S": room_id},
+                                     "sk": {"S": f"PEER#{frank['peer_id']}"}},
+                                     UpdateExpression="SET #n = :n", ExpressionAttributeNames={"#n": "name"},
+                                     ExpressionAttributeValues={":n": {"S": "Hostie"}})
+        env.writes.clear()
+        assert env.report(host, departed=[frank["peer_id"]])["released"] == [frank["peer_id"]]
+        assert env.raw(room_id, "NAME#frank") is None and env.raw(room_id, "NAME#frankie") is None
+        assert env.raw(room_id, "NAME#hostie")["peer_id"] == host["peer_id"]
+        renewed = env.labels("renew_item")
+        assert "NAME#frank" not in renewed and "NAME#frankie" not in renewed and "NAME#hostie" in renewed
+    elif rid == "name-release-without-name-item":
+        host = env.create()
+        gina = env.join(host, name="Gina")
+        env.store.client.delete_item(TableName=env.store.table,
+                                     Key={"pk": {"S": host["room_id"]}, "sk": {"S": "NAME#gina"}})
+        assert env.report(host, departed=[gina["peer_id"]])["released"] == [gina["peer_id"]]
+        assert env.raw(host["room_id"], f"PEER#{gina['peer_id']}") is None
+    elif rid == "name-replay-ignores-name":
+        host = env.create(name="Hostie")
+        nonce = env.nonce()
+        first = env.join(host, nonce, name="Hank")
+        assert env.join(host, nonce, name="Other") == first
+        assert env.create(env.nonce(), name="Ivy")["room_id"] != host["room_id"]
+        host_nonce = env.nonce()
+        made = env.create(host_nonce, name="Judy")
+        assert env.create(host_nonce, name="Kim") == made
+        assert env.raw(made["room_id"], f"PEER#{made['peer_id']}")["name"] == "Judy"
+        assert env.raw(host["room_id"], f"PEER#{first['peer_id']}")["name"] == "Hank"
+        assert code_of(lambda: env.join(host, nonce, name="bad name")) == "bad_request"
+    elif rid == "name-in-peers":
+        host = env.create(name="HostIe")
+        player = env.join(host, name="PlAyEr_1")
+        assert env.get_peers(player)["peers"][0]["name"] == "HostIe"
+        assert [p["name"] for p in env.report(host)["peers"]] == ["PlAyEr_1"]
+    else:
+        pytest.fail(f"모르는 행 {rid}")
+
+
 def ready_pair(env):
     """호스트와 플레이어 하나. 둘 다 등록하고 호스트가 확인했다."""
     host = env.create()
@@ -838,15 +986,16 @@ def test_scenario(env, case):
         env.clock.mono += 250_000_000
         got = env.get_peers(player)
         assert got == {"ready": True, "peers": [{
-            "peer_id": host["peer_id"], "virtual_ip": "10.100.0.1", "ready": True, "punch_delay_ms": PUNCH_DELAY_MS,
-            "elapsed_since_ready_ms": 250, "candidates": CAND_H}]}
+            "peer_id": host["peer_id"], "virtual_ip": "10.100.0.1", "name": env.names[host["peer_id"]], "ready": True,
+            "punch_delay_ms": PUNCH_DELAY_MS, "elapsed_since_ready_ms": 250, "candidates": CAND_H}]}
     elif rid == "not-ready-before-confirm":
         host = env.create()
         player = env.join(host)
         env.register(host, cands=CAND_H)
         env.register(player)
         assert env.get_peers(player) == {"ready": False, "peers": [
-            {"peer_id": host["peer_id"], "virtual_ip": "10.100.0.1", "ready": False}]}
+            {"peer_id": host["peer_id"], "virtual_ip": "10.100.0.1", "name": env.names[host["peer_id"]],
+             "ready": False}]}
         assert env.raw(host["room_id"], f"PAIR#{min(host['peer_id'], player['peer_id'])}-"
                        f"{max(host['peer_id'], player['peer_id'])}") is None
     elif rid == "restart-reads-store":
@@ -857,12 +1006,13 @@ def test_scenario(env, case):
         fresh = make_service(fresh_store, env.clock)
         assert fresh.dispatch(Req("get_peers", {"room_id": player["room_id"], "peer_id": player["peer_id"],
                                                 "peer_token": player["peer_token"]})) == before
-        assert fresh.dispatch(Req("join_room", {"room_id": host["room_id"], "client_nonce": env.nonce()}))[
+        assert fresh.dispatch(Req("join_room", {"room_id": host["room_id"], "client_nonce": env.nonce(),
+                                                "name": env.name()}))[
             "virtual_ip"] == "10.100.0.3"
     elif rid == "expiry-boundary":
         host = env.create()
         missing = absent_room_id(env, host)
-        assert env.outcome("join_room", room_id=missing, client_nonce=env.nonce()) == "room_not_found"
+        assert env.outcome("join_room", room_id=missing, client_nonce=env.nonce(), name=env.name()) == "room_not_found"
         env.clock.now = NOW + LEASE
         assert code_of(lambda: env.join(host)) == "room_expired"
         env.clock.now = NOW + LEASE - 1
@@ -981,7 +1131,10 @@ def test_scenario(env, case):
         renewed = env.labels("renew_item")
         assert f"PEER#{player['peer_id']}" not in renewed and "VIP#10.100.0.2" not in renewed
         assert f"PAIR#{lo}-{hi}" not in renewed
-        assert sorted(renewed) == sorted([f"PEER#{host['peer_id']}", "VIP#10.100.0.1"])
+        host_key = env.names[host["peer_id"]].lower()
+        player_key = env.names[player["peer_id"]].lower()
+        assert f"NAME#{player_key}" not in renewed
+        assert sorted(renewed) == sorted([f"PEER#{host['peer_id']}", "VIP#10.100.0.1", f"NAME#{host_key}"])
     elif rid == "response-after-writes":
         host = env.create()
         gone = env.join(host)
@@ -1057,7 +1210,7 @@ def test_scenario(env, case):
         b = env.join(host)
         got = env.get_peers(host)
         assert got == {"ready": False, "peers": [
-            {"peer_id": p["peer_id"], "virtual_ip": p["virtual_ip"], "ready": False}
+            {"peer_id": p["peer_id"], "virtual_ip": p["virtual_ip"], "name": env.names[p["peer_id"]], "ready": False}
             for p in sorted((a, b), key=lambda p: str(p["peer_id"]))]}
     elif rid == "host-in-own-departed-confirm":
         host = env.create()
@@ -1084,7 +1237,8 @@ def test_scenario(env, case):
                      lambda: env.call("get_peers", room_id=host["room_id"], peer_id=player["peer_id"], peer_token=TOKEN),
                      lambda: env.call("host_report", room_id=host["room_id"], peer_id=player["peer_id"],
                                       peer_token=player["peer_token"]),
-                     lambda: env.call("join_room", room_id=absent_room_id(env, host), client_nonce=env.nonce())):
+                     lambda: env.call("join_room", room_id=absent_room_id(env, host), client_nonce=env.nonce(),
+                                      name=env.name())):
             code_of(call)
         env.clock.now = NOW + G + 10 * LEASE
         code_of(lambda: env.report(host))

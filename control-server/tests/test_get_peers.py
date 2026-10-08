@@ -8,7 +8,7 @@ import pytest
 from controlplane.constants import MAX_CANDIDATES, PUNCH_DELAY_MS
 from controlplane.ops import pair_sk, peer_element
 
-BASE_KEYS = {"peer_id", "virtual_ip", "ready"}
+BASE_KEYS = {"peer_id", "virtual_ip", "name", "ready"}
 READY_KEYS = BASE_KEYS | {"punch_delay_ms", "elapsed_since_ready_ms", "candidates"}
 
 # 원소가 될 상대 피어의 PEER# 항목(6.3). 후보는 일부러 정렬되지 않은 순서로 둔다. 저장된 순서가
@@ -17,6 +17,7 @@ PEER = {
     "peer_id": 3_000_000_001,
     "peer_token": "0" * 32,
     "virtual_ip": "10.100.0.2",
+    "name": "AliCe_9",
     "candidates": [
         {"ip": "203.0.113.7", "port": 51000, "kind": "reflexive"},
         {"ip": "192.168.0.10", "port": 51000, "kind": "local"},
@@ -48,7 +49,7 @@ FIELD_SETS = [
     {
         "id": "pair-absent",
         "pair_state": "`PAIR#` 없음",
-        "fields": "`peer_id`, `virtual_ip`, `ready: false`",
+        "fields": "`peer_id`, `virtual_ip`, `name`, `ready: false`",
         "pair": None,
         "keys": BASE_KEYS,
         "ready": False,
@@ -80,6 +81,7 @@ def test_field_set(case):
     assert element["ready"] is case["ready"]
     assert element["peer_id"] == PEER["peer_id"]
     assert element["virtual_ip"] == PEER["virtual_ip"]
+    assert element["name"] == PEER["name"]   # 등록한 그대로다. 대소문자를 바꾸지 않는다 (2.7)
     if not case["ready"]:
         assert seen == []
         return

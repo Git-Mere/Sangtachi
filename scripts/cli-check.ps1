@@ -25,19 +25,21 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 }
 
 # 케이스 표. expect 는 종료 코드, contains 는 표준 오류에 있어야 할 문자열이다.
-# --server 는 Phase 3 이후 필수다 (architecture.md 3.5 기동 입력). 기동하는 케이스는 닫힌 루프백
+# --server 는 Phase 3 이후, --name 은 Phase 4 이후 필수다 (architecture.md 3.5 기동 입력). 기동하는 케이스는 닫힌 루프백
 # 포트를 준다. 로비 명령이 없으면 제어 요청이 나가지 않으므로 그 포트에 연결하지 않는다.
 $srv = '127.0.0.1:9'
+# 표시 이름은 Phase 4 이후 필수다 (architecture.md 3.5 기동 입력). 기동하는 케이스가 쓴다.
+$nm = 'Alice'
 
 # 케이스 표. expect 는 종료 코드, contains 는 표준 오류에 있어야 할 문자열이다.
 $cases = @(
-    @{ args = @('--server', $srv);                                    expect = 0; contains = 'INFO wsa.init version=' }
-    @{ args = @('host', '--server', $srv);                            expect = 0; contains = 'INFO wsa.init version=' }
-    @{ args = @('player', '--server', $srv, '--room', 'abcdef');      expect = 0; contains = 'INFO wsa.init version=' }
-    @{ args = @('--server', $srv, '--peer', '192.0.2.5:30000');       expect = 0; contains = 'INFO wsa.init version=' }
-    @{ args = @('--server', $srv, '--stun', 'a.example:3478');        expect = 0; contains = 'INFO wsa.init version=' }
+    @{ args = @('--server', $srv, '--name', $nm);                                    expect = 0; contains = 'INFO wsa.init version=' }
+    @{ args = @('host', '--server', $srv, '--name', $nm);                            expect = 0; contains = 'INFO wsa.init version=' }
+    @{ args = @('player', '--server', $srv, '--room', 'abcdef', '--name', $nm);      expect = 0; contains = 'INFO wsa.init version=' }
+    @{ args = @('--server', $srv, '--name', $nm, '--peer', '192.0.2.5:30000');       expect = 0; contains = 'INFO wsa.init version=' }
+    @{ args = @('--server', $srv, '--name', $nm, '--stun', 'a.example:3478');        expect = 0; contains = 'INFO wsa.init version=' }
     # 해석한 제어 서버 주소. IPv4 리터럴은 이름 해석을 거치지 않는다.
-    @{ args = @('--server', $srv);                                    expect = 0; contains = 'INFO control.server host=127.0.0.1 resolved=127.0.0.1:9' }
+    @{ args = @('--server', $srv, '--name', $nm);                                    expect = 0; contains = 'INFO control.server host=127.0.0.1 resolved=127.0.0.1:9' }
 
     @{ args = @('bogus');                      expect = 2; contains = 'ERROR args.invalid reason=bad_role arg=bogus' }
     @{ args = @('host', 'player');             expect = 2; contains = 'reason=extra_positional' }
@@ -51,22 +53,35 @@ $cases = @(
     # 방 코드는 create_room 응답으로만 생긴다 (architecture.md 3.5).
     @{ args = @('host', '--room', 'ABCDEF');   expect = 2; contains = 'reason=room_with_host arg=--room' }
 
-    # Phase 3 이후의 필수 입력 (architecture.md 3.5 의 "필수" 열).
+    # 표시 이름의 형식 (architecture.md 3.5, control_plane.md 2.7). 형식 위반은 필수 판정보다 먼저다.
+    @{ args = @('--server', $srv, '--name', 'a-b');                 expect = 2; contains = 'ERROR args.invalid reason=bad_name arg=a-b' }
+    @{ args = @('--server', $srv, '--name', 'a b');                 expect = 2; contains = 'reason=bad_name arg=a_b' }
+    @{ args = @('--server', $srv, '--name', 'abcdefghijklmnopq');   expect = 2; contains = 'reason=bad_name arg=abcdefghijklmnopq' }
+    @{ args = @('--server', $srv, '--name', '');                    expect = 2; contains = 'reason=bad_name' }
+    @{ args = @('--server', $srv, '--name');                        expect = 2; contains = 'reason=missing_value arg=--name' }
+    @{ args = @('--name', 'a-b');                                   expect = 2; contains = 'reason=bad_name arg=a-b' }
+    # 대소문자를 바꾸지 않고 16자까지 받는다.
+    @{ args = @('--server', $srv, '--name', 'Abcdefghijklmn_9');    expect = 0; contains = 'INFO wsa.init version=' }
+
+    # 필수 입력 (architecture.md 3.5 의 "필수" 열). --server 는 Phase 3 이후, --name 은 Phase 4 이후다.
     @{ args = @();                                                    expect = 2; contains = 'ERROR args.invalid reason=missing_server arg=--server' }
     @{ args = @('host');                                              expect = 2; contains = 'reason=missing_server arg=--server' }
     @{ args = @('player', '--server', $srv);                          expect = 2; contains = 'reason=missing_room arg=--room' }
     @{ args = @('--room', 'abcdef', '--server', $srv);                expect = 2; contains = 'reason=room_without_role arg=--room' }
+    @{ args = @('--server', $srv);                                    expect = 2; contains = 'ERROR args.invalid reason=missing_name arg=--name'; absent = 'socket.bind' }
+    @{ args = @('host', '--server', $srv);                            expect = 2; contains = 'reason=missing_name arg=--name' }
+    @{ args = @('player', '--server', $srv, '--room', 'abcdef');      expect = 2; contains = 'reason=missing_name arg=--name' }
     # 제어 서버 주소를 해석하지 못하면 기동 실패다 (control_plane.md 8.2). 숫자 모양의 이름은
     # 묻지 않고 실패하므로 망이 없어도 결과가 같다 (platform/resolve.hpp).
     # 해석이 UDP bind 보다 먼저다 (control_plane.md 8.4 의 2번과 3번). 해석에 실패하면 socket.bind 줄이 없다.
-    @{ args = @('--server', '1.0x7f');                                expect = 2; contains = 'ERROR control.server reason=resolve_failed host=1.0x7f port=8000'; absent = 'socket.bind' }
+    @{ args = @('--server', '1.0x7f', '--name', $nm);                 expect = 2; contains = 'ERROR control.server reason=resolve_failed host=1.0x7f port=8000'; absent = 'socket.bind' }
 
     # 값에 공백과 제어문자를 싣지 않는다. 둘 다 밑줄로 바꾼다 (architecture.md 9장).
     @{ args = @('a b');                        expect = 2; contains = 'arg=a_b' }
     @{ args = @("a`tb");                       expect = 2; contains = 'arg=a_b' }
     # 카운터 전량은 종료 절차에서 낸다. 값이 0 인 것도 함께 낸다.
-    @{ args = @('--server', $srv);             expect = 0; contains = 'INFO counter name=drop_magic value=0' }
-    @{ args = @('--server', $srv);             expect = 0; contains = 'INFO counter name=control_queue_dropped value=0' }
+    @{ args = @('--server', $srv, '--name', $nm); expect = 0; contains = 'INFO counter name=drop_magic value=0' }
+    @{ args = @('--server', $srv, '--name', $nm); expect = 0; contains = 'INFO counter name=control_queue_dropped value=0' }
 )
 
 # 인자 하나를 Windows 명령줄 규칙대로 감싼다.

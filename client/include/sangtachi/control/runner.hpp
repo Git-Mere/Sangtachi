@@ -61,6 +61,7 @@ struct RunnerDeps {
     std::string host_header;                         // http::host_header 가 만든 값
     std::vector<network::StunServer> stun_servers;   // 기동 시 한 번 해석한 목록
     NonceSource nonce;                               // 시도마다 새 client_nonce
+    std::string name;                                // 로비의 처음 표시 이름. 제품 경로는 --name (architecture.md 3.5)
     SubmitFn submit;
     network::StunSendFn send;                        // 루프의 소켓으로 보낸다
     PrintFn print;

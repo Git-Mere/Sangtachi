@@ -7,6 +7,7 @@
 #include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/platform/random.hpp"
 #include "sangtachi/protocol_constants.hpp"
+#include "sangtachi/tunnel/packet.hpp"
 
 #include <array>
 #include <cstddef>
@@ -132,19 +133,26 @@ Value peer_id_array(std::span<const std::uint32_t> ids) {
 
 }  // namespace
 
-std::optional<std::string> create_room_body(const ClientNonce& nonce) {
+std::optional<std::string> create_room_body(const ClientNonce& nonce, std::string_view name) {
+    // 2.7: 서버가 bad_request 로 돌려줄 이름은 보내지 않는다.
+    if (!tunnel::is_valid_name(name)) {
+        return std::nullopt;
+    }
     Value body = Value::object();
     body.insert("client_nonce", Value::string(std::string(nonce.reveal_for_request())));
+    body.insert("name", Value::string(std::string(name)));
     return json::serialize(body);
 }
 
-std::optional<std::string> join_room_body(std::string_view room_id, const ClientNonce& nonce) {
-    if (!is_room_id_input(room_id)) {
+std::optional<std::string> join_room_body(std::string_view room_id, const ClientNonce& nonce,
+                                          std::string_view name) {
+    if (!is_room_id_input(room_id) || !tunnel::is_valid_name(name)) {
         return std::nullopt;
     }
     Value body = Value::object();
     body.insert("room_id", Value::string(std::string(room_id)));
     body.insert("client_nonce", Value::string(std::string(nonce.reveal_for_request())));
+    body.insert("name", Value::string(std::string(name)));
     return json::serialize(body);
 }
 
@@ -210,6 +218,7 @@ std::string_view to_token(Failure failure) noexcept {
         case Failure::kRoomNotFound:     return "room_not_found";
         case Failure::kRoomExpired:      return "room_expired";
         case Failure::kRoomFull:         return "room_full";
+        case Failure::kNameTaken:        return "name_taken";
         case Failure::kUnauthorized:     return "unauthorized";
         case Failure::kRateLimited:      return "rate_limited";
         case Failure::kInternal:         return "internal";
@@ -237,6 +246,7 @@ constexpr CodeRow kCodes[] = {
     {"room_not_found",     Failure::kRoomNotFound},
     {"room_expired",       Failure::kRoomExpired},
     {"room_full",          Failure::kRoomFull},
+    {"name_taken",         Failure::kNameTaken},
     {"unauthorized",       Failure::kUnauthorized},
     {"rate_limited",       Failure::kRateLimited},
     {"internal",           Failure::kInternal},
@@ -340,13 +350,17 @@ std::optional<PeerView> decode_peer(const Value& v, const peer::OwnSubnets& own_
     PeerView p;
     const auto id = get_peer_id(v.find("peer_id"));
     const auto vip = get_ipv4(v.find("virtual_ip"));
+    // 3.5 의 7: peers 원소의 name 은 형에 더해 2.7 의 형식까지 본다. 원소의 필드 집합 둘 다에 있다 (4.5).
+    const Value* name_v = v.find("name");
+    const std::string* name = name_v ? name_v->as_string() : nullptr;
     const Value* ready_v = v.find("ready");
     const auto ready = ready_v ? ready_v->as_bool() : std::nullopt;
-    if (!id || !vip || !ready) {
+    if (!id || !vip || name == nullptr || !tunnel::is_valid_name(*name) || !ready) {
         return std::nullopt;
     }
     p.peer_id = *id;
     p.virtual_ip = *vip;
+    p.name = *name;
     p.ready = *ready;
 
     const Value* delay_v = v.find("punch_delay_ms");

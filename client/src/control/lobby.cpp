@@ -1,6 +1,7 @@
 #include "sangtachi/control/lobby.hpp"
 
 #include "sangtachi/protocol_constants.hpp"
+#include "sangtachi/tunnel/packet.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -88,6 +89,9 @@ std::optional<LobbyCommand> parse_lobby_command(std::string_view line) {
         command.argument = std::string(next_word(rest));
     } else if (head == "leave") {
         command.kind = LobbyCommandKind::kLeave;
+    } else if (head == "name") {
+        command.kind = LobbyCommandKind::kName;
+        command.argument = std::string(next_word(rest));
     } else {
         return std::nullopt;
     }
@@ -149,6 +153,7 @@ std::string_view command_token(LobbyCommandKind kind) noexcept {
         case LobbyCommandKind::kHost:  return "host";
         case LobbyCommandKind::kJoin:  return "join";
         case LobbyCommandKind::kLeave: return "leave";
+        case LobbyCommandKind::kName:  return "name";
     }
     return "host";
 }
@@ -195,7 +200,8 @@ Reply<Peers> as_player_reply(const Reply<Peers>& reply) {
 
 // ---------------------------------------------------------------- Lobby
 
-Lobby::Lobby(NonceSource nonce) : nonce_(std::move(nonce)) {}
+Lobby::Lobby(NonceSource nonce, std::string name)
+    : nonce_(std::move(nonce)), name_(std::move(name)) {}
 
 bool Lobby::owns_timer(std::string_view name) noexcept {
     return name == kRetryTimer || name == kPollTimer || name == kDeadlineTimer ||
@@ -217,6 +223,11 @@ LobbyActions Lobby::on_command(const LobbyCommand& command) {
             return std::move(out).finish();
         }
         end_attempt(out, "leave");
+        return std::move(out).finish();
+    }
+
+    if (kind == LobbyCommandKind::kName) {
+        on_name(out, command);
         return std::move(out).finish();
     }
 
@@ -268,12 +279,13 @@ void Lobby::start_attempt(Batch& out, LobbyRole role, std::string_view room) {
         return;
     }
     std::optional<std::string> body;
+    // 이름은 시도를 시작하는 이 순간의 값이다. 재시도는 같은 본문이라 이름도 같다 (8.3).
     if (role == LobbyRole::kHost) {
         request_op_ = http::Op::kCreateRoom;
-        body = create_room_body(*nonce);
+        body = create_room_body(*nonce, name_);
     } else {
         request_op_ = http::Op::kJoinRoom;
-        body = join_room_body(room, *nonce);
+        body = join_room_body(room, *nonce, name_);
     }
     if (!body) {
         fail(out, FailCode::kControlPlaneExchangeFailed);
@@ -282,6 +294,33 @@ void Lobby::start_attempt(Batch& out, LobbyRole role, std::string_view room) {
     request_body_ = std::move(*body);
     tries_ = 0;
     send_or_defer_request(out);
+}
+
+void Lobby::on_name(Batch& out, const LobbyCommand& command) {
+    const LobbyCommandKind kind = command.kind;
+    // name 은 로비에 있을 때 받는다. 미결 요청은 보지 않는다. 요청을 보내지 않기 때문이다
+    // (architecture.md 3.5 로비 명령 표).
+    if (!in_lobby()) {
+        out.log(LogLevel::Warn, "console.rejected", rejected_fields("not_in_lobby", kind));
+        return;
+    }
+    if (command.extra) {
+        out.log(LogLevel::Warn, "console.rejected", rejected_fields("extra_argument", kind));
+        return;
+    }
+    if (command.argument.empty()) {
+        out.log(LogLevel::Warn, "console.rejected", rejected_fields("missing_name", kind));
+        return;
+    }
+    // 형식 검사는 --name 과 같다 (control_plane.md 2.7). 틀리면 이름을 바꾸지 않는다.
+    if (!tunnel::is_valid_name(command.argument)) {
+        out.log(LogLevel::Warn, "console.rejected", rejected_fields("bad_name", kind));
+        return;
+    }
+    name_ = command.argument;
+    std::vector<LogField> fields;
+    fields.push_back(field("name", std::string_view(name_)));
+    out.log(LogLevel::Info, "lobby.name", std::move(fields));
 }
 
 void Lobby::submit(Batch& out, http::Op op, std::string body) {

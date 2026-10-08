@@ -62,8 +62,9 @@ def err(status: int, code: str) -> tuple:
     return ("error", status, code)
 
 
-# control_plane.md 3.3 HTTP 부분집합 "서버 파싱 케이스 표". 30행 -> 40원소 (대안 4행이 3개씩, 28·30행이 2개씩).
-# 28~30행의 출처는 3.3 규칙 표의 '헤더 줄 문법' 과 '본문' 행이다 (헤더 이름 뒤 공백, 콜론 없는 줄, JSON 중복 키).
+# control_plane.md 3.3 HTTP 부분집합 "서버 파싱 케이스 표". 31행 -> 43원소 (대안 4행이 3개씩, 31행이 3개, 28·30행이
+# 2개씩). 28~31행의 출처는 3.3 규칙 표의 '헤더 줄 문법' 과 '본문' 행이다 (헤더 이름 뒤 공백, 콜론 없는 줄, JSON 중복
+# 키, 헤더 이름 안의 공백이나 탭).
 CASES = [
     dict(order=1, id="ok-get-peers", raw=http(), expect=RESULT,
          note="정상 POST /v1/get_peers, 올바른 Content-Length, JSON 객체 -> 연산 결과"),
@@ -151,9 +152,16 @@ CASES = [
          note="JSON 객체 안의 중복 키 -> 400 bad_request"),
     dict(order=30, id="json-duplicate-key-nested", raw=sized(b'{"room_id":"abc","n":{"a":1,"a":2}}'),
          expect=err(400, "bad_request"), note="중첩 객체 안의 중복 키 -> 400 bad_request"),
+    dict(order=31, id="header-space-in-name", raw=http(headers=STD + [b"X Foo: bar"]), expect=err(400, "bad_request"),
+         note="헤더 이름 안에 공백 -> 400 bad_request (RFC 9110 5.1 의 이름은 토큰이다). 표 밖 헤더에도 적용한다"),
+    dict(order=31, id="header-tab-in-name", raw=http(headers=STD + [b"X\tFoo: bar"]), expect=err(400, "bad_request"),
+         note="헤더 이름 안에 탭 -> 400 bad_request"),
+    dict(order=31, id="header-space-in-table-name",
+         raw=http(headers=without(b"Content-Length") + [b"Content Length: 17"]), expect=err(400, "bad_request"),
+         note="표의 헤더 이름 가운데에 공백 -> 400 bad_request. 표 밖 헤더로 무시하면 Content-Length 가 없어 411 이 된다"),
 ]
 
-DOC_ROWS = 30
+DOC_ROWS = 31
 
 # 표 밖 규칙. 출처는 note 에 적은 3.3 의 항목/규칙 표 행과 검사 순서다.
 RULE_CASES = [
@@ -188,6 +196,9 @@ RULE_CASES = [
          expect=err(400, "bad_request"), note="3.3 검사 순서 6 이 7 보다 먼저"),
     dict(id="order-limit-before-body", raw=http(headers=with_cl(b"4097"), body=b"[]"), expect=err(413, "too_large"),
          note="3.3 검사 순서 7 이 9 보다 먼저"),
+    dict(id="header-no-colon-no-space", raw=http(headers=STD + [b"X-Foobar"]), expect=err(400, "bad_request"),
+         note="3.3 규칙 '헤더 줄 문법': 콜론이 없는 줄. 표 29행은 이름 안 공백도 있어 그 검사가 대신 잡는다. 이 행은 "
+              "콜론 검사만 본다"),
     dict(id="json-nan", raw=sized(b'{"a":NaN}'), expect=err(400, "bad_request"),
          note="3.3 규칙 '본문': UTF-8 JSON 객체. NaN 은 JSON 이 아니다"),
 ]

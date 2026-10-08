@@ -4,6 +4,14 @@ T = "tests/test_get_peers.py::"
 P = "controlplane/ops.py"
 
 MUTANTS = [
+    {"id": "element-no-name", "path": P,
+     "old": '"name": peer["name"],', "new": "",
+     "kills": [T + "test_field_set[pair-absent]", T + "test_field_set[pair-present]"],
+     "why": "원소에 name 이 없다 (4.5 원소 표)"},
+    {"id": "element-name-lowered", "path": P,
+     "old": '"name": peer["name"],', "new": '"name": peer["name"].lower(),',
+     "kills": [T + "test_field_set[pair-absent]", T + "test_field_set[pair-present]"],
+     "why": "name 을 등록한 그대로 주지 않고 비교 키(소문자)로 준다 (2.7)"},
     {"id": "element-ready-always", "path": P,
      "old": '"ready": pair is not None}', "new": '"ready": True}',
      "kills": [T + "test_field_set[pair-absent]"],

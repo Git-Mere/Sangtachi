@@ -83,20 +83,21 @@ constexpr std::string_view kIssued =
 constexpr std::string_view kRegistered = "{\"accepted\":2,\"rejected\":0,\"ok\":true}";
 
 constexpr std::string_view kNotReady =
-    "{\"ready\":false,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}],\"ok\":true}";
+    "{\"ready\":false,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":false}],"
+    "\"ok\":true}";
 
 constexpr std::string_view kReady =
-    "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":true,"
+    "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":true,"
     "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":250,\"candidates\":["
     "{\"ip\":\"192.168.0.10\",\"port\":51234,\"kind\":\"local\"},"
     "{\"ip\":\"203.0.113.5\",\"port\":40000,\"kind\":\"reflexive\"}]}],\"ok\":true}";
 
 constexpr std::string_view kHostReport =
     "{\"expires_in_s\":120,\"released\":[5],\"confirmed\":[7],\"peers\":["
-    "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"ready\":true,"
+    "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"name\":\"Bob\",\"ready\":true,"
     "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,\"candidates\":["
     "{\"ip\":\"198.51.100.7\",\"port\":3478,\"kind\":\"reflexive\"}]},"
-    "{\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"ready\":false}],\"ok\":true}";
+    "{\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"name\":\"carol\",\"ready\":false}],\"ok\":true}";
 
 PeerToken token() {
     return *PeerToken::parse(kToken);
@@ -143,6 +144,7 @@ TEST_CASE("control_ops: envelope classification table", "[control][ops]") {
         {"{\"ok\":false,\"error\":\"room_not_found\"}", D, Failure::kRoomNotFound, "4.1"},
         {"{\"ok\":false,\"error\":\"room_expired\"}", D, Failure::kRoomExpired, "4.1"},
         {"{\"ok\":false,\"error\":\"room_full\"}", D, Failure::kRoomFull, "4.1"},
+        {"{\"ok\":false,\"error\":\"name_taken\"}", D, Failure::kNameTaken, "4.1, 8.3: name_taken is definite"},
         {"{\"ok\":false,\"error\":\"unauthorized\"}", D, Failure::kUnauthorized, "4.1"},
         {"{\"ok\":false,\"error\":\"rate_limited\"}", D, Failure::kRateLimited, "8.3: rate_limited is definite"},
         {"{\"ok\":false,\"error\":\"internal\"}", T, Failure::kInternal, "8.3: transient"},
@@ -291,7 +293,7 @@ TEST_CASE("control_ops: get_peers not-ready table", "[control][ops]") {
     run_rows(kNotReady,
              {
                  {"", "", S, kOk, "good"},
-                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}]", "[]", S, kOk, "no peers yet"},
+                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":false}]", "[]", S, kOk, "no peers yet"},
                  {"\"ready\":false}", "\"ready\":false,\"note\":1}", S, kOk, "unknown key in an element"},
                  {"{\"ready\":false,\"peers\"", "{\"ready\":true,\"peers\"", T, kTr, "4.5: top ready must match elements"},
                  {"\"ready\":false}", "\"ready\":false,\"candidates\":[]}", T, kTr, "4.5: field set; candidates before ready"},
@@ -304,24 +306,24 @@ TEST_CASE("control_ops: get_peers not-ready table", "[control][ops]") {
                  {"\"virtual_ip\":\"10.100.0.1\"", "\"virtual_ip\":\"10.100.0.01\"", T, kTr, "leading zero"},
                  {"\"virtual_ip\":\"10.100.0.1\",", "", T, kTr, "missing virtual_ip"},
                  {"\"peers\":[", "\"peers\":{},\"x\":[", T, kTr, "peers is an object"},
-                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}]",
-                  "[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false},"
-                  "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"ready\":false}]",
+                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":false}]",
+                  "[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"p1\",\"ready\":false},"
+                  "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"name\":\"p2\",\"ready\":false}]",
                   T, kTr, "2.2: duplicate peer_id"},
-                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}]",
-                  "[{\"peer_id\":1,\"virtual_ip\":\"10.100.0.1\",\"ready\":false},"
-                  "{\"peer_id\":2,\"virtual_ip\":\"10.100.0.2\",\"ready\":false},"
-                  "{\"peer_id\":3,\"virtual_ip\":\"10.100.0.3\",\"ready\":false},"
-                  "{\"peer_id\":4,\"virtual_ip\":\"10.100.0.4\",\"ready\":false}]",
+                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":false}]",
+                  "[{\"peer_id\":1,\"virtual_ip\":\"10.100.0.1\",\"name\":\"p1\",\"ready\":false},"
+                  "{\"peer_id\":2,\"virtual_ip\":\"10.100.0.2\",\"name\":\"p2\",\"ready\":false},"
+                  "{\"peer_id\":3,\"virtual_ip\":\"10.100.0.3\",\"name\":\"p3\",\"ready\":false},"
+                  "{\"peer_id\":4,\"virtual_ip\":\"10.100.0.4\",\"name\":\"p4\",\"ready\":false}]",
                   S, kOk, "MAX_PEERS - 1 others"},
-                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}]",
-                  "[{\"peer_id\":1,\"virtual_ip\":\"10.100.0.1\",\"ready\":false},"
-                  "{\"peer_id\":2,\"virtual_ip\":\"10.100.0.2\",\"ready\":false},"
-                  "{\"peer_id\":3,\"virtual_ip\":\"10.100.0.3\",\"ready\":false},"
-                  "{\"peer_id\":4,\"virtual_ip\":\"10.100.0.4\",\"ready\":false},"
-                  "{\"peer_id\":5,\"virtual_ip\":\"10.100.0.5\",\"ready\":false}]",
+                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":false}]",
+                  "[{\"peer_id\":1,\"virtual_ip\":\"10.100.0.1\",\"name\":\"p1\",\"ready\":false},"
+                  "{\"peer_id\":2,\"virtual_ip\":\"10.100.0.2\",\"name\":\"p2\",\"ready\":false},"
+                  "{\"peer_id\":3,\"virtual_ip\":\"10.100.0.3\",\"name\":\"p3\",\"ready\":false},"
+                  "{\"peer_id\":4,\"virtual_ip\":\"10.100.0.4\",\"name\":\"p4\",\"ready\":false},"
+                  "{\"peer_id\":5,\"virtual_ip\":\"10.100.0.5\",\"name\":\"p5\",\"ready\":false}]",
                   T, kTr, "more than MAX_PEERS - 1"},
-                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":false}]", "[7]", T, kTr,
+                 {"[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":false}]", "[7]", T, kTr,
                   "element is not an object"},
              },
              [](const std::string& raw) { return interpret_get_peers(raw, kSelf, kNoSubnets); });
@@ -378,6 +380,7 @@ TEST_CASE("control_ops: get_peers values", "[control][ops]") {
     const auto& p = got.value->peers[0];
     CHECK(p.peer_id == 7u);
     CHECK(p.virtual_ip == 0x0A640001u);
+    CHECK(p.name == "Alice");
     CHECK(p.ready);
     CHECK(p.punch_delay_ms == 1000u);
     CHECK(p.elapsed_since_ready_ms == 250);
@@ -386,7 +389,7 @@ TEST_CASE("control_ops: get_peers values", "[control][ops]") {
     CHECK(p.candidates[1] == Candidate{*Endpoint::parse("203.0.113.5:40000"), CandidateKind::kReflexive});
 
     // 9개 목록은 형 위반이 아니다.
-    std::string nine = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"ready\":true,"
+    std::string nine = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\",\"ready\":true,"
                        "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,\"candidates\":[";
     for (int i = 1; i <= 9; ++i) {
         nine += (i > 1 ? "," : "");
@@ -399,6 +402,92 @@ TEST_CASE("control_ops: get_peers values", "[control][ops]") {
     REQUIRE(many.value->peers[0].candidates.size() == 8);
     CHECK(many.value->peers[0].candidates.front().endpoint == *Endpoint::parse("10.0.0.1:1000"));
     CHECK(many.value->peers[0].candidates.back().endpoint == *Endpoint::parse("10.0.0.8:1000"));
+}
+
+// ---------------------------------------------------------------- peers 원소의 name (3.5 의 7, 2.7)
+
+namespace {
+
+struct NameRow {
+    std::string_view value;  // `"name":` 뒤에 올 JSON 텍스트. 비어 있으면 name 키를 뺀다
+    bool ok;
+    std::string_view why;
+};
+
+// 3.5 의 7: peers 원소의 name 은 형에 더해 2.7 의 형식까지 본다. 틀리면 응답 전체가 전송 오류다.
+// 판정은 tunnel::is_valid_name 이다. 그 함수의 케이스 표는 tunnel/packet_test.cpp 에 있다.
+const NameRow kNameRows[] = {
+    {"\"Alice\"", true, "good"},
+    {"\"a\"", true, "2.7: one char"},
+    {"\"abcdefghijklmnop\"", true, "2.7: MAX_NAME_LEN chars"},
+    {"\"_\"", true, "2.7: underscore"},
+    {"\"ALICE_09\"", true, "2.7: upper case and digits"},
+    {"\"\\u0041lice\"", true, "the decoded value is judged, not the escape"},
+    {"\"\"", false, "2.7: empty"},
+    {"\"abcdefghijklmnopq\"", false, "2.7: MAX_NAME_LEN + 1"},
+    {"\"a b\"", false, "2.7: space"},
+    {"\" Alice\"", false, "2.7: leading space is not trimmed"},
+    {"\"Al-ice\"", false, "2.7: hyphen"},
+    {"\"-\"", false, "the FAIL line placeholder is not a name"},
+    {"\"a\\tb\"", false, "2.7: tab"},
+    {"\"\\u00e9\"", false, "2.7: non-ASCII letter"},
+    {"\"\xED\x95\x9C\"", false, "2.7: hangul (raw UTF-8)"},
+    {"123", false, "type: number"},
+    {"null", false, "type: null"},
+    {"true", false, "type: bool"},
+    {"[\"Alice\"]", false, "type: array"},
+    {"", false, "4.5: name is in every element"},
+};
+
+template <class Interpret>
+void run_name_rows(std::string_view base, std::string_view name_field, Interpret interpret) {
+    for (const auto& row : kNameRows) {
+        INFO("why=" << row.why << " value=" << row.value);
+        // name 키를 빼는 행은 뒤의 쉼표까지 지운다.
+        const std::string body = row.value.empty()
+                                     ? patch(base, std::string(name_field) + ",", "")
+                                     : patch(base, name_field, "\"name\":" + std::string(row.value));
+        INFO("body=" << body);
+        const auto got = interpret(respond(body));
+        CHECK(got.outcome == (row.ok ? S : T));
+        CHECK(got.failure == (row.ok ? kOk : kTr));
+        CHECK(got.value.has_value() == row.ok);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("control_ops: peers element name table", "[control][ops]") {
+    SECTION("get_peers not ready") {
+        run_name_rows(kNotReady, "\"name\":\"Alice\"",
+                      [](const std::string& raw) { return interpret_get_peers(raw, kSelf, kNoSubnets); });
+    }
+    SECTION("get_peers ready") {
+        run_name_rows(kReady, "\"name\":\"Alice\"",
+                      [](const std::string& raw) { return interpret_get_peers(raw, kSelf, kNoSubnets); });
+    }
+    SECTION("host_report first element") {
+        run_name_rows(kHostReport, "\"name\":\"Bob\"",
+                      [](const std::string& raw) { return interpret_host_report(raw, kSelf, kNoSubnets); });
+    }
+    SECTION("host_report second element") {
+        run_name_rows(kHostReport, "\"name\":\"carol\"",
+                      [](const std::string& raw) { return interpret_host_report(raw, kSelf, kNoSubnets); });
+    }
+}
+
+TEST_CASE("control_ops: peers element name is kept as registered", "[control][ops]") {
+    // 2.7: 대소문자는 등록한 그대로 돌려준다. 클라이언트도 바꾸지 않는다.
+    const auto g = interpret_get_peers(respond(kNotReady), kSelf, kNoSubnets);
+    REQUIRE(g.value);
+    REQUIRE(g.value->peers.size() == 1);
+    CHECK(g.value->peers[0].name == "Alice");
+
+    const auto h = interpret_host_report(respond(kHostReport), kSelf, kNoSubnets);
+    REQUIRE(h.value);
+    REQUIRE(h.value->peers.size() == 2);
+    CHECK(h.value->peers[0].name == "Bob");
+    CHECK(h.value->peers[1].name == "carol");
 }
 
 // ---------------------------------------------------------------- host_report (4.6)
@@ -420,8 +509,8 @@ TEST_CASE("control_ops: host_report table", "[control][ops]") {
                  {"\"confirmed\":[7],", "", T, kTr, "missing confirmed"},
                  {"\"expires_in_s\":120", "\"expires_in_s\":-1", T, kTr, "negative expires"},
                  {"{\"peer_id\":8,", "{\"peer_id\":9,", D, Failure::kSelfInPeers, "own peer_id"},
-                 {"\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"ready\":false}",
-                  "\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"ready\":false,\"candidates\":[]}",
+                 {"\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"name\":\"carol\",\"ready\":false}",
+                  "\"peer_id\":8,\"virtual_ip\":\"10.100.0.3\",\"name\":\"carol\",\"ready\":false,\"candidates\":[]}",
                   T, kTr, "4.5 field set applies to host_report peers"},
              },
              [](const std::string& raw) { return interpret_host_report(raw, kSelf, kNoSubnets); });
@@ -440,9 +529,11 @@ TEST_CASE("control_ops: host_report table", "[control][ops]") {
 // ---------------------------------------------------------------- 요청 본문 (4장 요청 표)
 
 TEST_CASE("control_ops: request bodies", "[control][ops]") {
-    CHECK(create_room_body(nonce()) == "{\"client_nonce\":\"000102030405060708090a0b0c0d0e0f\"}");
-    CHECK(join_room_body("ABCDEF", nonce()) ==
-          "{\"room_id\":\"ABCDEF\",\"client_nonce\":\"000102030405060708090a0b0c0d0e0f\"}");
+    // 4.2, 4.3: name 은 받은 그대로 싣는다. 대소문자를 바꾸지 않는다 (2.7).
+    CHECK(create_room_body(nonce(), "Alice") ==
+          "{\"client_nonce\":\"000102030405060708090a0b0c0d0e0f\",\"name\":\"Alice\"}");
+    CHECK(join_room_body("ABCDEF", nonce(), "bob_01") ==
+          "{\"room_id\":\"ABCDEF\",\"client_nonce\":\"000102030405060708090a0b0c0d0e0f\",\"name\":\"bob_01\"}");
 
     const Candidate cands[] = {
         {*Endpoint::parse("192.168.0.10:51234"), CandidateKind::kLocal},
@@ -464,13 +555,30 @@ TEST_CASE("control_ops: request bodies", "[control][ops]") {
 
 TEST_CASE("control_ops: request bodies refuse what the server would reject", "[control][ops]") {
     // 2.1: 대소문자는 가리지 않는다. 알파벳과 길이는 본다.
-    CHECK(join_room_body("abcdef", nonce()).has_value());
-    CHECK_FALSE(join_room_body("ABCDE0", nonce()).has_value());
-    CHECK_FALSE(join_room_body("ABCDEI", nonce()).has_value());
-    CHECK_FALSE(join_room_body("ABCDE", nonce()).has_value());
-    CHECK_FALSE(join_room_body("ABCDEFG", nonce()).has_value());
-    CHECK_FALSE(join_room_body("ABCDE ", nonce()).has_value());
-    CHECK_FALSE(join_room_body("ABCDE\"", nonce()).has_value());
+    CHECK(join_room_body("abcdef", nonce(), "Alice").has_value());
+    CHECK_FALSE(join_room_body("ABCDE0", nonce(), "Alice").has_value());
+    CHECK_FALSE(join_room_body("ABCDEI", nonce(), "Alice").has_value());
+    CHECK_FALSE(join_room_body("ABCDE", nonce(), "Alice").has_value());
+    CHECK_FALSE(join_room_body("ABCDEFG", nonce(), "Alice").has_value());
+    CHECK_FALSE(join_room_body("ABCDE ", nonce(), "Alice").has_value());
+    CHECK_FALSE(join_room_body("ABCDE\"", nonce(), "Alice").has_value());
+
+    // 2.7: name 의 형식. 서버가 bad_request 를 돌려줄 것이 확실한 이름은 보내지 않는다.
+    // 판정은 tunnel::is_valid_name 이고 그 케이스 표는 tunnel/packet_test.cpp 에 있다.
+    struct NameCase {
+        std::string_view name;
+        bool ok;
+    };
+    const NameCase names[] = {
+        {"a", true}, {"abcdefghijklmnop", true}, {"Alice_9", true},
+        {"", false}, {"abcdefghijklmnopq", false}, {"a b", false}, {"Al-ice", false},
+        {"Alice\"", false}, {"\xED\x95\x9C", false},
+    };
+    for (const auto& c : names) {
+        INFO("name=[" << c.name << "]");
+        CHECK(create_room_body(nonce(), c.name).has_value() == c.ok);
+        CHECK(join_room_body("ABCDEF", nonce(), c.name).has_value() == c.ok);
+    }
     CHECK_FALSE(get_peers_body("", 7, token()).has_value());
 
     // 4.4: 1개 이상 MAX_CANDIDATES 이하.
@@ -532,6 +640,7 @@ TEST_CASE("control_ops: control.result fields", "[control][ops]") {
         {Op::kJoinRoom, S, kOk, "INFO control.result op=join_room ok=true error=-"},
         {Op::kGetPeers, T, kTr, "INFO control.result op=get_peers ok=false error=transport"},
         {Op::kCreateRoom, D, Failure::kRoomFull, "INFO control.result op=create_room ok=false error=room_full"},
+        {Op::kJoinRoom, D, Failure::kNameTaken, "INFO control.result op=join_room ok=false error=name_taken"},
         {Op::kHostReport, T, Failure::kInternal, "INFO control.result op=host_report ok=false error=internal"},
         {Op::kRegisterCandidate, D, Failure::kUnknownCode,
          "INFO control.result op=register_candidate ok=false error=unknown_code"},
@@ -546,7 +655,7 @@ TEST_CASE("control_ops: failure tokens are the 4.1 strings", "[control][ops]") {
     // 9장 control.result 의 error 는 4.1 의 코드 문자열 그대로다. 분류한 것을 다시 적으면 같다.
     const std::string_view codes[] = {
         "bad_request", "method_not_allowed", "unknown_op", "length_required", "too_large",
-        "room_not_found", "room_expired", "room_full", "unauthorized", "rate_limited",
+        "room_not_found", "room_expired", "room_full", "name_taken", "unauthorized", "rate_limited",
         "internal", "unavailable",
     };
     for (const auto code : codes) {
@@ -771,7 +880,7 @@ TEST_CASE("control_ops: type check covers every candidate before the limit", "[c
     const std::string ok_ninth = "{\"ip\":\"10.0.0.9\",\"port\":1000,\"kind\":\"local\"}";
     for (const auto ninth : bad_ninth) {
         INFO("ninth=" << ninth);
-        const std::string get = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\","
+        const std::string get = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\","
                                 "\"ready\":true,\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,"
                                 "\"candidates\":[" + list_with(ninth) + "]}],\"ok\":true}";
         const auto g = interpret_get_peers(respond(get), kSelf, kNoSubnets);
@@ -779,7 +888,7 @@ TEST_CASE("control_ops: type check covers every candidate before the limit", "[c
         CHECK(g.failure == kTr);
 
         const std::string host = "{\"expires_in_s\":120,\"released\":[],\"confirmed\":[],\"peers\":["
-                                 "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"ready\":true,"
+                                 "{\"peer_id\":7,\"virtual_ip\":\"10.100.0.2\",\"name\":\"Bob\",\"ready\":true,"
                                  "\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,"
                                  "\"candidates\":[" + list_with(ninth) + "]}],\"ok\":true}";
         const auto h = interpret_host_report(respond(host), kSelf, kNoSubnets);
@@ -787,7 +896,7 @@ TEST_CASE("control_ops: type check covers every candidate before the limit", "[c
         CHECK(h.failure == kTr);
     }
     // 대조군: 9번째가 형으로 맞으면 성공이고 위생이 앞의 8개를 남긴다.
-    const std::string good = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\","
+    const std::string good = "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"10.100.0.1\",\"name\":\"Alice\","
                              "\"ready\":true,\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":0,"
                              "\"candidates\":[" + list_with(ok_ninth) + "]}],\"ok\":true}";
     const auto g = interpret_get_peers(respond(good), kSelf, kNoSubnets);
@@ -846,6 +955,7 @@ TEST_CASE("control_ops: host_report action table", "[control][ops]") {
         {"{\"ok\":false,\"error\":\"unauthorized\"}", A::kStop, "4.6 row 1"},
         {"{\"ok\":false,\"error\":\"bad_request\"}", A::kStop, "4.6 row 1"},
         {"{\"ok\":false,\"error\":\"room_full\"}", A::kStop, "other definite: rest of 4.1"},
+        {"{\"ok\":false,\"error\":\"name_taken\"}", A::kStop, "other definite: rest of 4.1"},
         {"{\"ok\":false,\"error\":\"method_not_allowed\"}", A::kStop, "other definite: rest of 4.1"},
         {"{\"ok\":false,\"error\":\"unknown_op\"}", A::kStop, "other definite: rest of 4.1"},
         {"{\"ok\":false,\"error\":\"length_required\"}", A::kStop, "other definite: rest of 4.1"},

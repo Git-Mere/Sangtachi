@@ -7,7 +7,7 @@ from controlplane.errors import STATUS, OpError
 # control_plane.md 4.1 의 표를 그대로 옮긴 것이 아니라 그 표와 코드가 어긋나는지 보는 대조다.
 DOC_TABLE = {
     "bad_request": 400, "method_not_allowed": 405, "unknown_op": 404, "length_required": 411,
-    "room_not_found": 404, "room_expired": 410, "room_full": 409, "unauthorized": 403,
+    "room_not_found": 404, "room_expired": 410, "room_full": 409, "name_taken": 409, "unauthorized": 403,
     "rate_limited": 429, "internal": 500, "unavailable": 503,
 }
 

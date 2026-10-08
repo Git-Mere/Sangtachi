@@ -3,13 +3,14 @@
 `design-audit.md` 6장 규칙 5(같은 주장 복사 금지)와 CLAUDE.md 의 미러 규약을 명령으로
 옮긴 것이다. 사람이 기억해야 하던 검사를 판정으로 만든다.
 
-검사는 넷이다.
+검사는 다섯이다.
 
 | 검사 | 판정 | 내용 |
 |------|------|------|
 | `mirror` | 차단 | `docs/kor` 와 `docs/eng` 의 문서 짝이 맞는가. `KOR_ONLY` 만 예외다 |
 | `parity` | 차단 | 짝의 헤딩 레벨 순서, 표 행 수, 코드 블록 수, 링크 수가 같은가 |
 | `link` | 차단 | 상대 링크가 실재 경로인가 (예외 목록만 제외) |
+| `counter` | 차단 | 살아 있는 문서의 카운터 이름과 `COUNTERS_SOURCE` 의 이름이 맞는가. `PENDING_COUNTERS` 만 예외다 |
 | `claim` | 보고 | 강한 주장 문구가 어디에 있는가. 막지 않고 목록만 낸다 |
 
 `claim` 은 판정하지 않는다. 문구 하나가 곧 결함은 아니기 때문이다. 주장 강도를 낮출 때
@@ -67,6 +68,28 @@ KOR_ONLY = {
     f"docs/{KOR}/plan.md",
 }
 
+# 카운터 이름 대조(`counter` 검사)의 코드 쪽 출처. 이름은 문서가 짓고 코드가 옮겨 적는다.
+COUNTERS_SOURCE = "client/src/counters.cpp"
+
+# 문서에는 있고 코드에는 아직 없는 카운터. 이름과 들어오는 Phase 다. 구현하면 여기서 뺀다.
+# **남겨 두면 결함이다.** 코드에 이미 있는 이름이 여기 있으면 `counter` 검사가 떨어진다.
+PENDING_COUNTERS = {
+    "endpoint_learned": "Phase 4",
+    "drop_roster_name": "Phase 4",
+    "record_write_failed": "Phase 4",
+    "telemetry_upload_failed": "Phase 9",
+}
+
+# 문서 본문 코드 스팬 가운데 카운터로 읽는 모양. 코드에서 문서로 갈 때는 이 모양을 보지 않고
+# 이름 그대로 찾으므로, 모양에 맞지 않는 새 이름도 문서에 없으면 걸린다.
+COUNTER_SHAPE = re.compile(r"(?:(?:drop|tx_drop|tx_err|rx_err)_[a-z0-9_]+|[a-z0-9_]+_(?:dropped|failed|learned|rx))")
+# 코드 쪽은 이름의 모양을 거르지 않는다. 거르면 규칙 밖의 이름이 대조에서 조용히 빠진다.
+# 대신 파일의 `case` 를 모두 세어 이 모양으로 읽힌 수와 맞지 않으면 통과로 적지 않는다.
+COUNTER_CASE = re.compile(r"\bcase\b")
+COUNTER_TOKEN = re.compile(
+    r'\bcase\s+(?:\w+\s*::\s*)*Counter\s*::\s*\w+\s*:\s*return\s+"([^"\n]*)"\s*;')
+C_COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+
 # 파일 이름이 언어마다 다른 디렉터리. 여기서만 앞 번호로 짝을 맞춘다.
 # 다른 곳까지 번호 짝을 허용하면 `2026-...` 같은 이름이 앞자리만 보고 엉뚱하게 붙는다.
 NUMBER_PAIRED_DIRS = {(f"decisions",)}
@@ -113,15 +136,26 @@ HTML_COMMENT_CLOSE = re.compile(r"-->")
 
 
 def _code_span_end(line: str, index: int) -> int | None:
-    """`index` 의 백틱 run 이 여는 코드 스팬이면 그 끝의 다음 위치. 아니면 None."""
+    """`index` 의 백틱 run 이 여는 코드 스팬이면 그 끝의 다음 위치. 아니면 None.
+
+    닫는 run 은 여는 run 과 **길이가 정확히 같은 온전한 run** 이어야 한다 (CommonMark).
+    더 긴 run 의 끝부분을 닫는 자리로 잡으면 짝 없는 백틱이 스팬을 만든다.
+    """
     length = len(line)
     run = 0
     while index + run < length and line[index + run] == "`":
         run += 1
-    closing = line.find("`" * run, index + run)
-    while closing != -1 and closing + run < length and line[closing + run] == "`":
-        closing = line.find("`" * run, closing + run)
-    return None if closing == -1 else closing + run
+    cursor = index + run
+    while True:
+        closing = line.find("`", cursor)
+        if closing == -1:
+            return None
+        other = 0
+        while closing + other < length and line[closing + other] == "`":
+            other += 1
+        if other == run:
+            return closing + run
+        cursor = closing + other
 
 
 def _strip_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
@@ -151,6 +185,14 @@ def _strip_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
                 out.append(line[index:span_end])
                 index = span_end
                 continue
+            # 짝 없는 여는 run 은 통째로 글자다. 한 글자씩 넘기면 그 run 의 뒷부분이 다시 스팬을 열어
+            # 뒤따르는 주석 기호를 코드로 숨긴다.
+            run_end = index
+            while run_end < length and line[run_end] == "`":
+                run_end += 1
+            out.append(line[index:run_end])
+            index = run_end
+            continue
         if line.startswith("<!--", index):
             index += 4
             in_comment = True
@@ -544,7 +586,83 @@ def find_root(start: Path) -> Path:
     raise GateInputError(f"docs/{KOR} 와 docs/{ENG} 를 가진 상위 디렉터리를 찾지 못했다: {start}")
 
 
-def run(root: Path) -> Report:
+def _counter_names_in_docs(language_root: Path, root: Path) -> set[str] | None:
+    """살아 있는 문서 본문 코드 스팬의 모든 토큰. 언어 디렉터리 바로 아래만 본다.
+
+    하위 디렉터리(`commit_history/`, `decisions/` 등)는 기록이라 지금 이름의 출처가 아니다.
+    `KOR_ONLY` 는 인수인계 메모라 예정 이름을 적을 수 있으므로 세지 않는다.
+    """
+    tokens: set[str] = set()
+    for path in sorted(language_root.glob("*.md")):
+        if path.relative_to(root).as_posix() in KOR_ONLY:
+            continue
+        for _, line in _body_lines(path.read_text(encoding="utf-8-sig")):
+            tokens.update(code_spans(line))
+    return tokens
+
+
+def code_spans(line: str) -> list[str]:
+    """한 줄의 코드 스팬 내용. 여닫는 백틱 run 의 길이가 같아야 스팬이다 (CommonMark).
+
+    짝이 없는 run 은 글자다. 양끝이 모두 공백이고 공백만이 아니면 한 칸씩 걷어 낸다.
+    """
+    spans = []
+    index = 0
+    while index < len(line):
+        if line[index] != "`":
+            index += 1
+            continue
+        run = 1
+        while index + run < len(line) and line[index + run] == "`":
+            run += 1
+        end = _code_span_end(line, index)
+        if end is None:
+            index += run
+            continue
+        content = line[index + run:end - run]
+        if len(content) >= 2 and content[0] == " " and content[-1] == " " and content.strip():
+            content = content[1:-1]
+        spans.append(content)
+        index = end
+    return spans
+
+
+def counter_findings(root: Path, pending: dict[str, str]) -> list[Finding]:
+    """문서의 카운터 이름과 `COUNTERS_SOURCE` 의 이름을 양쪽으로 대조한다."""
+    source = root / COUNTERS_SOURCE
+    if not source.is_file():
+        return [Finding("counter", COUNTERS_SOURCE, "파일이 없다. 대조할 수 없으므로 통과로 적지 않는다")]
+    text = C_COMMENT.sub(" ", source.read_text(encoding="utf-8-sig"))
+    names = COUNTER_TOKEN.findall(text)
+    if not names:
+        return [Finding("counter", COUNTERS_SOURCE, "카운터 이름을 하나도 읽지 못했다. 형식이 바뀌었는지 본다")]
+    cases = len(COUNTER_CASE.findall(text))
+    if cases != len(names):
+        return [Finding("counter", COUNTERS_SOURCE,
+                        f"`case` {cases}개 가운데 {len(names)}개만 이름을 읽었다. 읽지 못한 case 가 있다")]
+    code = set(names)
+
+    findings = []
+    for name in sorted(code & set(pending)):
+        findings.append(Finding("counter", COUNTERS_SOURCE,
+                                f"`{name}` 가 코드에 있는데 PENDING_COUNTERS 에 남아 있다"))
+    for language in (KOR, ENG):
+        where = f"docs/{language}"
+        tokens = _counter_names_in_docs(root / "docs" / language, root)
+        documented = {token for token in tokens if COUNTER_SHAPE.fullmatch(token)}
+        for name in sorted(documented - code - set(pending)):
+            findings.append(Finding("counter", where, f"`{name}` 가 문서에만 있다. 코드에도 예정 목록에도 없다"))
+        for name in sorted(code - tokens):
+            findings.append(Finding("counter", where, f"`{name}` 가 코드에만 있다. 살아 있는 문서에 없다"))
+        for name in sorted(set(pending) - tokens):
+            findings.append(Finding("counter", where,
+                                    f"`{name}` 가 PENDING_COUNTERS 에 있는데 살아 있는 문서에 없다"))
+    return findings
+
+
+def run(root: Path, *, counters: bool = True,
+        pending: dict[str, str] | None = None) -> Report:
+    """`counters` 와 `pending` 은 시험용 이음새다. 명령줄은 항상 기본값으로 부른다."""
     root = Path(root).resolve()
     for language in (KOR, ENG):
         if not (root / "docs" / language).is_dir():
@@ -605,6 +723,9 @@ def run(root: Path) -> Report:
                 for phrase, pattern in CLAIM_PATTERNS[language]:
                     if re.search(pattern, line):
                         report.claims.append((where, number, phrase))
+
+    if counters:
+        report.findings += counter_findings(root, PENDING_COUNTERS if pending is None else pending)
 
     return report
 

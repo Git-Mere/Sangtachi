@@ -66,7 +66,8 @@ class GateCase(unittest.TestCase):
         write(self.root, "docs/eng/other.md", "# Other\n")
 
     def run_gate(self) -> docgate.Report:
-        return docgate.run(self.root)
+        # 이 묶음은 문서 검사만 본다. 카운터 대조는 `TestCounters` 가 본다.
+        return docgate.run(self.root, counters=False)
 
 
 class TestHeadings(unittest.TestCase):
@@ -436,12 +437,27 @@ class TestClaimScan(GateCase):
 
 
 class TestCommandLine(GateCase):
+    def build_with_counters(self) -> None:
+        names = " ".join(f"`{name}`" for name in ("drop_short", *docgate.PENDING_COUNTERS))
+        self.build(kor=CLEAN_KOR + f"\n{names}\n", eng=CLEAN_ENG + f"\n{names}\n")
+        write(self.root, docgate.COUNTERS_SOURCE, counters_cpp("drop_short"))
+
     def test_exit_zero_and_last_line_on_clean(self) -> None:
-        self.build()
+        self.build_with_counters()
         self.assertEqual(docgate.main(["--root", str(self.root)]), 0)
 
+    def test_command_line_runs_the_counter_check(self) -> None:
+        # 명령줄은 카운터 대조를 끄지 못한다. 코드 쪽 출처가 없으면 통과가 아니다.
+        self.build_with_counters()
+        (self.root / docgate.COUNTERS_SOURCE).unlink()
+        self.assertEqual(docgate.main(["--root", str(self.root)]), 1)
+
     def test_exit_one_on_failure(self) -> None:
-        self.build(eng=CLEAN_ENG.replace("## Section", "### Section"))
+        # 카운터 쪽은 깨끗하게 두고 parity 만 깨뜨린다. 다른 검사의 실패가 이 시험을 대신 통과시키지 않게 한다.
+        self.build_with_counters()
+        eng = self.root / "docs/eng/a.md"
+        eng.write_text(eng.read_text(encoding="utf-8").replace("## Section", "### Section"), encoding="utf-8")
+        self.assertEqual({f.check for f in docgate.run(self.root).findings}, {"parity"})
         self.assertEqual(docgate.main(["--root", str(self.root)]), 1)
 
     def test_missing_root_does_not_report_pass(self) -> None:
@@ -676,6 +692,192 @@ class TestIndentedCodeStart(GateCase):
         self.build(kor=CLEAN_KOR + "\n## 예시\n    [끊김](없는.md)\n",
                    eng=CLEAN_ENG + "\n## Example\n    [broken](gone.md)\n")
         self.assertTrue(self.run_gate().ok, self.run_gate().text())
+
+
+COUNTERS_CPP = """namespace sangtachi {
+std::string_view to_token(Counter counter) noexcept {
+    switch (counter) {
+%s
+    }
+}
+}
+"""
+
+
+def counters_cpp(*tokens: str) -> str:
+    cases = "\n".join(f'        case Counter::C{i}: return "{token}";' for i, token in enumerate(tokens))
+    return COUNTERS_CPP % cases
+
+
+class TestCounters(GateCase):
+    """카운터 이름 대조. 문서의 이름과 `client/src/counters.cpp` 의 이름이 맞는가.
+
+    문서 쪽은 살아 있는 문서(`docs/<언어>/` 바로 아래, `KOR_ONLY` 제외)의 본문 코드 스팬이다.
+    """
+
+    PENDING = {"drop_future": "Phase 4"}
+
+    def make(self, code: tuple[str, ...], kor: str, eng: str | None = None) -> None:
+        write(self.root, "docs/kor/a.md", f"# 제목\n\n{kor}\n")
+        write(self.root, "docs/eng/a.md", f"# Title\n\n{kor if eng is None else eng}\n")
+        write(self.root, docgate.COUNTERS_SOURCE, counters_cpp(*code))
+
+    def findings(self, pending: dict[str, str] | None = None) -> list[docgate.Finding]:
+        report = docgate.run(self.root, pending=self.PENDING if pending is None else pending)
+        return [f for f in report.findings if f.check == "counter"]
+
+    # 정상 구현이 통과하는가 (규칙 3).
+
+    def test_matching_names_pass(self) -> None:
+        self.make(("drop_short", "adapter_rx"), "`drop_short` 와 `adapter_rx`. 예정인 `drop_future`")
+        self.assertEqual(self.findings(), [])
+
+    def test_code_name_without_counter_shape_passes_when_documented(self) -> None:
+        # 코드 쪽에서 문서로는 모양을 보지 않고 이름 그대로 찾는다.
+        self.make(("endpoint_changes",), "`endpoint_changes` 와 `drop_future`")
+        self.assertEqual(self.findings(), [])
+
+    def test_non_counter_tokens_are_not_taken_as_counters(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future` `session.failed` `tx_err_*` `drop_`")
+        self.assertEqual(self.findings(), [])
+
+    # 결함을 잡는가.
+
+    def test_doc_only_name_fails(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_typo` `drop_future`")
+        self.assertTrue(any("drop_typo" in f.detail for f in self.findings()))
+
+    def test_doc_only_name_in_eng_only_fails(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`", eng="`drop_short` `drop_shrot` `drop_future`")
+        found = self.findings()
+        self.assertTrue(any("drop_shrot" in f.detail and "eng" in f.where for f in found), found)
+
+    def test_each_counter_shape_is_recognized(self) -> None:
+        for token in ("drop_x", "tx_drop_x", "tx_err_x", "rx_err_x", "x_dropped", "x_failed", "x_learned", "x_rx"):
+            with self.subTest(token=token):
+                self.make(("drop_short",), f"`drop_short` `drop_future` `{token}`")
+                self.assertTrue(any(token in f.detail for f in self.findings()), token)
+
+    def test_code_only_name_fails(self) -> None:
+        self.make(("drop_short", "drop_silent"), "`drop_short` `drop_future`")
+        self.assertTrue(any("drop_silent" in f.detail for f in self.findings()))
+
+    def test_code_name_missing_from_eng_fails(self) -> None:
+        self.make(("drop_short", "drop_extra"), "`drop_short` `drop_extra` `drop_future`",
+                  eng="`drop_short` `drop_future`")
+        found = self.findings()
+        self.assertTrue(any("drop_extra" in f.detail and "eng" in f.where for f in found), found)
+
+    def test_pending_name_already_in_code_fails(self) -> None:
+        # 구현했으면 예정 목록에서 빼야 한다. 남겨 두면 목록이 낡는다.
+        self.make(("drop_short", "drop_future"), "`drop_short` `drop_future`")
+        self.assertTrue(any("drop_future" in f.detail for f in self.findings()))
+
+    def test_pending_name_missing_from_docs_fails(self) -> None:
+        self.make(("drop_short",), "`drop_short`")
+        self.assertTrue(any("drop_future" in f.detail for f in self.findings()))
+
+    def test_name_only_in_code_fence_does_not_count(self) -> None:
+        self.make(("drop_short",), "`drop_future`\n\n```\ndrop_short `drop_short`\n```")
+        self.assertTrue(any("drop_short" in f.detail for f in self.findings()))
+
+    def test_history_documents_do_not_count(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        write(self.root, "docs/kor/commit_history/x.md", "`drop_old`\n")
+        write(self.root, "docs/eng/commit_history/x.md", "`drop_old`\n")
+        self.assertEqual(self.findings(), [])
+
+    def test_history_mention_does_not_satisfy_a_code_name(self) -> None:
+        self.make(("drop_short", "drop_hidden"), "`drop_short` `drop_future`")
+        write(self.root, "docs/kor/commit_history/x.md", "`drop_hidden`\n")
+        write(self.root, "docs/eng/commit_history/x.md", "`drop_hidden`\n")
+        self.assertTrue(any("drop_hidden" in f.detail for f in self.findings()))
+
+    def test_kor_only_document_does_not_count(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        write(self.root, "docs/kor/plan.md", "`drop_planned`\n")
+        self.assertEqual(self.findings(), [])
+
+    def test_code_name_outside_the_token_alphabet_is_still_compared(self) -> None:
+        # 코드 쪽을 모양으로 거르면 규칙 밖의 이름이 대조에서 조용히 빠진다.
+        self.make(("drop_short", "endpointChanges"), "`drop_short` `drop_future`")
+        self.assertTrue(any("endpointChanges" in f.detail for f in self.findings()))
+
+    def test_double_backtick_span_is_read(self) -> None:
+        self.make(("drop_short",), "``drop_short`` `` drop_typo `` `drop_future`")
+        found = self.findings()
+        self.assertTrue(any("drop_typo" in f.detail for f in found), found)
+        self.assertFalse(any("drop_short" in f.detail for f in found), found)
+
+    def test_case_with_a_comment_is_still_read(self) -> None:
+        # 읽지 못한 case 를 건너뛰면 그 카운터가 대조에서 빠진다.
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        source = self.root / docgate.COUNTERS_SOURCE
+        source.write_text(source.read_text(encoding="utf-8").replace(
+            "    }", '        case Counter::New: /* 설명 */ return "drop_new";\n    }'), encoding="utf-8")
+        self.assertTrue(any("drop_new" in f.detail for f in self.findings()))
+
+    def test_unparsable_case_fails_closed(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        source = self.root / docgate.COUNTERS_SOURCE
+        source.write_text(source.read_text(encoding="utf-8").replace(
+            "    }", "        case Counter::New: return kNewName;\n    }"), encoding="utf-8")
+        self.assertTrue(any("case" in f.detail for f in self.findings()))
+
+    def test_unmatched_backtick_run_is_not_a_span(self) -> None:
+        # 닫는 run 은 길이가 정확히 같은 온전한 run 이어야 한다. 더 긴 run 의 끝은 닫지 못한다.
+        self.assertEqual(docgate.code_spans("`drop_typo``"), [])
+        self.assertEqual(docgate.code_spans("``drop_typo```"), [])
+        self.assertEqual(docgate.code_spans("`noise`` `drop_typo`"), ["noise`` "])
+        self.assertEqual(docgate.code_spans("``a`b`` `c`"), ["a`b", "c"])
+
+    def test_unmatched_opening_run_does_not_hide_a_comment(self) -> None:
+        # 짝 없는 `` 의 뒷부분이 스팬을 다시 열면 주석 안의 이름이 본문으로 새어 나온다.
+        self.make(("drop_short",), "`drop_short` `drop_future` ``<!-- `drop_hidden` -->")
+        self.assertEqual(self.findings(), [])
+        self.assertEqual(docgate.headings("``<!-- `x` -->\n# 진짜\n"), [(1, "진짜")])
+
+    def test_wrong_closure_does_not_invent_a_counter(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future` `noise`` `drop_typo`")
+        self.assertEqual(self.findings(), [])
+
+    def test_spaced_scope_operator_is_read(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        source = self.root / docgate.COUNTERS_SOURCE
+        source.write_text(source.read_text(encoding="utf-8").replace(
+            "    }", '        case Counter /* x */ :: New: return "drop_new";\n'
+                    '        case sangtachi::Counter::Other: return "drop_other";\n    }'), encoding="utf-8")
+        found = self.findings()
+        self.assertTrue(any("drop_new" in f.detail for f in found), found)
+        self.assertTrue(any("drop_other" in f.detail for f in found), found)
+
+    def test_any_unread_case_fails_closed(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        source = self.root / docgate.COUNTERS_SOURCE
+        source.write_text(source.read_text(encoding="utf-8").replace(
+            "    }", '        case Counter::New:\n            return "drop_new";\n        case 7: return "x";\n    }'),
+            encoding="utf-8")
+        self.assertTrue(any("case" in f.detail for f in self.findings()))
+
+    def test_trailing_underscore_name_is_recognized(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future` `drop_new_`")
+        self.assertTrue(any("drop_new_" in f.detail for f in self.findings()))
+
+    # 판정할 수 없는 것을 통과로 적지 않는다.
+
+    def test_missing_source_fails(self) -> None:
+        self.make(("drop_short",), "`drop_short` `drop_future`")
+        (self.root / docgate.COUNTERS_SOURCE).unlink()
+        self.assertTrue(self.findings())
+
+    def test_source_without_parsable_names_fails(self) -> None:
+        self.make((), "`drop_future`")
+        self.assertTrue(self.findings())
+
+    def test_real_repository_passes(self) -> None:
+        root = docgate.find_root(Path(docgate.__file__).resolve().parent)
+        report = docgate.run(root)
+        self.assertEqual([f.line() for f in report.findings if f.check == "counter"], [])
 
 
 if __name__ == "__main__":

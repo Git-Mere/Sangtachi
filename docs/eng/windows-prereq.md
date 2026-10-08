@@ -943,9 +943,9 @@ If the binary was changed right before the demo, run it once more with that file
 | # | Item | Who | When |
 |---|------|-----|------|
 | 1 | Administrator rights | person | every run |
-| 2 | Firewall profile and rules | client | right after adapter creation |
+| 2 | Firewall profile and rules | client + person | right after adapter creation |
 | 3 | Leftover cleanup | client | at start |
-| 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | person (build) | when making the distribution |
+| 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | person (at build time) + client (check at run time) | when making the distribution and at run time |
 | 5 | `server.properties` | person | when first setting up the server |
 | 6 | EC2 security group and bind address | person | when setting up the instance |
 | 7 | Subnet overlap check | client | before creating the adapter |
@@ -956,8 +956,9 @@ If the binary was changed right before the demo, run it once more with that file
 | 12 | Java path exception | person | after updating Java |
 | 13 | SmartScreen bypass | person | first run on the demo PC |
 
-**All 5 items owned by the client are implemented in Phase 6 or later.** For now this is a design
-split.
+**Every item the client owns, including those it owns only in part, is implemented in Phase 6 or
+later.** For now this is a design split. The "Who" of each row copies the `Owner:` line of that
+section.
 
 ## 15. Usability limits
 

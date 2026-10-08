@@ -655,7 +655,7 @@ has a legitimate case: another process on the same machine. **The two tables are
 
 | What | Verdict | Why |
 |------|------|-----|
-| Broadcast address of **our own** active IPv4 subnet | Drop | 10.1 Candidate Collection and Hygiene already reads each interface's address and netmask when building local candidates. It can be computed from those. This is also where amplification actually happens |
+| Broadcast address of **our own** subnet, as given by the own-subnet set of 10.1 Candidate Collection and Hygiene | Drop | That section already reads each address and netmask when building local candidates. It can be computed from those. This is also where amplification actually happens |
 | Broadcast address of a remote subnet | Pass (cannot be blocked) | We do not know that subnet's netmask. There is no way to tell it from unicast |
 
 The remote subnet case is **recorded as a residual risk.** Routers not forwarding directed broadcast
@@ -1127,18 +1127,142 @@ that state**, while this is the transition into it. Not sending before learning 
 
 Candidates each peer registers with the control plane:
 
-- **Local candidates**: `active IPv4 interface address : the bound UDP port`. An endpoint, not just an
-  address
+- **Local candidates**: `IPv4 address that passes the local candidate decision below : the bound UDP port`.
+  An endpoint, not just an address
   - The port is the single actual value Chapter 6 read with `getsockname`, used for every local candidate
     alike. One socket, so one port
-  - Exclude loopback, APIPA (`169.254.0.0/16`), our own Wintun adapter, and other tunnel/VPN adapters from
-    the interfaces
-  - Also read each interface's prefix length (netmask) and keep it locally. The prefix is not sent as a
-    candidate
-  - The prefix is kept because the source hygiene of Chapter 7 uses that value to compute the directed
-    broadcast of our own subnet. Discarding it makes that decision impossible. Sending it to the peer
-    would only reveal our internal network layout, and the peer has no use for it
+  - Also read each address's prefix length (netmask) and use it for the own-subnet set below. The prefix
+    is not sent as a candidate
+  - The prefix is not sent because it would only reveal our internal network layout to the peer, and the
+    peer has no use for it
 - **Server-reflexive candidates**: the public endpoint obtained via STUN. Recorded per STUN server queried.
+
+**When to collect.** Local candidates and the own-subnet set come together from one collection made just
+before sending `register_candidate` ([`control_plane.md`](control_plane.md) 8.4 From Launch to Punch,
+step 6). Neither changes until the next collection.
+
+- If interface enumeration fails, leave one `WARN` line and register without local candidates. The
+  own-subnet set is not changed. No retry
+- If enumeration succeeds but there is no active address, there are no local candidates and the
+  own-subnet set becomes empty. This differs from failure
+- If the route lookup fails, treat it as having no default route. Leave one `WARN` line
+
+> **Why enumeration failure does not end the attempt.** Reflexive candidates alone still allow a connection
+> across different networks. What is lost is the same-LAN candidate, which then relies on hairpinning.
+> Clearing the previous set would reopen the broadcast sources it was blocking.
+
+**Residual risk.** The subnet of an interface that appears or changes address between collections is not
+in the own-subnet set until the next collection. Meanwhile broadcast sources from that subnet pass Chapter
+7. Replies to such a source are bound by the common unverified-destination budget of the 9.4 Transition
+Table. However, if that address is an approved candidate or `peer_endpoint`, it is outside the budget and
+not bound. Recollecting on interface change notifications is not in v1.
+
+**Local candidate decision.** For each IPv4 address, apply two stages in order.
+
+1. **Active.** The interface's `OperStatus` is `Up` and the address's `DadState` is `Preferred`. If
+   either fails, the address is used nowhere
+2. **Exclude.** If any of the following holds, the address is not a candidate even when active
+   - `IfType` is one of 24 (software loopback), 53 (proprietary virtual), 131 (tunnel), 23 (PPP)
+   - The address is in loopback (`127.0.0.0/8`) or APIPA (`169.254.0.0/16`)
+   - The interface is our own Wintun adapter. Decided solely by the recorded `InterfaceGuid`
+     (same basis as [`windows-prereq.md`](windows-prereq.md) Section 3 Cleaning up leftover adapters,
+     addresses and routes)
+
+Every address that passes both stages is a candidate. An `IfType` not in the list above is included.
+
+> **Why an exclusion list.** This decision picks where to send; it is not a safety decision.
+> Amplification is stopped by the hygiene rules below and by the Chapter 7 source hygiene, and unicast
+> reflection is bounded by the caps of Chapter 2 Security Model. The cost
+> of a wrongly included candidate is `HELLO` retransmission to that address per attempt; the cost of a
+> wrongly excluded one is a same-LAN connection that has to rely on hairpinning. So unknowns are
+> included. Virtual adapters that appear with `IfType` 6 like Ethernet (TAP, Hyper-V, etc.) pass this
+> decision. That cost and the rejected alternatives are owned by
+> [ADR 0017](decisions/0017-local-candidate-criteria.md).
+
+Our own Wintun is checked separately even though it is `IfType` 53. This keeps the decision from depending
+on the adapter's `IfType` value.
+
+**Order and cap of the registered list.** The list sent with `register_candidate` is built in this order.
+
+1. Server-reflexive candidates, in the order received
+2. Local candidates of the default-route interface, in OS enumeration order within that interface
+3. The remaining local candidates, in OS enumeration order
+4. Remove duplicates. Keep the element that came first
+5. Keep the first `MAX_CANDIDATES` and drop the rest
+
+The default-route interface is the interface of the IPv4 route with destination prefix `0.0.0.0/0` whose
+route metric plus interface metric is smallest. On a tie, the one earlier in OS enumeration order. If no
+such route exists or that interface has no local candidate, step 2 is empty and local candidates stay in
+enumeration order.
+
+> **Why.** Reflexive candidates are kept first, and if there are fewer distinct reflexive candidates than
+> `MAX_CANDIDATES`, the default-route LAN candidate is kept next. The former are used across different
+> networks, the latter on the same LAN.
+
+**Own-subnet set.** The set used by the own-subnet directed broadcast decision in Chapter 7.
+
+- Its elements are the addresses that passed the active stage, with their prefix lengths. **The
+  exclude stage does not apply.** Subnets of interfaces excluded from candidates are included too
+- Loopback-range addresses are not included. Chapter 7 passes loopback sources
+- Only addresses with prefix length from 0 to 30 are included. Subnets of 31 and 32 have no broadcast
+  address (31 is the RFC 3021 point-to-point link). Other values are not prefixes. The candidate decision
+  does not depend on the prefix
+- The broadcast address of an element is the address with all host bits set to 1
+- Empty before the first collection
+
+> **Why the exclude stage does not apply.** Excluding candidates picks where to send; this set picks what
+> to block. A broadcast source can arrive from the subnet of a virtual adapter excluded from candidates.
+> Computing 31 and 32 would block our own or the peer's address, which are not broadcasts.
+
+`OperStatus`, `DadState`, `IfType`, and `InterfaceGuid` are Windows implementation names. What must be
+kept is not the name but the intent of each stage ([ADR 0010](decisions/0010-platform-porting-seams.md)
+seam 1).
+
+**Local candidate decision case table.** Inject the interface enumeration into the decision function and
+run every row. A blank cell is the default. State is `Up`, address state is `Preferred`, and other means
+someone else's adapter.
+
+| # | `IfType` | State | Address/prefix | Address state | Other | Local candidate | Broadcast blocked by the own-subnet set | Implementation caught |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 71 | | `10.0.0.49/24` | | | Include | `10.0.0.255` | Baseline row |
+| 2 | 6 | | `192.168.0.10/24` | | | Include | `192.168.0.255` | One that filters `IfType` 6 |
+| 3 | 243 | | `10.20.0.5/24` | | | Include | `10.20.0.255` | One built as an allowlist |
+| 4 | 6 | `Down` | `192.168.1.5/24` | | | Exclude | None | One that looks only at the address |
+| 5 | 6 | | `192.168.1.5/24` | `Tentative` | | Exclude | None | One that looks only at `OperStatus` |
+| 6 | 6 | | `192.168.1.5/24` | `Duplicate` | | Exclude | None | One that filters only `Tentative` |
+| 7 | 6 | | `192.168.1.5/24` | `Deprecated` | | Exclude | None | One that checks "not a failure state" instead of `Preferred` |
+| 8 | 6 | `Down` | `169.254.199.113/16` | `Tentative` | | Exclude | None | Address left on a disconnected adapter |
+| 9 | 24 | | `127.0.0.1/8` | | | Exclude | None | One that includes loopback |
+| 10 | 6 | | `127.0.0.5/8` | | | Exclude | None | One that checks only `IfType`, not the range |
+| 11 | 6 | | `169.254.10.1/16` | | | Exclude | `169.254.255.255` | One that misses APIPA. One that builds the set from candidates |
+| 12 | 6 | | `169.253.255.254/24` | | | Include | `169.253.255.255` | APIPA boundary |
+| 13 | 6 | | `169.255.0.1/24` | | | Include | `169.255.0.255` | APIPA boundary |
+| 14 | 53 | | `100.102.127.59/32` | | | Exclude | None | One that misses 53. One that computes 32 |
+| 15 | 131 | | `10.30.0.2/24` | | | Exclude | `10.30.0.255` | One that misses 131 |
+| 16 | 23 | | `10.40.0.2/24` | | | Exclude | `10.40.0.255` | One that misses 23 |
+| 17 | 6 | | `10.100.0.1/24` | | Our own Wintun | Exclude | `10.100.0.255` | One that drops the identifier rule and relies on `IfType` 53. `IfType` is deliberately not 53 |
+| 18 | 6 | | `172.17.0.1/20` | | | Include | `172.17.15.255` | Virtual adapter with `IfType` 6. Accepted cost |
+| 19 | 6 | | `10.0.0.2/31` | | | Include | None | One that computes 31 |
+| 20 | 6 | | `10.0.0.4/30` | | | Include | `10.0.0.7` | One that treats 30 like 31 |
+| 21 | 6 | | `192.168.0.10/24`, `192.168.5.10/24` | | One interface | Include both | `192.168.0.255`, `192.168.5.255` | One that uses only the first address per interface |
+| 22 | 6 | | `192.168.0.20`, prefix 255 | | | Include | None | One that computes without checking the prefix range. One that excludes candidates by prefix |
+
+**Registered list case table.** `MAX_CANDIDATES` is 8. `R1`, `R2` are reflexive candidates, `Lx` are local
+candidates, and the parenthesis is that candidate's interface.
+
+| # | Input | Default route | Registered list | Implementation caught |
+|---|---|---|---|---|
+| O1 | `R1`, enumerated `L1(Ethernet)`, `L2(Wi-Fi)` | Wi-Fi | `R1`, `L2`, `L1` | One that does not sort |
+| O2 | `R1`, enumerated `L1(Ethernet)`, `L2(Wi-Fi)` | A VPN with `IfType` 53. No candidate | `R1`, `L1`, `L2` | One that reorders when there is no default route |
+| O3 | `R1`, enumerated `L1`, `L2` | None | `R1`, `L1`, `L2` | Same |
+| O4 | `R1`, `R2`, enumerated `L1`-`L6`, `L7(default route)` | `L7`'s interface | `R1`, `R2`, `L7`, `L1`-`L5` | One that cuts reflexive candidates. One that sorts after cutting |
+| O5 | `R1` = `203.0.113.7:p`, enumerated `L1` = `203.0.113.7:p` | `L1`'s interface | `R1` only | One that does not deduplicate or keeps the local one |
+| O6 | `R1`, `R2` equal to `R1`, enumerated `L1`-`L7` | None | `R1`, `L1`-`L7` | One that cuts before deduplicating |
+| O7 | `R1`, enumerated `L1(Ethernet)`, `L2(Wi-Fi)`, `L3(Wi-Fi)` | Wi-Fi | `R1`, `L2`, `L3`, `L1` | One that lifts only one address of the default-route interface |
+| O8 | Distinct `R1`-`R8`, enumerated `L1(Wi-Fi)` | Wi-Fi | `R1`-`R8` | One that pushes out reflexive candidates for a local candidate |
+| O9 | `R1`, enumeration fails. Previous set `{10.0.0.49/24}` | Irrelevant | `R1`. The set is unchanged and keeps blocking `10.0.0.255` | One that treats failure as an empty enumeration and clears the set. One that ends the attempt |
+| O10 | `R1`, enumeration succeeds, no active address. Previous set `{10.0.0.49/24}` | None | `R1`. The set becomes empty and no longer blocks `10.0.0.255` | One that treats an empty success as failure and keeps the previous set |
+| O11 | `R1`, enumerated `L1(Ethernet)`, `L2(Wi-Fi)`, route lookup fails | Lookup failed | `R1`, `L1`, `L2` | One that stops registration on a route lookup failure |
 
 **Apply the hygiene rules below to the received candidate list. Not optional.**
 
@@ -1642,7 +1766,7 @@ Everything below has to be in the code in Phase 4. Phase 4 is the stage that imp
 - [ ] The `a != b` condition of `is_newer`
 - [ ] Per-session-attempt `session_epoch`, CSPRNG and 0 avoidance, 2-minute retired list and the `MAX_RETIRED_EPOCHS` cap. **What goes on the retired list is the peer's epoch** (4.3)
 - [ ] CSPRNG nonce, fixed per attempt, 2-minute retired list. Probe nonces in a separate table
-- [ ] Every 10.1 candidate hygiene rule, local interface addresses and prefixes kept (input to the Chapter 7 decision)
+- [ ] 10.1 local candidate decision, order and cap of the registered list, own-subnet set (input to the Chapter 7 decision), every candidate hygiene rule. Run every row of that section's two case tables
 - [ ] 10.2 relative-time rendezvous
 - [ ] 10.4 endpoint learning (advancing packets only, addresses outside the candidate set after path validation), `MAX_PROBE_PATHS` cap and 1 validation `HELLO`
 - [ ] The dual flags of 9.2 `CONNECTED` Condition, `sent_ack` only after `sendto` success

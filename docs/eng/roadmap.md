@@ -483,7 +483,7 @@ code (`architecture.md` 3.5 Startup Inputs).
 
 ### Tasks
 
-**To be decided before starting.** Three items. Implementation of those places does not begin before
+**To be decided before starting.** Two items. Implementation of those places does not begin before
 they are decided
 
 - **Before starting, redesign the keepalive mapping-lifetime measurement procedure**
@@ -511,19 +511,6 @@ they are decided
   > be distinguished from "the filter was closed from the start", so the mapping lifetime is misjudged
   > as 0.
 
-- **Before starting, fix the criteria for a local candidate**
-
-  - `protocol.md` 10.1 Candidate Collection and Hygiene says to exclude loopback, APIPA, our own
-    Wintun, and other tunnel/VPN adapters from the "active IPv4 interfaces", but there is no judging
-    input for the last two and for "active"
-  - Decide whether it is the adapter type (`IfType`), the name string, or the presence of a gateway,
-    and whether only `OperStatus` is read or address ownership too, then put a case table in that
-    section
-  - This is a judging function, so the case table comes first
-
-  > **Why.** Including one wrongly sends `HELLO` to an unreachable address every 200ms; excluding one
-  > wrongly removes the same-LAN candidate, and then the same-LAN verification above ends up relying
-  > on hairpinning.
 - **Before starting, re-measure with `tools/nat-probe`.** Confirm that the verdict "a direct
   connection is established" still holds. If conditions have changed, this is the point where there
   is still time to revert the design ([ADR 0001](decisions/0001-no-direct-connection-fallback.md))
@@ -729,6 +716,14 @@ The round-trip test and the failure-code test below are started and ended with t
 **Receive hygiene and caps.**
 
 - Continuously sending to a non-responding candidate does not kill the receive loop via `WSAECONNRESET`
+- Local candidate decision and registered list (`protocol.md` 10.1 Candidate Collection and Hygiene). Run
+  every row of that section's two case tables
+  - The decision function must be able to take the interface enumeration and route lookup by injection
+    instead of from the OS. Failures of both lookups are injected too
+  - Four mutants each `FAIL`. Removing 53 from the `IfType` exclusion list, reducing the active check to
+    `OperStatus` alone, removing the own-Wintun identifier rule, and moving the cap cut before sorting
+  - That section's own-subnet set is the input to the directed broadcast row of source hygiene (a) below.
+    That row is run with this set injected
 - Check source hygiene (`protocol.md` 7) at two layers
   - (a) Run that section's case table as-is against the **verdict function.** Multicast, limited
     broadcast, the directed broadcast of one's own subnet, unspecified, and port 0 are rejected, and

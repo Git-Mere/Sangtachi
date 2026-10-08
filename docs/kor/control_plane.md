@@ -1756,7 +1756,8 @@ CloudWatch 의 1분 `Sum` 을 60 으로 나눈 값의 최대가 읽기 7.1 RCU/s
 3. UDP 소켓 bind, getsockname (protocol.md 6장)
 4. create_room 또는 join_room. 응답의 room_id 를 콘솔에 낸다 (host 는 이것을 상대에게 전한다)
 5. STUN (protocol.md 13장). 두 서버에 질의한다
-6. register_candidate. 로컬 후보 + 반사 후보. 8개를 넘으면 클라이언트가 먼저 자른다
+6. register_candidate. 로컬 후보 + 반사 후보. 8개를 넘으면 클라이언트가 먼저 자른다.
+   목록의 순서와 자르는 규칙은 protocol.md 10.1 의 등록 목록이다
 7. 플레이어: get_peers 폴링. 그 쌍의 ready: true 이고 상대 후보가 1개 이상일 때까지 (4.5).
    **폴링 간격과 마감은 6번의 성공 응답을 받은 시점부터 센다** (protocol.md 11장)
    호스트: host_report 주기 호출. 응답의 peers 에서 ready: false 인 상대를 보면

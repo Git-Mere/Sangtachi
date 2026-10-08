@@ -1978,7 +1978,8 @@ all from [`protocol.md`](protocol.md) section 11 Timers; only the order is fixed
 3. UDP socket bind, getsockname (protocol.md section 6)
 4. create_room or join_room. Print the room_id from the response to the console (the host passes it to the peer)
 5. STUN (protocol.md section 13). Query both servers
-6. register_candidate. Local candidates + reflexive candidates. If more than 8, the client trims first
+6. register_candidate. Local candidates + reflexive candidates. If more than 8, the client trims first.
+   The list order and trimming rule are the registered list of protocol.md 10.1
 7. Player: poll get_peers. Until that pair has ready: true and the peer has 1 or more candidates (4.5).
    **The polling interval and deadline are counted from the moment the success response of step 6
    arrives** (protocol.md section 11)

@@ -16,7 +16,7 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 4 착수 전 `tools/nat-probe` 재측정 | `roadmap.md` Phase 4 작업 머리의 남은 하나. 매핑 수명은 [ADR 0019](decisions/0019-매핑-수명은-별도-도구로-잰다.md) 로 닫았고 상대 가정의 측정만 "대기 중인 것" 에 남았다 |
+| 1 | Phase 4 착수 전 `tools/nat-probe` 재측정 | `roadmap.md` Phase 4 작업 머리의 남은 하나. 매핑 수명은 [ADR 0019](decisions/0019-매핑-수명은-별도-도구로-잰다.md) 로 닫았고 두 집을 쟀다 |
 | 2 | 문서 부채의 `IDLE` 정의, 종료 세션 객체의 수명, 자기 서브넷 집합의 전달 | Phase 4 세션 구현 전에 정해야 한다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
@@ -33,7 +33,7 @@
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
 | Phase 1 의 두 머신 실측 | 한 기기의 여러 프로세스로는 돌렸다 | 두 번째 기기. 절차는 `scripts/e2e-check.ps1` 과 같고 `--peer` 만 상대 주소로 바꾼다. **그대로는 안 된다.** 로컬 포트를 고정하는 인자가 없어 양쪽이 기동 시점에 상대 포트를 같이 알 수 없고, 요청하지 않은 인바운드는 [`windows-prereq.md`](windows-prereq.md) 2절대로 막힌다. 3프로세스 사슬과 임시 인바운드 허용 규칙이 함께 필요하다 |
 | 로비 체류가 NAT 매핑에 무엇을 하는가 | 측정한 적이 없다. [`concurrency.md`](concurrency.md) 7장 로비가 "단정하지 않는다" 로 적었다 | Phase 4 의 `tools/nat-probe` 재측정과 같이 본다 |
-| 상대 가정의 매핑 수명 | 한 가정의 Wi-Fi 하나만 쟀다(하한 58초). 상대 가정의 NAT 은 다를 수 있다. [`protocol.md`](protocol.md) 11장 규칙(`간격 × 3 < 최솟값`)으로 판정한다 | 상대 가정에서 `tools/nat-lifetime` 을 돌린다. 그때마다 보안 그룹을 그 공인 IP `/32` 로 잠시 연다 |
+| 시연 상대 망의 매핑 수명 | 두 집을 쟀다. 이 기기 집 Wi-Fi 하한 58초, 친구 집 Wi-Fi 300초 이상. 최솟값 58초로 [`protocol.md`](protocol.md) 11장 규칙(`간격 × 3 < 최솟값`)을 지킨다. 시연 상대가 이 둘이 아니면 그 망은 아직 모른다 | 시연 상대의 망에서 `tools/nat-lifetime` 을 돌린다. 그때마다 보안 그룹을 그 공인 IP `/32` 로 잠시 연다 |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | Wintun 어댑터가 아직 없다 | Phase 6(Wintun), 8(시연) |
 | 서로 다른 네트워크의 두 클라이언트 | `roadmap.md` Phase 3 산출물이다. 배포된 서버로 한 NAT 뒤의 두 프로세스는 돌렸다 | 두 번째 기기 |

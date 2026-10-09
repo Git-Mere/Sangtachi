@@ -96,7 +96,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `hash` | The SHA-256 carried by `rx.raw` | Windows CNG |
 | `network/stun` | STUN message construction and parsing. Includes `XOR-MAPPED-ADDRESS` decoding and holds pure functions only. RFC 5389 is implemented directly ([`protocol.md`](protocol.md) chapter 13 STUN Scope) | None |
 | `network/stun_client` | STUN retries and deadlines, server selection and replacement. The clock, socket, random source and name resolution are injected | None |
-| `platform/wait` | Monotonic clock, event handles, waiting on several handles at once (`concurrency.md` chapters 2 and 4) | Win32 |
+| `platform/wait` | Monotonic clocks (milliseconds, and microseconds for RTT), event handles, waiting on several handles at once (`concurrency.md` chapters 2 and 4) | Win32 |
 | `platform/random` | CSPRNG bytes. Used by the transaction ID and later by epoch and nonce | Win32 |
 | `platform/interfaces` | IPv4 interface enumeration (address, netmask, type, status, GUID) and default route lookup. Used by `peer/candidates` | Win32 (IP Helper) |
 | `platform/resolve` | Name to IPv4 endpoint. Called once at startup (3.5) | Win32 |
@@ -1056,8 +1056,8 @@ below. Value formats are not fixed. Verification searches by key and field name.
 |----------|-----------|--------------------|
 | `socket.bind` | `local` (the actual bound endpoint), `rcvbuf_requested`, `rcvbuf_applied` | Phase 1 bind contract, applied `SO_RCVBUF` value, [`spec.md`](spec.md) M-1 startup decision |
 | `stun.result` | `server`, `mapped` (the observed public endpoint) | Phase 2, M-2 |
-| `session.state` | `from`, `to` (the state name strings from [`protocol.md`](protocol.md) 9.1 States as is) | Phase 4 transition check |
-| `session.failed` | `code` (chapter 8 string) | Phase 2~5 failure code check |
+| `session.state` | `from`, `to` (the state name strings from [`protocol.md`](protocol.md) 9.1 States as is), `peer_id` | Phase 4 transition check |
+| `session.failed` | `code` (chapter 8 string). A failure of a session also carries `peer_id` | Phase 2~5 failure code check |
 | `counter` | `name`, `value`. Lines of a session table also carry `peer_id`, `peer_name` | Every item that looks at drop counters |
 | `socket.error` | `op` (call name), `code` (Winsock error code) | Phase 1: the process does not die on socket errors |
 | `control.result` | `op`, `ok`, `error` (failure code string, `-` on success) | Phase 3 operation verification, `CONTROL_PLANE_EXCHANGE_FAILED` cause check. **Does not carry `room_id` or `peer_token`** (3.5) |

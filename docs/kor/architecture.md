@@ -94,7 +94,7 @@
 | `hash` | `rx.raw` 가 싣는 SHA-256 | Windows CNG |
 | `network/stun` | STUN 메시지 구성과 파싱. `XOR-MAPPED-ADDRESS` 디코드를 포함하고 순수 함수만 둔다. RFC 5389 를 직접 구현한다 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위) | 없음 |
 | `network/stun_client` | STUN 재시도와 마감, 서버 선택과 교체. 시계·소켓·난수원·이름 해석을 주입받는다 | 없음 |
-| `platform/wait` | 단조 시계, 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
+| `platform/wait` | 단조 시계(밀리초, 그리고 RTT 용 마이크로초), 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
 | `platform/random` | CSPRNG 바이트. 트랜잭션 ID 와 뒤의 epoch·nonce 가 쓴다 | Win32 |
 | `platform/interfaces` | IPv4 인터페이스 열거(주소, 넷마스크, 형식, 상태, GUID)와 기본 경로 조회. `peer/candidates` 가 쓴다 | Win32 (IP Helper) |
 | `platform/resolve` | 이름을 IPv4 엔드포인트로. 기동 시 한 번 부른다 (3.5) | Win32 |
@@ -940,8 +940,8 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 |----------|-----------|--------------------|
 | `socket.bind` | `local` (bind 한 실제 엔드포인트), `rcvbuf_requested`, `rcvbuf_applied` | Phase 1 bind 계약, `SO_RCVBUF` 적용값, [`spec.md`](spec.md) M-1 기동 판정 |
 | `stun.result` | `server`, `mapped` (관측된 공인 엔드포인트) | Phase 2, M-2 |
-| `session.state` | `from`, `to` ([`protocol.md`](protocol.md) 9.1 상태의 이름 문자열 그대로) | Phase 4 전이 확인 |
-| `session.failed` | `code` (8장 문자열) | Phase 2~5 실패 코드 확인 |
+| `session.state` | `from`, `to` ([`protocol.md`](protocol.md) 9.1 상태의 이름 문자열 그대로), `peer_id` | Phase 4 전이 확인 |
+| `session.failed` | `code` (8장 문자열). 세션의 실패이면 `peer_id` 도 싣는다 | Phase 2~5 실패 코드 확인 |
 | `counter` | `name`, `value`. 세션 표의 줄은 `peer_id`, `peer_name` 도 싣는다 | 폐기 카운터를 보는 모든 항목 |
 | `socket.error` | `op` (호출 이름), `code` (Winsock 오류 코드) | Phase 1 소켓 오류에도 프로세스가 죽지 않는지 |
 | `control.result` | `op`, `ok`, `error` (실패 코드 문자열, 성공이면 `-`) | Phase 3 연산 검증, `CONTROL_PLANE_EXCHANGE_FAILED` 원인 확인. **`room_id` 와 `peer_token` 을 싣지 않는다** (3.5) |

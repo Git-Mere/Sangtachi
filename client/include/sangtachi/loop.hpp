@@ -149,9 +149,25 @@ public:
         on_lobby_command_ = std::move(handler);
     }
 
-    // 터널 후보로 분류된 데이터그램을 넘길 곳 (protocol.md 8장 검증 파이프라인이 들어올
-    // 자리다). 비워 두면 아무것도 하지 않는다.
+    // 터널 후보로 분류된 데이터그램을 넘길 곳 (protocol.md 8장 검증 파이프라인). 제품 경로는
+    // tunnel::Tunnel::on_datagram 이다 (main.cpp). 비워 두면 아무것도 하지 않는다.
     void set_tunnel_handler(DatagramHandler handler) { on_tunnel_ = std::move(handler); }
+
+    // 세션 타이머의 자리 (protocol.md 11장, concurrency.md 4장). 세션은 마감을 스스로 들고,
+    // 루프는 매 바퀴 가장 이른 마감을 다음 대기의 타임아웃에 넣고 타이머 집합 다음에 돌린다.
+    // 제품 경로는 tunnel::Tunnel 의 earliest_deadline 과 run_timers 다. 비워 두면 없는 것이다.
+    struct DeadlineSource {
+        std::function<std::optional<Millis>()> earliest;
+        std::function<void(Millis now)> run;
+    };
+    void set_deadline_source(DeadlineSource source) { deadlines_ = std::move(source); }
+
+    // 수신 데이터그램 하나를 recvfrom 뒤의 경로에 태운다 (concurrency.md 3장 drain_udp 의
+    // classify, protocol.md 7장 수신 분류). **drain_udp 가 받은 데이터그램마다 부르는 함수가
+    // 이것이다.** 시험은 이 함수로 출발지를 위조한 데이터그램을 주입한다 (roadmap.md Phase 4
+    // 검증의 출발지 위생 (b)). 보통의 UDP 소켓으로는 그런 출발지를 만들 수 없다. 시험 전용
+    // 경로를 따로 짜지 않는 것이 이 함수의 이유다.
+    void receive_datagram(const network::Endpoint& from, std::span<const std::byte> payload);
 
     // STUN 으로 분류된 데이터그램을 넘길 곳 (protocol.md 7장 수신 분류).
     //
@@ -169,6 +185,19 @@ public:
     // 재전송하지 않는다. 다음 주기의 재전송이 그 자리를 대신한다 (protocol.md 6장).
     [[nodiscard]] bool send_datagram(const network::Endpoint& to,
                                      std::span<const std::byte> payload);
+
+    // send_datagram 과 같되 `tx_err_send` 를 올리지 않는다. `socket.error` 줄은 낸다.
+    //
+    // 세션의 송신은 실패를 그 세션의 표에 센다 (counters.hpp 의 두 범위). 이 자리에서 프로세스
+    // 표에 올리면 같은 실패가 두 번 세어진다. 세는 것은 부르는 쪽(peer/session)이다.
+    [[nodiscard]] bool send_datagram_uncounted(const network::Endpoint& to,
+                                               std::span<const std::byte> payload);
+
+    // 콘솔 `counters` 가 프로세스 표 뒤에 부르는 곳 (architecture.md 9장). 제품 경로는 남아 있는
+    // 세션마다 그 세션의 표를 낸다 (tunnel::Tunnel::emit_session_counters). 비워 두면 프로세스 표만이다.
+    void set_counter_dump_handler(std::function<void()> handler) {
+        on_counter_dump_ = std::move(handler);
+    }
 
     // 타이머 만료를 함께 보는 곳. 로그 줄은 그대로 나가고 이것이 더 불린다.
     //
@@ -224,6 +253,8 @@ private:
     LoopOptions options_;
     TimerSet timers_;
     DatagramHandler on_tunnel_;
+    DeadlineSource deadlines_;
+    std::function<void()> on_counter_dump_;
     DatagramHandler on_stun_;
     std::function<void(const TimerTick&)> on_tick_;
     std::function<void(control::ControlResponse)> on_control_;

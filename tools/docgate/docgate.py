@@ -74,8 +74,6 @@ COUNTERS_SOURCE = "client/src/counters.cpp"
 # 문서에는 있고 코드에는 아직 없는 카운터. 이름과 들어오는 Phase 다. 구현하면 여기서 뺀다.
 # **남겨 두면 결함이다.** 코드에 이미 있는 이름이 여기 있으면 `counter` 검사가 떨어진다.
 PENDING_COUNTERS = {
-    "endpoint_learned": "Phase 4",
-    "drop_roster_name": "Phase 4",
     "record_write_failed": "Phase 4",
     "telemetry_upload_failed": "Phase 9",
 }

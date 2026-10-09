@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -196,46 +197,59 @@ DrainOutcome EventLoop::drain_udp() {
                 emit(LogLevel::Warn, "socket.error", fields);
                 return DrainOutcome::Empty;
             }
-            case network::RecvStatus::Received: {
-                const std::span<const std::byte> payload(buffer.data(), result.length);
-                // Phase 1 의 대조 수단이다 (architecture.md 3.5 기동 입력). 분류 앞에
-                // 둔다. 로그 한 줄은 회신이 아니라 진단이므로 출발지 위생이 막는 반사·
-                // 증폭 경로에 들지 않고, 버려진 데이터그램도 진단에 남아야 한다.
-                // 시험용 `--peer`, `raw` 와 함께 Phase 6 에서 사라진다.
-                emit_rx_raw(result.from, payload);
-
-                switch (classify_datagram(result.from, payload, own_subnets_)) {
-                    case RxClass::BadSource:
-                        counters_.increment(Counter::DropBadSource);
-                        break;
-                    case RxClass::Stun:
-                        if (on_stun_) {
-                            on_stun_(result.from, payload);
-                        }
-                        break;
-                    case RxClass::TunnelCandidate:
-                        // 8장 검증 파이프라인은 Phase 4 다. 지금은 넘기기만 한다.
-                        if (on_tunnel_) {
-                            on_tunnel_(result.from, payload);
-                        }
-                        break;
-                    case RxClass::Unclassified:
-                        counters_.increment(Counter::DropUnclassified);
-                        break;
-                }
+            case network::RecvStatus::Received:
+                receive_datagram(result.from,
+                                 std::span<const std::byte>(buffer.data(), result.length));
                 break;
-            }
         }
     }
     return DrainOutcome::Budget;
 }
 
+void EventLoop::receive_datagram(const network::Endpoint& from,
+                                 std::span<const std::byte> payload) {
+    // Phase 1 의 대조 수단이다 (architecture.md 3.5 기동 입력). 분류 앞에 둔다. 로그 한 줄은
+    // 회신이 아니라 진단이므로 출발지 위생이 막는 반사·증폭 경로에 들지 않고, 버려진
+    // 데이터그램도 진단에 남아야 한다. 시험용 `--peer`, `raw` 와 함께 Phase 6 에서 사라진다.
+    emit_rx_raw(from, payload);
+
+    // 자기 서브넷 집합은 루프가 소유한 그것이다 (concurrency.md 5장). 빈 집합을 넘기면 7장
+    // directed broadcast 행이 아무것도 막지 않는다. loop_test 의 출발지 위생 (b) 가 지킨다.
+    switch (classify_datagram(from, payload, own_subnets_)) {
+        case RxClass::BadSource:
+            counters_.increment(Counter::DropBadSource);
+            break;
+        case RxClass::Stun:
+            if (on_stun_) {
+                on_stun_(from, payload);
+            }
+            break;
+        case RxClass::TunnelCandidate:
+            // 8장 검증 파이프라인 (tunnel/tunnel.hpp).
+            if (on_tunnel_) {
+                on_tunnel_(from, payload);
+            }
+            break;
+        case RxClass::Unclassified:
+            counters_.increment(Counter::DropUnclassified);
+            break;
+    }
+}
+
 bool EventLoop::send_datagram(const network::Endpoint& to, std::span<const std::byte> payload) {
+    if (!send_datagram_uncounted(to, payload)) {
+        // 타입과 무관하게 tx_err_send 를 올리고 버린다. 재전송하지 않는다
+        // (protocol.md 6장 소켓 소유권). 세션이 정해지지 않은 송신이라 프로세스 표다.
+        counters_.increment(Counter::TxErrSend);
+        return false;
+    }
+    return true;
+}
+
+bool EventLoop::send_datagram_uncounted(const network::Endpoint& to,
+                                        std::span<const std::byte> payload) {
     const auto sent = socket_.send_to(to, payload);
     if (!sent.ok) {
-        // 타입과 무관하게 tx_err_send 를 올리고 버린다. 재전송하지 않는다
-        // (protocol.md 6장 소켓 소유권).
-        counters_.increment(Counter::TxErrSend);
         const LogField fields[] = {
             field("op", std::string_view("sendto")),
             field("code", static_cast<std::uint64_t>(sent.error)),
@@ -291,6 +305,9 @@ void EventLoop::handle_command(std::string_view line) {
     if (command == "counters") {
         // architecture.md 9장이 정한 세 시점 중 하나다.
         emit_all(counters_);
+        if (on_counter_dump_) {
+            on_counter_dump_();  // 남아 있는 세션마다 그 세션의 표
+        }
         return;
     }
     if (is_raw_command(command)) {
@@ -358,8 +375,15 @@ bool EventLoop::run_once() {
         handles[count++] = control_->response_event();
     }
 
-    const std::uint32_t timeout =
-        busy_ ? 0 : next_timeout_ms(now_ms(), timers_.earliest_deadline());
+    // 가장 이른 마감은 타이머 집합과 세션 타이머 둘 가운데 이른 것이다 (concurrency.md 4장).
+    std::optional<Millis> earliest = timers_.earliest_deadline();
+    if (deadlines_.earliest) {
+        const auto session = deadlines_.earliest();
+        if (session && (!earliest || *session < *earliest)) {
+            earliest = session;
+        }
+    }
+    const std::uint32_t timeout = busy_ ? 0 : next_timeout_ms(now_ms(), earliest);
     const platform::WaitResult result =
         platform::wait_any(std::span<const platform::WaitHandle>(handles, count), timeout);
 
@@ -395,7 +419,8 @@ bool EventLoop::run_once() {
     const DrainOutcome udp = drain_udp();
     drain_console();
     drain_control();  // concurrency.md 3장. Phase 3 이후
-    timers_.run_expired(now_ms(), [this](const TimerTick& tick) {
+    const Millis now = now_ms();
+    timers_.run_expired(now, [this](const TimerTick& tick) {
         const LogField fields[] = {
             field("name", tick.name),
             field("elapsed_ms", tick.elapsed_ms),
@@ -405,6 +430,12 @@ bool EventLoop::run_once() {
             on_tick_(tick);
         }
     });
+
+    // 세션 타이머 (protocol.md 11장). 마감 비교는 같은 `deadline <= now` 다. 수신을 먼저 비우고
+    // 타이머를 나중에 도는 순서가 11장 "꺼낸 시각 기준" 의 구현이다 (concurrency.md 4장).
+    if (deadlines_.run) {
+        deadlines_.run(now);
+    }
 
     busy_ = (udp == DrainOutcome::Budget);
     return true;

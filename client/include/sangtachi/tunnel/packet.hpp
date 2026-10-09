@@ -145,8 +145,8 @@ enum class PacketError : std::uint8_t {
 // 그 종류가 올릴 카운터의 이름 (architecture.md 9장 `counter` 이벤트의 `name`).
 // `kNone` 은 빈 문자열이다.
 //
-// counters.hpp 의 열거값이 아니라 문자열을 돌려준다. `drop_roster_name` 이 아직 그 표에
-// 없기 때문이다. 표에 들어오면 파이프라인이 이 문자열로 대조할 수 있다.
+// counters.hpp 의 열거값이 아니라 문자열을 돌려준다. 열거값으로 바꾸는 것은 수신
+// 파이프라인의 tunnel::to_counter 이고(tunnel/tunnel.hpp), 시험이 둘이 같은 이름을 가리키는지 본다.
 [[nodiscard]] std::string_view counter_name(PacketError error) noexcept;
 
 // --- 헤더 (4.1) ---

@@ -16,6 +16,7 @@
 #include "sangtachi/platform/stdout.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/timer.hpp"
+#include "sangtachi/tunnel/tunnel.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -211,6 +212,31 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
         runner.on_timer(tick.name);
     });
 
+    // 8장 수신 검증 파이프라인과 세션 표 (tunnel/tunnel.hpp). 세션을 만드는 랑데부 연결은 아직
+    // 없다(roadmap.md Phase 4 의 랑데부·로비 통합). 그때까지 터널 패킷은 drop_unknown_peer 다.
+    //
+    // 페이로드 훅은 비워 둔다. 제품 빌드에서 8.4 를 통과한 DATA 는 drop_no_sink 다
+    // (concurrency.md 3장).
+    sangtachi::tunnel::TunnelDeps tunnel_deps;
+    tunnel_deps.send = [&loop](const sangtachi::network::Endpoint& to,
+                               std::span<const std::byte> payload) {
+        // tx_err_send 는 세션이 자기 표에 센다 (counters.hpp 의 두 범위).
+        return loop.send_datagram_uncounted(to, payload);
+    };
+    tunnel_deps.clock = [] { return now_ms(); };
+    tunnel_deps.rtt_clock_us = [] { return sangtachi::platform::monotonic_us(); };
+    sangtachi::tunnel::Tunnel tunnel(counters, std::move(tunnel_deps));
+    loop.set_tunnel_handler([&tunnel](const sangtachi::network::Endpoint& from,
+                                      std::span<const std::byte> payload) {
+        tunnel.on_datagram(from, payload);
+    });
+    loop.set_deadline_source(sangtachi::EventLoop::DeadlineSource{
+        [&tunnel] { return tunnel.earliest_deadline(); },
+        [&tunnel](sangtachi::Millis now) { tunnel.run_timers(now); },
+    });
+    // 콘솔 `counters`: 프로세스 표 뒤에 남아 있는 세션마다 그 세션의 표 (architecture.md 9장).
+    loop.set_counter_dump_handler([&tunnel] { tunnel.emit_session_counters(); });
+
     // CLI 역할은 기동 직후의 로비 명령이다 (architecture.md 3.5). 역할이 없으면 아무
     // 요청도 STUN 도 나가지 않고 로비에서 기다린다.
     if (const auto command =
@@ -229,12 +255,21 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.run();
     session->request_stop();
 
+    // concurrency.md 7장 종료의 (2). 5.6 이 정한 대상 세션마다 CLOSE 1회.
+    tunnel.close_all(now_ms());
+    // 같은 장의 (4) 가운데 세션 표 몫. 프로세스 표는 main 이 run_client 뒤에 낸다. 세션 표는
+    // 터널과 함께 이 함수 끝에서 사라지므로 여기서 낸다.
+    tunnel.emit_session_counters();
+
     // 루프가 든 핸들러를 먼저 끊는다. `runner` 는 `loop` 뒤에 선언되어 **먼저** 소멸하는데,
     // 그 핸들러들은 `runner` 를 참조로 붙든다.
     loop.set_lobby_command_handler(nullptr);
     loop.set_stun_handler(nullptr);
     loop.set_tick_handler(nullptr);
     loop.set_control_handler(nullptr);
+    loop.set_tunnel_handler(nullptr);
+    loop.set_deadline_source({});
+    loop.set_counter_dump_handler(nullptr);
     return 0;
 }
 

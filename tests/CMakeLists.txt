@@ -37,6 +37,7 @@ add_executable(sangtachi_tests
     network/wsa_test.cpp
     peer/candidates_test.cpp
     peer/epoch_test.cpp
+    peer/session_test.cpp
     platform/console_ctrl_test.cpp
     platform/interfaces_test.cpp
     platform/random_test.cpp
@@ -46,6 +47,7 @@ add_executable(sangtachi_tests
     platform/wait_test.cpp
     tunnel/packet_test.cpp
     tunnel/replay_test.cpp
+    tunnel/tunnel_test.cpp
 )
 
 target_link_libraries(sangtachi_tests

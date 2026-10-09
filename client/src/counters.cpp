@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,7 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropRetiredEpoch: return "drop_retired_epoch";
         case Counter::DropRosterDirection: return "drop_roster_direction";
         case Counter::DropRosterFlags: return "drop_roster_flags";
+        case Counter::DropRosterName: return "drop_roster_name";
         case Counter::DropRosterStale: return "drop_roster_stale";
         case Counter::DropShort: return "drop_short";
         case Counter::DropStaleEpoch: return "drop_stale_epoch";
@@ -60,6 +62,8 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropUnverifiedTx: return "drop_unverified_tx";
         case Counter::DropVersion: return "drop_version";
         case Counter::DropVipMismatch: return "drop_vip_mismatch";
+        case Counter::DupAck: return "dup_ack";
+        case Counter::EndpointLearned: return "endpoint_learned";
         case Counter::RxErrRecv: return "rx_err_recv";
         case Counter::TelemetryQueueDropped: return "telemetry_queue_dropped";
         case Counter::TxDropBadSrc: return "tx_drop_bad_src";
@@ -99,29 +103,46 @@ std::uint64_t Counters::value(Counter counter) const noexcept {
     return i < values_.size() ? values_[i] : 0;
 }
 
-std::vector<std::string> format_all(const Counters& counters) {
-    std::vector<std::string> lines;
-    lines.reserve(kCounterCount);
+namespace {
+
+// 한 줄의 필드. 세션 표면 peer_id 와 peer_name 이 뒤에 붙는다.
+template <typename Sink>
+void each_line(const Counters& counters, const CounterPeer* peer, Sink&& sink) {
     for (std::size_t i = 0; i < kCounterCount; ++i) {
         const auto counter = static_cast<Counter>(i);
-        const LogField fields[] = {
-            field("name", to_token(counter)),
-            field("value", counters.value(counter)),
-        };
-        lines.push_back(format_line(LogLevel::Info, "counter", fields));
+        if (peer != nullptr) {
+            const LogField fields[] = {
+                field("name", to_token(counter)),
+                field("value", counters.value(counter)),
+                field("peer_id", static_cast<std::uint64_t>(peer->peer_id)),
+                field("peer_name", peer->peer_name.empty() ? std::string_view("-") : peer->peer_name),
+            };
+            sink(std::span<const LogField>(fields));
+        } else {
+            const LogField fields[] = {
+                field("name", to_token(counter)),
+                field("value", counters.value(counter)),
+            };
+            sink(std::span<const LogField>(fields));
+        }
     }
+}
+
+}  // namespace
+
+std::vector<std::string> format_all(const Counters& counters, const CounterPeer* peer) {
+    std::vector<std::string> lines;
+    lines.reserve(kCounterCount);
+    each_line(counters, peer, [&lines](std::span<const LogField> fields) {
+        lines.push_back(format_line(LogLevel::Info, "counter", fields));
+    });
     return lines;
 }
 
-void emit_all(const Counters& counters) {
-    for (std::size_t i = 0; i < kCounterCount; ++i) {
-        const auto counter = static_cast<Counter>(i);
-        const LogField fields[] = {
-            field("name", to_token(counter)),
-            field("value", counters.value(counter)),
-        };
+void emit_all(const Counters& counters, const CounterPeer* peer) {
+    each_line(counters, peer, [](std::span<const LogField> fields) {
         emit(LogLevel::Info, "counter", fields);
-    }
+    });
 }
 
 }  // namespace sangtachi

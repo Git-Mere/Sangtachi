@@ -48,6 +48,11 @@ struct WaitResult {
 // 단조 밀리초 시계. 벽시계가 아니다 (concurrency.md 4장 타이머).
 [[nodiscard]] WaitMillis monotonic_ms() noexcept;
 
+// 단조 마이크로초 시계. RTT 측정 전용이다 (concurrency.md 4장 타이머: RTT 만
+// QueryPerformanceCounter 를 쓴다). **monotonic_ms 의 값과 서로 비교하지 않는다.** 두 시계는
+// 기준점이 다르다. 타이머 마감은 monotonic_ms 로만 잰다.
+[[nodiscard]] std::uint64_t monotonic_us() noexcept;
+
 // 이벤트를 만든다. 비신호 상태로 시작한다. 실패하면 널을 돌려준다.
 [[nodiscard]] WaitHandle create_event(ResetMode mode) noexcept;
 

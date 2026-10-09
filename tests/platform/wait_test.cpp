@@ -163,3 +163,38 @@ TEST_CASE("wait: signaling and closing a null handle is safe", "[platform][wait]
     REQUIRE_FALSE(signal_event(nullptr));
     close_event(nullptr);  // 아무것도 하지 않는다
 }
+
+TEST_CASE("wait: the microsecond clock advances in microseconds", "[platform][wait]") {
+    // concurrency.md 4장: RTT 만 QueryPerformanceCounter 다. 밀리초 시계와 값을 비교하지 않고
+    // 각자의 간격만 본다. 50ms 를 기다리면 마이크로초 시계는 40ms 이상 1초 미만 나아간다.
+    // 밀리초를 마이크로초 자리에 내는 구현(1000 배 작음)과 해상도가 15ms 인 구현을 가른다.
+    const std::uint64_t a = sangtachi::platform::monotonic_us();
+    const std::uint64_t b = sangtachi::platform::monotonic_us();
+    REQUIRE(b >= a);
+    REQUIRE(b - a < 15000);  // 두 번 연달아 읽은 차가 tick 해상도(약 15ms)보다 작다
+    std::array<WaitHandle, 1> handles{};
+    OwnedEvent never(ResetMode::Manual);
+    handles[0] = never.get();
+    (void)wait_on(handles, 50);
+    const std::uint64_t c2 = sangtachi::platform::monotonic_us();
+    REQUIRE(c2 - b >= 40000);
+    REQUIRE(c2 - b < 1000000);
+
+    // 1ms 보다 작은 걸음이 실제로 보인다. GetTickCount64 * 1000 같은 밀리초 시계는 바뀔 때마다 1ms
+    // 이상(대개 약 15.6ms) 뛰므로 여기서 걸린다. 50ms 안에 찾지 못하면 실패다.
+    const std::uint64_t until = c2 + 50000;
+    std::uint64_t previous = sangtachi::platform::monotonic_us();
+    bool fine_step = false;
+    while (!fine_step) {
+        const std::uint64_t now = sangtachi::platform::monotonic_us();
+        REQUIRE(now >= previous);
+        if (now != previous && now - previous < 1000) {
+            fine_step = true;
+        }
+        previous = now;
+        if (now > until) {
+            break;
+        }
+    }
+    REQUIRE(fine_step);
+}

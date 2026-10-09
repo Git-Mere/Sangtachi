@@ -19,6 +19,22 @@ WaitMillis monotonic_ms() noexcept {
     return static_cast<WaitMillis>(::GetTickCount64());
 }
 
+std::uint64_t monotonic_us() noexcept {
+    // GetTickCount64 는 해상도가 약 15ms 라 RTT 표본에 쓸 수 없다 (concurrency.md 4장).
+    // QueryPerformanceCounter 는 XP 이후 실패하지 않는다고 문서화되어 있다. 그래도 0 으로
+    // 나누지 않게 주파수를 본다.
+    LARGE_INTEGER frequency{};
+    LARGE_INTEGER counter{};
+    if (::QueryPerformanceFrequency(&frequency) == 0 || frequency.QuadPart <= 0 ||
+        ::QueryPerformanceCounter(&counter) == 0) {
+        return static_cast<std::uint64_t>(::GetTickCount64()) * 1000u;
+    }
+    // 곱하기를 먼저 하면 넘친다 (10MHz 에서 약 10일). 몫과 나머지로 나눠 곱한다.
+    const auto ticks = static_cast<std::uint64_t>(counter.QuadPart);
+    const auto freq = static_cast<std::uint64_t>(frequency.QuadPart);
+    return (ticks / freq) * 1000000u + ((ticks % freq) * 1000000u) / freq;
+}
+
 WaitHandle create_event(ResetMode mode) noexcept {
     const BOOL manual_reset = (mode == ResetMode::Manual) ? TRUE : FALSE;
     return ::CreateEventW(nullptr, manual_reset, FALSE, nullptr);

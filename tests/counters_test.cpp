@@ -21,7 +21,7 @@ using sangtachi::to_token;
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
     // 이름은 protocol.md 5.7 / 6장 / 7장 / 8장 과 concurrency.md 3장 / 6장 / 8장 이 갖는다.
     // 개수가 바뀌면 이 줄을 먼저 보게 된다.
-    REQUIRE(kCounterCount == 50);
+    REQUIRE(kCounterCount == 53);
 }
 
 TEST_CASE("counters: every token is unique, non-empty and sorted", "[counters]") {
@@ -55,6 +55,10 @@ TEST_CASE("counters: known names are present", "[counters]") {
     // 8.5 송신 측 검증과 5.7 ROSTER 가 쓰는 이름 (protocol.md).
     REQUIRE(tokens.count("tx_drop_no_route") == 1);
     REQUIRE(tokens.count("drop_roster_stale") == 1);
+    REQUIRE(tokens.count("drop_roster_name") == 1);
+    // 9.4 전이표의 dup_ack 와 10.4 엔드포인트 학습의 endpoint_learned (protocol.md).
+    REQUIRE(tokens.count("dup_ack") == 1);
+    REQUIRE(tokens.count("endpoint_learned") == 1);
     // drain_udp 의 "그 외 오류" 가 쓰는 이름 (concurrency.md 3장 루프 한 바퀴).
     REQUIRE(tokens.count("rx_err_recv") == 1);
     // protocol.md 7장 수신 분류의 둘과 13장 STUN 응답 검증의 하나.
@@ -110,4 +114,21 @@ TEST_CASE("counters: the dump carries every counter including the zeros", "[coun
     }
     REQUIRE(saw_nonzero);
     REQUIRE(saw_zero);
+}
+
+TEST_CASE("counters: a session table line carries peer_id and peer_name", "[counters]") {
+    // 두 범위 (counters.hpp). 세션 표의 줄만 두 필드를 더 싣는다. 기존 name, value 는 그대로다.
+    Counters c;
+    c.increment(sangtachi::Counter::DropDuplicate);
+    const sangtachi::CounterPeer peer{42, "Alice"};
+    const auto session_lines = format_all(c, &peer);
+    const auto process_lines = format_all(c);
+    REQUIRE(session_lines.size() == kCounterCount);
+    REQUIRE(process_lines.size() == kCounterCount);
+    for (std::size_t i = 0; i < kCounterCount; ++i) {
+        REQUIRE(session_lines[i] == process_lines[i] + " peer_id=42 peer_name=Alice");
+        REQUIRE(process_lines[i].find("peer_") == std::string::npos);
+    }
+    const sangtachi::CounterPeer unnamed{7, ""};
+    REQUIRE(format_all(c, &unnamed)[0].find(" peer_name=-") != std::string::npos);
 }

@@ -46,6 +46,23 @@ void emit_data_rx(std::span<const std::byte> inner) {
     emit_data("data.rx", "from", 12, inner);
 }
 
+void emit_echo_rtt(std::span<const std::byte> inner, std::uint64_t now_ms) {
+    constexpr std::size_t kSentAt = 32;  // 송신 시각 8바이트 (roadmap.md Phase 4 시험 장치)
+    if (inner.size() <= tunnel::kMarkerOffset || (std::to_integer<std::uint8_t>(inner[0]) & 0x0Fu) != 5 ||
+        inner[tunnel::kMarkerOffset] != tunnel::kMarkerEcho) {
+        return;
+    }
+    std::uint64_t sent = 0;
+    for (std::size_t i = 0; i < 8; ++i) {
+        sent = (sent << 8) | std::to_integer<std::uint64_t>(inner[kSentAt + i]);
+    }
+    if (sent > now_ms) {
+        return;
+    }
+    const LogField fields[] = {field("rtt_ms", now_ms - sent)};
+    emit(LogLevel::Info, "data.echo", fields);
+}
+
 std::optional<std::vector<std::byte>> make_echo_reply(std::span<const std::byte> inner) {
     // 합성 패킷의 IHL 5 레이아웃만 되돌린다. 옵션이 있으면 표시의 오프셋도 체크섬 범위도 다르다.
     if (inner.size() <= tunnel::kMarkerOffset || (std::to_integer<std::uint8_t>(inner[0]) & 0x0Fu) != 5 ||

@@ -194,6 +194,7 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
 #ifdef SANGTACHI_TEST_BUILD
     tunnel_deps.data_sink = [&sender_slot](std::span<const std::byte> inner) {
         sangtachi::testbuild::emit_data_rx(inner);
+        sangtachi::testbuild::emit_echo_rtt(inner, sangtachi::platform::monotonic_us() / 1000);
         // 수신 처리 중에 다시 보내지 않는다. 큐에 넣고 루프의 송신 몫에서 보낸다.
         if (auto reply = sangtachi::testbuild::make_echo_reply(inner); reply && sender_slot) {
             sender_slot->enqueue(std::move(*reply));
@@ -294,7 +295,10 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.set_counter_dump_handler([&tunnel] { tunnel.emit_session_counters(); });
 
     // 콘솔 `send` (roadmap.md Phase 4). 바퀴마다 kMaxDrain 개씩 나눠 보낸다.
-    sangtachi::tunnel::DataSender sender(tunnel, [] { return now_ms(); });
+    // 합성 패킷의 송신 시각(오프셋 32)은 RTT 기준선이 쓴다. RTT 시계로 채운다(concurrency.md 4장). 타이머
+    // 시계(GetTickCount64)는 해상도가 약 15ms 라 같은 기기의 에코가 0 이나 15 로만 잰다.
+    const auto rtt_ms = [] { return static_cast<sangtachi::Millis>(sangtachi::platform::monotonic_us() / 1000); };
+    sangtachi::tunnel::DataSender sender(tunnel, rtt_ms);
     sender_slot = &sender;
     loop.set_send_handler([&sender](std::string_view rest) { sender.on_command(rest); });
     loop.set_work_source([&sender](std::size_t budget) { return sender.pump(budget); });

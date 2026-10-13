@@ -947,6 +947,8 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `stun.result` | `server`, `mapped` (관측된 공인 엔드포인트) | Phase 2, M-2 |
 | `session.state` | `from`, `to` ([`protocol.md`](protocol.md) 9.1 상태의 이름 문자열 그대로), `peer_id` | Phase 4 전이 확인 |
 | `session.failed` | `code` (8장 문자열). 세션의 실패이면 `peer_id` 도 싣는다 | Phase 2~5 실패 코드 확인 |
+| `session.endpoint` | `peer_id`, `endpoint` (학습한 `peer_endpoint` 의 `IPv4:port`). 값이 바뀔 때마다 ([`protocol.md`](protocol.md) 10.4) | Phase 4 같은 LAN 의 학습 주소가 로컬 후보인지 |
+| `session.rtt` | `peer_id`, `rtt_us` (`PONG` 하나로 얻은 표본. 마이크로초) | Phase 4 RTT 기준선 |
 | `counter` | `name`, `value`. 세션 표의 줄은 `peer_id`, `peer_name` 도 싣는다 | 폐기 카운터를 보는 모든 항목 |
 | `socket.error` | `op` (호출 이름), `code` (Winsock 오류 코드) | Phase 1 소켓 오류에도 프로세스가 죽지 않는지 |
 | `control.result` | `op`, `ok`, `error` (실패 코드 문자열, 성공이면 `-`) | Phase 3 연산 검증, `CONTROL_PLANE_EXCHANGE_FAILED` 원인 확인. **`room_id` 와 `peer_token` 을 싣지 않는다** (3.5) |
@@ -956,9 +958,10 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `record.open` | `file` (로컬 기록 파일의 이름. 폴더를 빼고) | Phase 4 기록 확인, `spec.md` M-6 |
 | `data.tx` | `to` (목적지 가상 IP), `len`, `sha256` (캡슐화 직전의 내부 패킷). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.rx` | `from` (상대 가상 IP), `len`, `sha256` (페이로드 훅이 받은 바이트열). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
+| `data.echo` | `rtt_ms` (되돌아온 에코의 오프셋 32 송신 시각에서 받은 시각까지. 밀리초). **시험 빌드에만 있다** | Phase 4 RTT 기준선 |
 | `roster` | `generation`, `members` (멤버마다 `<peer_id>/<가상 IP>/<비트 0>/<이름>` 을 쉼표로 이어 붙인 것) | Phase 4 `ROSTER` 수신 확인 ([`protocol.md`](protocol.md) 5.7) |
 
-여기 없는 이벤트는 자유롭게 늘려도 된다. **이 열네 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
+여기 없는 이벤트는 자유롭게 늘려도 된다. **이 열일곱 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
 
 **`timer.tick` 은 만료하는 모든 타이머가 낸다.** `name` 이 어느 타이머인지를 가른다. Phase 2
 부터는 STUN 재시도와 마감이 `[loop]` 의 같은 집합에 들어가므로 제품 빌드에서도 이 줄이 나간다

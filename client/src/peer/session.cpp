@@ -437,6 +437,13 @@ void Session::learn(const network::Endpoint& from) {
     if (peer_endpoint_ != from) {
         peer_endpoint_ = from;
         counters_.increment(Counter::EndpointLearned);  // 10.4 "엔드포인트가 바뀌면"
+        // architecture.md 9장 session.endpoint. 같은 LAN 검증이 학습한 주소가 로컬 후보인지 이것으로 본다.
+        const std::string endpoint = from.to_string();
+        const LogField fields[] = {
+            field("peer_id", static_cast<std::uint64_t>(config_.peer_id)),
+            field("endpoint", std::string_view(endpoint)),
+        };
+        emit(LogLevel::Info, "session.endpoint", fields);
     }
 }
 
@@ -663,6 +670,12 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             if (io_.rtt_clock_us) {
                 last_rtt_us_ = io_.rtt_clock_us() - it->second.sent_us;
                 ++rtt_samples_;
+                // architecture.md 9장 session.rtt. RTT 기준선 비교(roadmap.md Phase 4)가 표본마다 읽는다.
+                const LogField fields[] = {
+                    field("peer_id", static_cast<std::uint64_t>(config_.peer_id)),
+                    field("rtt_us", *last_rtt_us_),
+                };
+                emit(LogLevel::Info, "session.rtt", fields);
             }
             pending_pings_.erase(it);  // 각 ping_id 는 한 번만 유효하다
             break;

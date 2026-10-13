@@ -650,7 +650,7 @@ Contracts of the tools the verification procedures use. These are equipment, not
 | `24..26` | 2 | UDP `length` = 80 (header 8 + payload 72) |
 | `26..28` | 2 | UDP checksum = 0 (allowed in IPv4. 8.4 DATA Inner Validation does not inspect it) |
 | `28..32` | 4 | packet number counting from 0 (BE) |
-| `32..40` | 8 | send time. Monotonic clock milliseconds (BE). Used by the RTT baseline |
+| `32..40` | 8 | send time. Milliseconds of the RTT clock ([`concurrency.md`](concurrency.md) chapter 4) (BE). Used by the RTT baseline |
 | `40` | 1 | **Direction marker.** `0xA5` is a request, `0x5A` is an echo reply |
 | `41..100` | 59 | `0xA5` repeated |
 
@@ -668,6 +668,12 @@ implementation.
 The round-trip test and the failure-code test below are started and ended with these two commands.
 
 > **Why.** Without the vocabulary, who initiates the round trip differs from test to test.
+
+**Items judged on one machine with several processes and the control server are run by
+[`scripts/session-check.ps1`](../../scripts/session-check.ps1).** The peer that causes failures is the fake peer of the
+control server harness. **The manual procedure for items judged only by packet capture is owned by
+[`tools/phase4-capture`](../../tools/phase4-capture/README.md).** Which item is judged where is in the mapping table of that
+README.
 
 ### Verification
 

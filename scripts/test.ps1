@@ -52,6 +52,10 @@ if (-not $Filter) {
     # 로비와 제어 평면 클라이언트 계약. 진짜 제어 서버를 DynamoDB local 위에 띄운다. 없으면 실패한다.
     & (Join-Path $PSScriptRoot 'lobby-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "lobby check failed ($LASTEXITCODE)" }
+
+    # Phase 4 의 같은 기기 세션 확인. 프로세스 여럿이 방을 만들고 펀치해 CONNECTED 까지 간다. 같은 하네스를 쓴다.
+    & (Join-Path $PSScriptRoot 'session-check.ps1') -Config $Config -BuildDir $buildDir
+    if ($LASTEXITCODE -ne 0) { throw "session check failed ($LASTEXITCODE)" }
 }
 
 Write-Host 'all tests passed'

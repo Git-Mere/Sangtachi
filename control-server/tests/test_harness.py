@@ -144,6 +144,13 @@ PARSE_CASES = [
     ("room id=a/b", ValueError),
     ("burn n=1234567890123456", ValueError),                  # 16자리 정수
     ("ping=1", ValueError),
+    ("fake_host name=Alice mode=silent", ("fake_host", {"name": "Alice", "mode": "silent"})),
+    ("fake_player room=abcdef name=Bob mode=close03", ("fake_player", {"room": "abcdef", "name": "Bob",
+                                                                      "mode": "close03"})),
+    ("fake_clear", ("fake_clear", {})),
+    ("fake_host name=Alice", ValueError),                      # 모드는 필수
+    ("fake_player name=Bob mode=silent", ValueError),          # 방은 필수
+    ("fake_clear name=x", ValueError),
 ]
 
 
@@ -846,3 +853,289 @@ def test_table_cleanup_treats_a_missing_table_as_clean(captured):
 
     assert H.TableCleanup(Missing(), "t3")() is True
     assert any("HARNESS table.absent table=t3" == line for line in captured)
+
+
+# ---------------------------------------------------------------- 가짜 피어: 바이트 (protocol.md 4.1, 5.1, 5.2, 5.6)
+
+def test_header_bytes_follow_the_wire_layout():
+    data = H.encode_packet(H.HELLO, 0x01020304, 0xA1B2C3D4, 0x0000_0105, bytes(range(16)) + bytes([10, 100, 0, 2]))
+    assert data[0:4] == bytes([0x53, 0x41, 0x4E, 0x47])        # magic "SANG"
+    assert data[4] == 0x01                                       # version
+    assert data[5] == 0x01                                       # type HELLO
+    assert data[6:8] == bytes([0x00, 0x14])                      # payload_length 20, big-endian
+    assert data[8:12] == bytes([0x01, 0x02, 0x03, 0x04])         # peer_id big-endian
+    assert data[12:16] == bytes([0xA1, 0xB2, 0xC3, 0xD4])        # session_epoch
+    assert data[16:20] == bytes([0x00, 0x00, 0x01, 0x05])        # sequence
+    assert data[20:36] == bytes(range(16))                       # nonce
+    assert data[36:40] == bytes([10, 100, 0, 2])                 # virtual_ip big-endian
+    assert len(data) == 40
+
+
+def test_close_is_one_reason_byte():
+    data = H.encode_packet(H.CLOSE, 7, 9, 1, b"\x03")
+    assert data.hex() == "53414e47" "01" "07" "0001" "00000007" "00000009" "00000001" "03"
+
+
+def _hello(peer_id=0x2A, epoch=0x55, seq=0, nonce=b"N" * 16, vip="10.100.0.1"):
+    import ipaddress
+
+    return H.encode_packet(H.HELLO, peer_id, epoch, seq, nonce + ipaddress.IPv4Address(vip).packed)
+
+
+DECODE_CASES = [
+    # (데이터그램, 기대: None 이면 통과, 아니면 걸린 검사)
+    (_hello(), None),
+    (_hello()[:19], "short"),
+    (b"SANH" + _hello()[4:], "magic"),
+    (_hello()[:4] + b"\x02" + _hello()[5:], "version"),
+    (_hello()[:5] + b"\x09" + _hello()[6:], "unknown_type"),
+    (_hello()[:5] + b"\x00" + _hello()[6:], "unknown_type"),
+    (_hello() + b"\x00", "length"),                                   # payload_length 와 실제 길이가 다르다
+    (H.encode_packet(H.HELLO, 1, 1, 0, bytes(19)), "type_length"),   # HELLO 는 정확히 20
+    (H.encode_packet(H.CLOSE, 1, 1, 0, b""), "type_length"),          # CLOSE 는 1
+    (H.encode_packet(0x03, 1, 1, 0), None),                           # KEEPALIVE 0
+    (H.encode_packet(0x04, 1, 1, 0, bytes(1452)), None),              # DATA 상한
+    (H.encode_packet(0x04, 1, 1, 0, bytes(19)), "type_length"),       # DATA 하한 아래
+    (H.encode_packet(0x08, 1, 1, 0, bytes(136)), "type_length"),      # ROSTER 상한 위
+]
+
+
+@pytest.mark.parametrize("data,expect", DECODE_CASES, ids=[str(i) for i in range(len(DECODE_CASES))])
+def test_decode_packet(data, expect):
+    hdr, why = H.decode_packet(data)
+    if expect is None:
+        assert hdr is not None and why == ""
+    else:
+        assert hdr is None and why == expect
+
+
+def test_decode_reads_big_endian_fields():
+    hdr, _ = H.decode_packet(_hello(peer_id=0x01020304, epoch=0xA1B2C3D4, seq=0xFFFFFFFF))
+    assert (hdr["type"], hdr["peer_id"], hdr["epoch"], hdr["seq"]) == (H.HELLO, 0x01020304, 0xA1B2C3D4, 0xFFFFFFFF)
+
+
+# ---------------------------------------------------------------- 가짜 피어: 모드
+
+SELF_ID, SELF_VIP, REMOTE_ID = 0x0BADF00D, "10.100.0.3", 0x2A
+SRC = ("10.0.0.49", 50000)
+
+
+def _peer(mode, role="player", draws=(0x11111111,), nonce=b"m" * 16):
+    seq = iter(draws)
+    return H.FakePeer("Fake", role, mode, SELF_ID, SELF_VIP, 40000, randbits=lambda n: next(seq),
+                      token_bytes=lambda n: nonce)
+
+
+def _decoded(out):
+    """(타입, 헤더, 목적지) 목록. 바이트가 공통 검사를 통과해야 한다."""
+    rows = []
+    for kind, data, dest in out:
+        hdr, why = H.decode_packet(data)
+        assert why == "" and H.TYPE_NAMES[hdr["type"]] == kind
+        rows.append((kind, hdr, dest))
+    return rows
+
+
+# (모드, 첫 HELLO 에 보내는 타입, 둘째 HELLO 에 보내는 타입)
+MODE_CASES = [
+    ("silent", [], []),
+    ("ack_only", ["HELLO_ACK"], ["HELLO_ACK"]),
+    ("hello_only", ["HELLO"], []),
+    ("close01", ["HELLO", "CLOSE"], []),
+    ("close03", ["HELLO", "CLOSE"], []),
+]
+
+
+@pytest.mark.parametrize("mode,first,second", MODE_CASES, ids=[c[0] for c in MODE_CASES])
+def test_mode_reactions(captured, mode, first, second):
+    p = _peer(mode)
+    out1 = _decoded(p.receive(_hello(nonce=b"A" * 16), SRC, 0.0))
+    out2 = _decoded(p.receive(_hello(nonce=b"A" * 16, seq=1), SRC, 0.05))
+    assert [k for k, _, _ in out1] == first and [k for k, _, _ in out2] == second
+    sent = out1 + out2
+    for _, hdr, dest in sent:
+        assert hdr["peer_id"] == SELF_ID and hdr["epoch"] == 0x11111111 and dest == SRC
+    assert [hdr["seq"] for _, hdr, _ in sent] == list(range(len(sent)))     # 0 부터 오른다
+    for kind, hdr, _ in sent:
+        if kind == "HELLO":
+            assert hdr["payload"] == b"m" * 16 + bytes([10, 100, 0, 3])    # 자기 nonce, 자기 가상 IP
+        if kind == "HELLO_ACK":
+            assert hdr["payload"] == b"A" * 16 + bytes([10, 100, 0, 3])    # 받은 nonce 를 echo
+        if kind == "CLOSE":
+            assert hdr["payload"] == bytes([{"close01": 1, "close03": 3}[mode]])
+    assert any(line.startswith("HARNESS fake.rx name=Fake port=40000 type=HELLO src=10.0.0.49:50000 "
+                               f"peer_id={REMOTE_ID} seq=0") for line in captured)
+
+
+def test_ack_only_answers_each_source(captured):
+    p = _peer("ack_only")
+    other = ("10.0.0.49", 50001)
+    assert _decoded(p.receive(_hello(), SRC, 0))[0][2] == SRC
+    assert _decoded(p.receive(_hello(seq=1), other, 0))[0][2] == other
+
+
+def test_hello_only_resends_every_200ms_with_the_same_nonce_until_close(captured):
+    p = _peer("hello_only")
+    first = _decoded(p.receive(_hello(), SRC, 10.0))
+    assert p.due(10.1) == []
+    again = _decoded(p.due(10.2))
+    assert [k for k, _, _ in again] == ["HELLO"] and again[0][1]["seq"] == 1
+    assert again[0][1]["payload"] == first[0][1]["payload"] and again[0][1]["epoch"] == first[0][1]["epoch"]
+    assert p.due(10.3) == [] and len(p.due(10.4)) == 1
+    close = H.encode_packet(H.CLOSE, REMOTE_ID, 0x55, 5, b"\x03")
+    assert p.receive(close, SRC, 10.5) == []
+    assert p.due(11.0) == []
+    assert any("type=CLOSE" in line and "reason=3" in line for line in captured)
+
+
+def test_close_from_another_peer_does_not_stop_the_resend(captured):
+    p = _peer("hello_only")
+    p.receive(_hello(), SRC, 0)
+    p.receive(H.encode_packet(H.CLOSE, REMOTE_ID + 1, 1, 0, b"\x03"), SRC, 0.1)
+    assert len(p.due(0.2)) == 1
+
+
+def test_each_remote_gets_its_own_attempt(captured):
+    p = _peer("close03", role="host", draws=(5, 6))
+    a = _decoded(p.receive(_hello(peer_id=1), SRC, 0))
+    b = _decoded(p.receive(_hello(peer_id=2), ("10.0.0.49", 50001), 0))
+    assert {h["epoch"] for _, h, _ in a} == {5} and {h["epoch"] for _, h, _ in b} == {6}
+    assert [h["seq"] for _, h, _ in b] == [0, 1]
+
+
+def test_zero_epoch_is_drawn_again(captured):
+    p = _peer("hello_only", draws=(0, 0, 7))
+    assert _decoded(p.receive(_hello(), SRC, 0))[0][1]["epoch"] == 7
+
+
+def test_sequence_wraps_at_32_bits(captured):
+    p = _peer("ack_only")
+    p.receive(_hello(), SRC, 0)
+    p.sessions[REMOTE_ID].seq = 0xFFFFFFFF
+    seqs = [_decoded(p.receive(_hello(seq=i), SRC, 0))[0][1]["seq"] for i in (1, 2)]
+    assert seqs == [0xFFFFFFFF, 0]
+
+
+@pytest.mark.parametrize("data", [_hello()[:10], b"SANH" + _hello()[4:]])
+def test_a_bad_datagram_is_logged_and_not_answered(captured, data):
+    p = _peer("ack_only")
+    assert p.receive(data, SRC, 0) == [] and p.sessions == {}
+    assert captured[-1].startswith("HARNESS fake.drop name=Fake port=40000 reason=")
+
+
+@pytest.mark.parametrize("ptype", [0x02, 0x03, 0x05])
+def test_other_types_are_logged_and_not_answered(captured, ptype):
+    payload = {0x02: bytes(20), 0x03: b"", 0x05: bytes(8)}[ptype]
+    p = _peer("ack_only")
+    assert p.receive(H.encode_packet(ptype, REMOTE_ID, 1, 0, payload), SRC, 0) == []
+    assert "type=" + H.TYPE_NAMES[ptype] in captured[-1]
+
+
+def test_unknown_mode_is_refused():
+    with pytest.raises(ValueError):
+        _peer("ack")
+
+
+@pytest.mark.parametrize("ip,ok", [
+    ("10.0.0.49", True), ("192.168.0.10", True), ("172.17.0.1", True),
+    ("127.0.0.1", False), ("127.5.0.1", False), ("0.0.0.0", False), ("0.1.2.3", False),
+])
+def test_check_lan_ip(ip, ok):
+    if ok:
+        assert H.check_lan_ip(ip) == ip
+    else:
+        with pytest.raises(ValueError):
+            H.check_lan_ip(ip)
+
+
+# ---------------------------------------------------------------- 가짜 피어: 제어 서버 호출
+
+def test_the_request_passes_the_real_server_parser():
+    """build_request 의 바이트를 서버의 read_request 가 그대로 받는다 (control_plane.md 3.3)."""
+    import asyncio
+
+    from controlplane.server import read_request
+
+    async def parse():
+        reader = asyncio.StreamReader()
+        reader.feed_data(H.build_request("join_room", {"room_id": "ABCDEF", "name": "Bob"}))
+        reader.feed_eof()
+        return await read_request(reader)
+
+    req = asyncio.run(parse())
+    assert req.op == "join_room" and req.body == {"room_id": "ABCDEF", "name": "Bob"}
+
+
+RESPONSE_CASES = [
+    # (응답 바이트, 기대: dict 면 그 본문, str 이면 CpCallError 의 code)
+    (b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"ok\":true}", {"ok": True}),
+    (b"HTTP/1.1 404 Not Found\r\n\r\n{\"ok\":false,\"error\":\"room_not_found\",\"message\":\"x\"}", "room_not_found"),
+    (b"HTTP/1.1 500 x\r\n\r\n{\"ok\":false}", "transport"),
+    (b"HTTP/1.1 200 OK\r\n\r\nnot json", "transport"),
+    (b"HTTP/1.1 200 OK\r\n\r\n[1]", "transport"),
+    (b"HTTP/1.1 200 OK\r\n\r\n{\"ok\":1}", "transport"),
+    (b"", "transport"),
+    (b"HTTP/1.0 200 OK\r\n\r\n{\"ok\":true}", "transport"),
+]
+
+
+@pytest.mark.parametrize("raw,expect", RESPONSE_CASES, ids=[str(i) for i in range(len(RESPONSE_CASES))])
+def test_parse_response(raw, expect):
+    if isinstance(expect, dict):
+        assert H.parse_response("op", raw) == expect
+    else:
+        with pytest.raises(H.CpCallError) as exc:
+            H.parse_response("op", raw)
+        assert exc.value.code == expect and isinstance(exc.value, ValueError)
+
+
+def test_a_bad_mode_fails_before_any_call(captured):
+    import asyncio
+
+    h, _, svc = _harness(captured)
+    with pytest.raises(ValueError, match="mode"):
+        asyncio.run(h.handle_admin("fake_host", {"name": "Fake", "mode": "loud"}))
+    assert svc.calls == [] and h.fakes == []
+
+
+@pytest.mark.store
+def test_fake_peers_join_through_the_real_server_and_answer_hellos(running):
+    h = running
+    host = h.admin("fake_host name=FakeHost mode=ack_only")
+    assert host["ok"] and host["port"] > 0 and H.check_lan_ip(host["ip"])
+    h.wait(rf"HARNESS fake\.started role=host mode=ack_only name=FakeHost peer_id={host['peer_id']} "
+           rf"virtual_ip=10\.100\.0\.1 port={host['port']}")
+    player = h.admin(f"fake_player room={host['room']} name=FakePlayer mode=silent")
+    assert player["ok"] and player["virtual_ip"] == "10.100.0.2"
+    room = h.admin(f"room id={host['room']}")
+    assert sorted(p["candidates"] for p in room["peers"]) == [1, 1]
+    # 가짜 호스트가 다음 host_report 에서 ready:false 인 플레이어를 보고, 그다음 호출에서 confirm 한다.
+    h.wait(rf"HARNESS fake\.report name=FakeHost peer_id={host['peer_id']} result=ok confirmed={player['peer_id']}",
+           timeout=2 * H.HOST_REPORT_OPEN_S + 5)
+    assert h.admin(f"room id={host['room']}")["pairs"] == 1
+
+    # 진짜 UDP. 가짜 호스트의 등록 후보로 HELLO 를 보내면 HELLO_ACK 이 echo 로 온다.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("0.0.0.0", 0))
+        s.settimeout(5)
+        s.sendto(_hello(peer_id=player["peer_id"], nonce=b"Q" * 16, vip="10.100.0.2"), (host["ip"], host["port"]))
+        data, src = s.recvfrom(2048)
+    hdr, why = H.decode_packet(data)
+    assert why == "" and hdr["type"] == H.HELLO_ACK and hdr["peer_id"] == host["peer_id"]
+    assert hdr["payload"] == b"Q" * 16 + bytes([10, 100, 0, 1]) and src[1] == host["port"]
+    h.wait(r"HARNESS fake\.tx name=FakeHost port=\d+ type=HELLO_ACK ")
+
+    assert h.admin("fake_clear") == {"ok": True, "stopped": 2}
+    h.wait(rf"HARNESS fake\.stopped name=FakePlayer role=player peer_id={player['peer_id']}")
+    assert h.admin("fake_clear") == {"ok": True, "stopped": 0}
+    # clear 도 가짜 피어를 멈춘다.
+    h.admin("fake_player room=" + host["room"] + " name=Third mode=silent")
+    assert h.admin("clear")["ok"]
+    h.wait(r"HARNESS fake\.stopped name=Third ")
+    assert h.admin("fake_clear") == {"ok": True, "stopped": 0}
+
+    # 이름 형식이 틀리면 서버가 bad_request 로 답하고 관리 응답이 그 코드를 싣는다.
+    bad = h.admin("fake_player room=" + host["room"] + " name=a.b mode=silent")
+    assert bad["ok"] is False and "bad_request" in bad["error"]
+    # 방 코드는 하네스 로그 줄에 없다.
+    assert host["room"] not in h.text()

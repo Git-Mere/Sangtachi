@@ -77,3 +77,28 @@ TEST_CASE("data.tx and data.rx carry the peer, the length and the sha256 of the 
         REQUIRE(line.find(" sha256=" + hash) != std::string::npos);
     }
 }
+
+TEST_CASE("data.echo gives the round trip of an echoed request from the send time at offset 32",
+          "[testbuild]") {
+    // roadmap.md Phase 4 RTT 기준선. 요청은 내지 않고, 에코만 그 송신 시각으로 잰다.
+    const auto request = tunnel::make_synthetic(100, kA, kB, 3, 1000);
+    const auto echo = testbuild::make_echo_reply(request);
+    REQUIRE(echo.has_value());
+    testing::LogCapture logs;
+    testbuild::emit_echo_rtt(request, 1500);
+    REQUIRE(logs.with_event("data.echo").empty());
+    testbuild::emit_echo_rtt(*echo, 1023);
+    auto lines = logs.with_event("data.echo");
+    REQUIRE(lines.size() == 1);
+    REQUIRE(lines[0].find(" rtt_ms=23") != std::string::npos);
+    REQUIRE(lines[0].find(" rtt_ms=230") == std::string::npos);
+    // 시각이 지금보다 뒤면(다른 시계) 내지 않는다. 짧은 패킷과 IHL 6 도 내지 않는다
+    testbuild::emit_echo_rtt(*echo, 999);
+    auto short_echo = *echo;
+    short_echo.resize(40);
+    testbuild::emit_echo_rtt(short_echo, 2000);
+    auto with_options = *echo;
+    with_options[0] = std::byte{0x46};
+    testbuild::emit_echo_rtt(with_options, 2000);
+    REQUIRE(logs.with_event("data.echo").size() == 1);
+}

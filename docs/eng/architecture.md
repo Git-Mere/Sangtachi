@@ -1062,6 +1062,8 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `stun.result` | `server`, `mapped` (the observed public endpoint) | Phase 2, M-2 |
 | `session.state` | `from`, `to` (the state name strings from [`protocol.md`](protocol.md) 9.1 States as is), `peer_id` | Phase 4 transition check |
 | `session.failed` | `code` (chapter 8 string). A failure of a session also carries `peer_id` | Phase 2~5 failure code check |
+| `session.endpoint` | `peer_id`, `endpoint` (`IPv4:port` of the learned `peer_endpoint`). Each time the value changes ([`protocol.md`](protocol.md) 10.4) | Phase 4 check that the learned address on the same LAN is a local candidate |
+| `session.rtt` | `peer_id`, `rtt_us` (one sample from a `PONG`, in microseconds) | Phase 4 RTT baseline |
 | `counter` | `name`, `value`. Lines of a session table also carry `peer_id`, `peer_name` | Every item that looks at drop counters |
 | `socket.error` | `op` (call name), `code` (Winsock error code) | Phase 1: the process does not die on socket errors |
 | `control.result` | `op`, `ok`, `error` (failure code string, `-` on success) | Phase 3 operation verification, `CONTROL_PLANE_EXCHANGE_FAILED` cause check. **Does not carry `room_id` or `peer_token`** (3.5) |
@@ -1071,9 +1073,10 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
 | `data.tx` | `to` (destination virtual IP), `len`, `sha256` (the inner packet just before encapsulation). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
+| `data.echo` | `rtt_ms` (from the send time at offset 32 of a returned echo to its arrival, in milliseconds). **Test build only** | Phase 4 RTT baseline |
 | `roster` | `generation`, `members` (per member `<peer_id>/<virtual IP>/<bit 0>/<name>`, joined with commas) | Phase 4 `ROSTER` receive check ([`protocol.md`](protocol.md) 5.7) |
 
-Events not listed here may be added freely. **Only these fourteen keys and their field names do not
+Events not listed here may be added freely. **Only these seventeen keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
 **`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From

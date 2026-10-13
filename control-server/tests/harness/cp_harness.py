@@ -15,11 +15,39 @@
 COMMANDS 다. STUN 응답기도 같은 프로세스가 연다 (protocol.md 13장 STUN 사용 범위의 Binding 만). 응답기가 적는
 매핑 주소가 루프백이 아닌 이유는 DEFAULT_MAPPED_IP 위에 있다.
 
+가짜 피어. 관리 명령 fake_host, fake_player 가 터널 프로토콜을 조금 말하는 피어를 같은 프로세스에 띄운다. 같은
+기기의 진짜 클라이언트와 짝을 지어 상대 쪽 실패를 만든다 (roadmap.md Phase 4 검증의 실패 코드 강제 발생, 기록과
+실패 코드). 하네스 자신의 제어 서버에 진짜 HTTP 로 참가하고 후보를 등록한다. 서버 코드를 거치지 않는 지름길이 없다.
+
+| 모드 | 받은 HELLO 에 하는 일 | 상대(진짜 클라이언트)의 끝 |
+|------|------------------------|----------------------------|
+| silent | 아무것도 보내지 않는다 | HOLE_PUNCH_TIMEOUT |
+| ack_only | 매번 그 nonce 를 echo 한 HELLO_ACK 을 그 출발지로. HELLO 는 보내지 않는다 | got_ack 만. PEER_HANDSHAKE_FAILED |
+| hello_only | 상대의 첫 HELLO 의 출발지로 HELLO 를 200ms 마다. HELLO_ACK 은 보내지 않는다. 상대의 CLOSE 에 멈춘다 | sent_ack 만. PEER_HANDSHAKE_FAILED |
+| close01, close03 | 상대의 첫 HELLO 의 출발지로 HELLO 한 번(상대가 epoch 를 고정한다), 곧이어 CLOSE 0x01 또는 0x03. HELLO_ACK 은 보내지 않는다 | 수립 중 상대의 CLOSE 로 CLOSED. 기록 줄 ABORTED 또는 PEER_FAILED |
+
+이 코드가 정한 것. 문서가 정하지 않은 자리다.
+
+| 무엇 | 값 | 근거 |
+|------|-----|------|
+| 후보 | 가짜 피어마다 0.0.0.0:0 에 묶은 UDP 소켓 하나. 기본 경로 인터페이스의 IPv4 와 그 포트를 local 후보 하나로 등록한다 | 서버 위생(control_plane.md 4.4)이 루프백을 거부한다. 같은 기기의 자기 주소는 클라이언트의 수신 후보 위생(protocol.md 10.1 자기 서브넷 행의 표)을 통과한다 |
+| LAN 주소를 고르는 법 | LAN_PROBE(192.0.2.1:9)로 UDP connect 만 하고 getsockname. 루프백이나 0.0.0.0/8 이면 명령이 실패한다 | UDP connect 는 경로만 고르고 패킷을 보내지 않는다. 문서용 대역이라 경로가 있어도 닿을 곳이 없다 |
+| 상대 | 헤더의 peer_id 로 가른다. 상대마다 epoch(0 아닌 secrets 32비트), nonce(secrets 16바이트), 0 부터 오르는 sequence 하나 | protocol.md 4.3, 4.4, 5.1 의 시도 단위. 가짜 호스트에 플레이어가 여럿 붙어도 쌍마다 따로다 |
+| 받은 것의 검사 | 8.1 공통 검사 1~6번. 걸리면 fake.drop 줄만 | 7번(peer_id)부터는 상대를 미리 모르므로 보지 않는다 |
+| HELLO 의 virtual_ip | 서버가 준 자기 가상 IP | 상대가 8.2 에서 대조한다 |
+| hello_only 의 끝 | 그 상대의 CLOSE 를 받거나 fake_clear, clear, quit | 상대는 실패하며 학습한 주소로 CLOSE 0x03 을 보낸다(9.6) |
+| 가짜 호스트의 host_report | 등록 직후 한 번, 그 뒤 HOST_REPORT_OPEN_S(5초)마다. 정원 간격(30초)은 쓰지 않는다. departed 는 보내지 않는다 | 확인이 늦지 않게 한다. 가짜 호스트는 세션 끝을 추적하지 않는다 |
+| host_report 의 오류 | rate_limited, internal, unavailable, 전송 오류는 다음 주기에 다시. 그 밖은 멈춘다 | control_plane.md 4.6 호스트의 오류 표 |
+| 제어 서버 호출의 시간 제한 | 연결과 응답 각각 CP_CALL_TIMEOUT_S(10초) | 시험 장치다. burn 의 응답 대기와 같은 값 |
+| 개수 | 동시에 MAX_FAKES(8)개까지 | 다른 주입처럼 상한을 둔다 |
+| clear | 가짜 피어도 모두 멈춘다 | lobby-check 가 장면마다 clear 로 비운다. 앞 장면의 피어가 다음 장면에 남지 않게 한다 |
+| 소켓 | 스레드 하나가 recvfrom 을 짧게 기다리며 돈다 | 이유는 FakeEndpoint 의 설명에 있다 |
+
 로그. 서버의 줄(control_plane.md 7.5)은 그대로 표준 오류에 나간다. 하네스의 줄은 `HARNESS <이벤트> 이름=값`
 이고 같은 표준 오류에 나간다. **하네스 줄에도 room_id, peer_token, client_nonce 를 싣지 않는다.** 같은 흐름에서
 roadmap Phase 3 의 "서버 로그에 room_id 와 peer_token 이 없다" 를 grep 하기 때문이다. 관리 응답에는 실릴 수 있다.
 
-정리. 테이블은 끝날 때 지운다. 관리 명령 quit, Ctrl+C, Ctrl+Break, 그리고 --exit-on-stdin-eof 를 주면 표준
+정리. 테이블은 끝날 때 지운다. 가짜 피어는 끝날 때 소켓을 닫는다. 관리 명령 quit, Ctrl+C, Ctrl+Break, 그리고 --exit-on-stdin-eof 를 주면 표준
 입력의 EOF(부른 프로세스가 죽음)에 멈춘다. 강제 종료(TerminateProcess)만은 정리하지 못한다. DynamoDB local 은
 -inMemory 라 컨테이너를 멈추면 같이 사라진다.
 
@@ -32,11 +60,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import re
 import secrets
 import shutil
+import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -54,7 +85,7 @@ if str(_CS) not in sys.path:
 from controlplane import clock as cp_clock  # noqa: E402
 from controlplane import ids, log  # noqa: E402
 from controlplane.constants import (DDB_CONNECT_TIMEOUT_S, DDB_MAX_ATTEMPTS, DDB_READ_TIMEOUT_S,  # noqa: E402
-                                    OPS, SERVER_READ_TIMEOUT_S)
+                                    HOST_REPORT_OPEN_S, OPS, SERVER_READ_TIMEOUT_S)
 from controlplane.errors import STATUS, OpError  # noqa: E402
 
 HOST = "127.0.0.1"
@@ -244,6 +275,9 @@ COMMANDS: dict[str, dict[str, str]] = {
     "room": {"id": "str"},
     "pending": {},
     "clear": {},
+    "fake_host": {"name": "str", "mode": "str"},
+    "fake_player": {"room": "str", "name": "str", "mode": "str"},
+    "fake_clear": {},
     "quit": {},
 }
 
@@ -330,6 +364,271 @@ class StunResponder(asyncio.DatagramProtocol):
             return
         hlog("stun.request", port=self.port, src=f"{addr[0]}:{addr[1]}")
         self.transport.sendto(out, addr)
+
+
+# ---------------------------------------------------------------- 가짜 피어 (터널 프로토콜의 일부)
+#
+# 바이트는 protocol.md 4.1 헤더, 5.1 HELLO, 5.2 HELLO_ACK, 5.6 CLOSE 다. 받은 것은 8.1 공통 검사 1~6번으로만
+# 가린다. 7번(peer_id)부터는 보지 않는다. 가짜 피어는 상대의 세션을 미리 모르고, 처음 온 HELLO 가 상대를 정한다.
+
+TUNNEL_MAGIC = 0x53414E47
+TUNNEL_VERSION = 0x01
+HEADER_SIZE = 20
+_HEADER = struct.Struct(">IBBHIII")  # magic, version, type, payload_length, peer_id, session_epoch, sequence
+HELLO, HELLO_ACK, CLOSE = 0x01, 0x02, 0x07
+TYPE_NAMES = {0x01: "HELLO", 0x02: "HELLO_ACK", 0x03: "KEEPALIVE", 0x04: "DATA", 0x05: "PING", 0x06: "PONG",
+              0x07: "CLOSE", 0x08: "ROSTER"}
+# 8.1 검사 6번의 타입별 페이로드 길이 (하한, 상한).
+_TYPE_LEN = {0x01: (20, 20), 0x02: (20, 20), 0x03: (0, 0), 0x04: (20, 1452), 0x05: (8, 8), 0x06: (8, 8),
+             0x07: (1, 1), 0x08: (16, 135)}
+FAKE_MODES = ("silent", "ack_only", "hello_only", "close01", "close03")
+_CLOSE_REASON = {"close01": 0x01, "close03": 0x03}
+HELLO_RESEND_S = 0.2  # protocol.md 11장 HELLO 재전송 간격
+MAX_FAKES = 8
+FAKE_RECV_POLL_S = 0.02
+CP_CALL_TIMEOUT_S = 10
+# LAN 주소를 고를 때 UDP connect 만 하는 목적지. 문서용 대역(RFC 5737)이라 어디에도 닿지 않고, UDP connect 는
+# 경로만 고르므로 패킷도 나가지 않는다.
+LAN_PROBE = ("192.0.2.1", 9)
+
+
+def encode_packet(ptype: int, peer_id: int, epoch: int, seq: int, payload: bytes = b"") -> bytes:
+    """protocol.md 4.1. 필드 단위로 big-endian 으로 쓴다."""
+    return _HEADER.pack(TUNNEL_MAGIC, TUNNEL_VERSION, ptype, len(payload), peer_id, epoch, seq) + payload
+
+
+def decode_packet(data: bytes) -> tuple[dict | None, str]:
+    """8.1 공통 검사 1~6번. (헤더 사전, "") 이거나 (None, 걸린 검사의 이름)."""
+    if len(data) < HEADER_SIZE:
+        return None, "short"
+    magic, version, ptype, length, peer_id, epoch, seq = _HEADER.unpack_from(data)
+    if magic != TUNNEL_MAGIC:
+        return None, "magic"
+    if version != TUNNEL_VERSION:
+        return None, "version"
+    if ptype not in _TYPE_LEN:
+        return None, "unknown_type"
+    if length != len(data) - HEADER_SIZE:
+        return None, "length"
+    low, high = _TYPE_LEN[ptype]
+    if not low <= length <= high:
+        return None, "type_length"
+    return {"type": ptype, "peer_id": peer_id, "epoch": epoch, "seq": seq, "payload": data[HEADER_SIZE:]}, ""
+
+
+def check_lan_ip(text: str) -> str:
+    """후보로 등록할 주소. 서버 위생(control_plane.md 4.4)이 거부하는 루프백과 "이 네트워크" 대역이면 ValueError."""
+    addr = ipaddress.IPv4Address(text)
+    if addr.is_loopback or addr in ipaddress.IPv4Network("0.0.0.0/8"):
+        raise ValueError("no non-loopback IPv4 on the default route")
+    return text
+
+
+def lan_ipv4() -> str:
+    """기본 경로 인터페이스의 IPv4. LAN_PROBE 로 UDP connect 만 하고 getsockname 으로 읽는다."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(LAN_PROBE)
+        except OSError as exc:
+            raise ValueError("no IPv4 default route") from exc
+        return check_lan_ip(s.getsockname()[0])
+
+
+def _new_epoch(randbits=secrets.randbits) -> int:
+    """protocol.md 4.3. 0 은 쓰지 않는다."""
+    while True:
+        epoch = randbits(32)
+        if epoch:
+            return epoch
+
+
+class FakeSession:
+    """상대 피어 하나에 대한 가짜 피어의 시도. 처음 받은 그 상대의 HELLO 가 만든다."""
+
+    def __init__(self, addr: tuple[str, int], randbits=secrets.randbits, token_bytes=secrets.token_bytes) -> None:
+        self.addr = addr                    # 처음 받은 HELLO 의 출발지. HELLO 와 CLOSE 는 여기로만 보낸다
+        self.epoch = _new_epoch(randbits)
+        self.nonce = token_bytes(16)        # 5.1. 시도에 하나, 재전송에서 같은 값
+        self.seq = 0                        # 4.4. 첫 송신이 0
+        self.resend_at: float | None = None  # hello_only 의 다음 HELLO 시각. None 이면 보내지 않는다
+
+
+class FakePeer:
+    """모드별 반응. 소켓을 모른다. receive 와 due 가 보낼 것 (타입 이름, 데이터그램, 목적지) 의 목록을 돌려준다.
+
+    한 스레드(FakeEndpoint)만 부른다."""
+
+    def __init__(self, name: str, role: str, mode: str, peer_id: int, virtual_ip: str, port: int,
+                 randbits=secrets.randbits, token_bytes=secrets.token_bytes) -> None:
+        if mode not in FAKE_MODES:
+            raise ValueError("mode must be one of " + ", ".join(FAKE_MODES))
+        self.name, self.role, self.mode = name, role, mode
+        self.peer_id = peer_id
+        self.vip = ipaddress.IPv4Address(virtual_ip).packed
+        self.port = port
+        self.sessions: dict[int, FakeSession] = {}
+        self._randbits, self._token_bytes = randbits, token_bytes
+
+    def _packet(self, sess: FakeSession, ptype: int, payload: bytes) -> tuple[str, bytes, tuple[str, int]]:
+        data = encode_packet(ptype, self.peer_id, sess.epoch, sess.seq, payload)
+        sess.seq = (sess.seq + 1) & 0xFFFFFFFF
+        return TYPE_NAMES[ptype], data, sess.addr
+
+    def _hello(self, sess: FakeSession):
+        return self._packet(sess, HELLO, sess.nonce + self.vip)
+
+    def receive(self, data: bytes, addr: tuple[str, int], now: float) -> list:
+        hdr, why = decode_packet(data)
+        src = f"{addr[0]}:{addr[1]}"
+        if hdr is None:
+            hlog("fake.drop", name=self.name, port=self.port, reason=why, src=src)
+            return []
+        ptype, remote = hdr["type"], hdr["peer_id"]
+        extra = {"reason": hdr["payload"][0]} if ptype == CLOSE else {}
+        hlog("fake.rx", name=self.name, port=self.port, type=TYPE_NAMES[ptype], src=src, peer_id=remote,
+             seq=hdr["seq"], **extra)
+        sess = self.sessions.get(remote)
+        if ptype == CLOSE:
+            if sess is not None:
+                sess.resend_at = None
+            return []
+        if ptype != HELLO or self.mode == "silent":
+            return []
+        if self.mode == "ack_only":
+            if sess is None:
+                sess = self.sessions[remote] = FakeSession(addr, self._randbits, self._token_bytes)
+            echo = self._packet(sess, HELLO_ACK, hdr["payload"][:16] + self.vip)
+            return [(echo[0], echo[1], addr)]  # 그 데이터그램의 출발지로
+        if sess is not None:
+            return []  # hello_only 와 close 모드는 상대의 첫 HELLO 에만 반응한다
+        sess = self.sessions[remote] = FakeSession(addr, self._randbits, self._token_bytes)
+        if self.mode == "hello_only":
+            sess.resend_at = now + HELLO_RESEND_S
+            return [self._hello(sess)]
+        return [self._hello(sess), self._packet(sess, CLOSE, bytes([_CLOSE_REASON[self.mode]]))]
+
+    def due(self, now: float) -> list:
+        out = []
+        for sess in self.sessions.values():
+            if sess.resend_at is not None and now >= sess.resend_at:
+                sess.resend_at = now + HELLO_RESEND_S
+                out.append(self._hello(sess))
+        return out
+
+
+class FakeEndpoint:
+    """가짜 피어의 UDP 소켓과 그 스레드.
+
+    asyncio 데이터그램 전송을 쓰지 않는다. Windows 의 proactor 전송은 recvfrom 이 ConnectionResetError(닫힌
+    포트로 보낸 뒤 오는 ICMP)를 내면 error_received 를 부르고 다음 수신을 걸지 않는다(Python 3.14 의
+    _ProactorDatagramTransport._loop_reading). hello_only 는 상대가 끝난 뒤에도 보낼 수 있어 실제로 난다."""
+
+    def __init__(self, peer: FakePeer, sock: socket.socket) -> None:
+        self.peer = peer
+        self.sock = sock
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, name=f"fake-{peer.port}", daemon=True)
+
+    def _send(self, kind: str, data: bytes, dest: tuple[str, int]) -> None:
+        try:
+            self.sock.sendto(data, dest)
+        except OSError as exc:
+            hlog("fake.tx_error", name=self.peer.name, port=self.peer.port, type=kind, exc=type(exc).__name__)
+            return
+        seq = int.from_bytes(data[16:20], "big")
+        extra = {"reason": data[HEADER_SIZE]} if data[5] == CLOSE else {}
+        hlog("fake.tx", name=self.peer.name, port=self.peer.port, type=kind, dst=f"{dest[0]}:{dest[1]}", seq=seq,
+             **extra)
+
+    def _run(self) -> None:
+        self.sock.settimeout(FAKE_RECV_POLL_S)
+        while not self.stop.is_set():
+            out = []
+            try:
+                data, addr = self.sock.recvfrom(2048)
+                out = self.peer.receive(data, addr, time.monotonic())
+            except TimeoutError:
+                pass
+            except ConnectionResetError:
+                hlog("fake.icmp", name=self.peer.name, port=self.peer.port)
+            except OSError as exc:
+                if not self.stop.is_set():
+                    hlog("error", reason="fake_recv_failed", port=self.peer.port, exc=type(exc).__name__)
+                break
+            for item in out + self.peer.due(time.monotonic()):
+                self._send(*item)
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def close(self) -> None:
+        self.stop.set()
+        self.thread.join(2)
+        self.sock.close()
+
+
+# 가짜 피어가 하네스 자신의 제어 서버에 보내는 요청. control_plane.md 3.3 의 형식 그대로다.
+
+class CpCallError(ValueError):
+    def __init__(self, op: str, code: str) -> None:
+        super().__init__(f"{op} failed: {code}")
+        self.code = code
+
+
+def build_request(op: str, body: dict) -> bytes:
+    data = json.dumps(body, separators=(",", ":")).encode("ascii")
+    return (f"POST /v1/{op} HTTP/1.1\r\nHost: harness\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n").encode("ascii") + data
+
+
+def parse_response(op: str, raw: bytes) -> dict:
+    """응답 바이트 전체. ok 가 참인 본문을 돌려준다. 오류 봉투면 그 코드, 형이 틀리면 transport 의 CpCallError."""
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    try:
+        if not sep or not head.startswith(b"HTTP/1.1 "):
+            raise ValueError("not an HTTP/1.1 response")
+        reply = json.loads(body)
+    except ValueError as exc:
+        raise CpCallError(op, "transport") from exc
+    if not isinstance(reply, dict) or reply.get("ok") is not True:
+        code = reply.get("error") if isinstance(reply, dict) else None
+        raise CpCallError(op, code if isinstance(code, str) else "transport")
+    return reply
+
+
+async def cp_call(port: int, op: str, body: dict) -> dict:
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(HOST, port), CP_CALL_TIMEOUT_S)
+    except (OSError, TimeoutError) as exc:
+        raise CpCallError(op, "transport") from exc
+    try:
+        writer.write(build_request(op, body))
+        await writer.drain()
+        raw = await asyncio.wait_for(reader.read(), CP_CALL_TIMEOUT_S)  # 서버가 응답 뒤 닫는다
+    except (OSError, TimeoutError) as exc:
+        raise CpCallError(op, "transport") from exc
+    finally:
+        writer.close()
+    return parse_response(op, raw)
+
+
+# host_report 의 오류 가운데 다음 주기에 다시 부르는 것. control_plane.md 4.6 호스트의 오류 표와 같다.
+REPORT_RETRY_CODES = frozenset({"rate_limited", "internal", "unavailable", "transport"})
+
+
+class Fake:
+    """관리 명령 하나가 만든 가짜 피어. 끝낼 때 close."""
+
+    def __init__(self, endpoint: FakeEndpoint) -> None:
+        self.endpoint = endpoint
+        self.report: asyncio.Task | None = None
+
+    def close(self) -> None:
+        if self.report is not None:
+            self.report.cancel()
+        self.endpoint.close()
+        peer = self.endpoint.peer
+        hlog("fake.stopped", name=peer.name, role=peer.role, peer_id=peer.peer_id, port=peer.port)
 
 
 # ---------------------------------------------------------------- AWS 격리와 테이블
@@ -510,6 +809,7 @@ class Harness:
         # 멈출 때 켠다. 지연 주입은 이것을 기다리며 잔다. 깨지 않으면 asyncio.run 이 기본 실행기의 스레드를
         # 기다리느라 최대 MAX_DELAY_MS 동안 끝나지 않는다.
         self.stopping = threading.Event()
+        self.fakes: list[Fake] = []
 
     # dispatch 를 감싼다. 스레드 풀에서 돈다.
     #
@@ -633,12 +933,82 @@ class Harness:
             inj.clear()
             self.rate_clock.thaw()
             self.reset_rate()
+            self.stop_fakes()
             hlog("clear")
             return {"ok": True}
+        if verb == "fake_host":
+            return await self.start_fake("host", args["name"], args["mode"])
+        if verb == "fake_player":
+            return await self.start_fake("player", args["name"], args["mode"], room=args["room"])
+        if verb == "fake_clear":
+            return {"ok": True, "stopped": self.stop_fakes()}
         if verb == "quit":
             self.stop.set()
             return {"ok": True}
         raise ValueError("unknown command")
+
+    # ------------------------------------------------------------ 가짜 피어
+
+    async def start_fake(self, role: str, name: str, mode: str, room: str | None = None) -> dict:
+        """소켓을 묶고, 하네스 자신의 제어 서버에 참가와 후보 등록을 진짜 HTTP 로 보낸 뒤 수신 스레드를 띄운다.
+
+        호스트면 host_report 주기 작업도 띄운다. 관리 응답에는 room 이 실린다. 하네스 로그 줄에는 싣지 않는다."""
+        if mode not in FAKE_MODES:
+            raise ValueError("mode must be one of " + ", ".join(FAKE_MODES))
+        if len(self.fakes) >= MAX_FAKES:
+            raise ValueError(f"at most {MAX_FAKES} fake peers")
+        ip = lan_ipv4()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind(("0.0.0.0", 0))
+            port = sock.getsockname()[1]
+            nonce = secrets.token_hex(16)
+            if role == "host":
+                issued = await cp_call(self.cp_port, "create_room", {"client_nonce": nonce, "name": name})
+            else:
+                issued = await cp_call(self.cp_port, "join_room", {"room_id": room, "client_nonce": nonce,
+                                                                   "name": name})
+            creds = {"room_id": issued["room_id"], "peer_id": issued["peer_id"], "peer_token": issued["peer_token"]}
+            await cp_call(self.cp_port, "register_candidate",
+                          {**creds, "candidates": [{"ip": ip, "port": port, "kind": "local"}]})
+            peer = FakePeer(name, role, mode, issued["peer_id"], issued["virtual_ip"], port)
+        except BaseException:
+            sock.close()
+            raise
+        fake = Fake(FakeEndpoint(peer, sock))
+        fake.endpoint.start()
+        self.fakes.append(fake)
+        hlog("fake.started", role=role, mode=mode, name=name, peer_id=peer.peer_id,
+             virtual_ip=issued["virtual_ip"], port=port)
+        reply = {"ok": True, "peer_id": peer.peer_id, "port": port, "ip": ip, "virtual_ip": issued["virtual_ip"]}
+        if role == "host":
+            fake.report = asyncio.create_task(self.fake_report(peer, creds))
+            reply["room"] = creds["room_id"]
+        return reply
+
+    async def fake_report(self, peer: FakePeer, creds: dict) -> None:
+        """control_plane.md 8.4 의 7번 호스트 쪽. 응답의 ready:false 상대를 다음 호출의 confirm 에 넣는다."""
+        confirm: list[int] = []
+        while True:
+            try:
+                reply = await cp_call(self.cp_port, "host_report", {**creds, "confirm": confirm})
+            except CpCallError as exc:
+                hlog("fake.report", name=peer.name, peer_id=peer.peer_id, result=exc.code)
+                if exc.code not in REPORT_RETRY_CODES:
+                    hlog("fake.report_stopped", name=peer.name, peer_id=peer.peer_id)
+                    return
+            else:
+                confirm = [p["peer_id"] for p in reply["peers"] if not p["ready"]]
+                hlog("fake.report", name=peer.name, peer_id=peer.peer_id, result="ok",
+                     confirmed=",".join(str(i) for i in reply["confirmed"]),
+                     waiting=",".join(str(i) for i in confirm))
+            await asyncio.sleep(HOST_REPORT_OPEN_S)
+
+    def stop_fakes(self) -> int:
+        fakes, self.fakes = self.fakes, []
+        for fake in fakes:
+            fake.close()
+        return len(fakes)
 
     def reset_rate(self) -> None:
         from controlplane.server import RateTable
@@ -785,6 +1155,7 @@ async def amain(args, admin_client, server_client, table: str, cleanup=None) -> 
     finally:
         stop.set()
         h.stopping.set()  # 지연 주입으로 자는 dispatch 스레드를 깨운다
+        h.stop_fakes()
         restore()
         if cleanup is not None:
             cleanup()  # 실행기 종료를 기다리기 전에 지운다. 블로킹이지만 끝나는 중이다

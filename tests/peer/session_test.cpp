@@ -363,8 +363,13 @@ TEST_CASE("session: PING starts 5s after CONNECTED and PONG yields one RTT sampl
     REQUIRE(f.session.ping_due() == kT0 + 10000);
 
     f.io.us = 1023410;
+    testing::LogCapture logs;
     REQUIRE(f.rx(pong(kPeerEpoch, 2, 0), kT0 + 5020).accepted());
     REQUIRE(f.session.last_rtt_us() == 23410u);
+    // architecture.md 9장 session.rtt. 표본마다 한 줄
+    const auto rtt = logs.with_event("session.rtt");
+    REQUIRE(rtt.size() == 1);
+    REQUIRE(rtt[0].find(" rtt_us=23410") != std::string::npos);
     REQUIRE(f.session.rtt_samples() == 1);
     REQUIRE(f.session.pending_pings() == 0);
     // 각 ping_id 는 한 번만 유효하다
@@ -734,12 +739,17 @@ TEST_CASE("session: a late packet of the old epoch after renegotiation is stale 
 
 TEST_CASE("session: learning needs an advancing packet from a candidate", "[peer][session]") {
     Fixture f;
+    testing::LogCapture logs;
     f.session.start_punch(kT0);
     REQUIRE(f.rx(hello(kPeerEpoch, 10, kOutside), kT0).accepted());
     REQUIRE_FALSE(f.session.peer_endpoint().has_value());  // (c) 후보 밖
+    REQUIRE(logs.with_event("session.endpoint").empty());
     REQUIRE(f.rx(keepalive(kPeerEpoch, 11, kCandB), kT0).accepted());
     REQUIRE(f.session.peer_endpoint() == kCandB);
     REQUIRE(f.count(Counter::EndpointLearned) == 1);
+    // architecture.md 9장 session.endpoint. 바뀔 때마다 한 줄, 학습한 주소를 싣는다
+    REQUIRE(logs.with_event("session.endpoint").size() == 1);
+    REQUIRE(logs.with_event("session.endpoint")[0].find(" endpoint=5.6.7.8:6000") != std::string::npos);
     // (b) 재정렬 수용은 학습하지 않는다
     REQUIRE(f.rx(keepalive(kPeerEpoch, 5, kCandA), kT0).accepted());
     REQUIRE(f.session.peer_endpoint() == kCandB);
@@ -750,6 +760,7 @@ TEST_CASE("session: learning needs an advancing packet from a candidate", "[peer
     // 같은 값이면 세지 않는다
     REQUIRE(f.rx(keepalive(kPeerEpoch, 13, kCandA), kT0).accepted());
     REQUIRE(f.count(Counter::EndpointLearned) == 2);
+    REQUIRE(logs.with_event("session.endpoint").size() == 2);
 }
 
 TEST_CASE("session: a dropped packet does not teach the endpoint", "[peer][session]") {

@@ -17,7 +17,6 @@
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
 | 1 | 친구 기기로 한꺼번에: `tools/nat-probe` 재측정(호스트 네 쌍), 방화벽 인바운드 실측, Phase 3 산출물, `tools/phase4-capture` 의 D1~D3, 필요하면 시연 상대 망의 매핑 수명 | 두 번째 기기가 필요한 일을 한 번에 한다. 재측정 결과로 방 생성 전 호스트 NAT 경고 여부를 정한다 (`roadmap.md` Phase 4 작업 머리) |
-| 2 | [`tools/phase4-capture`](../../tools/phase4-capture/README.md) 의 C1~C5 를 이 기기에서 손으로 돈다 | 4차 K 가 같은 기기에서 로그로 판정되는 항목을 `scripts/session-check.ps1` 에 넣었다. 남은 것은 캡처로만 판정되는 항목이다. Wireshark 와 Npcap(루프백 캡처)을 설치해야 한다. 설치는 저장소 소유자의 일이다. C6~C9 는 지금 가짜 피어 모드로 만들 수 없어 보류다(그 README) |
 
 **재측정 전에 Phase 4 를 시작한 것은 저장소 소유자의 결정이다.** `roadmap.md` 는 재측정을 착수 전 항목으로 둔다. 측정 결과에 기대는 자리는 호스트 NAT 경고 하나이고 위 조각 어디에도 들어 있지 않다. 측정에서 직접 연결 판정이 뒤집히면 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 을 다시 연다
 
@@ -35,6 +34,7 @@
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
 | 로비 체류가 NAT 매핑에 무엇을 하는가 | 측정한 적이 없다. [`concurrency.md`](concurrency.md) 7장 로비가 "단정하지 않는다" 로 적었다 | Phase 4 의 `tools/nat-probe` 재측정과 같이 본다 |
 | 시연 상대 망의 매핑 수명 | 두 집을 쟀다. 이 기기 집 Wi-Fi 하한 58초, 친구 집 Wi-Fi 300초 이상. 최솟값 58초로 [`protocol.md`](protocol.md) 11장 규칙(`간격 × 3 < 최솟값`)을 지킨다. 시연 상대가 이 둘이 아니면 그 망은 아직 모른다 | 시연 상대의 망에서 `tools/nat-lifetime` 을 돌린다. 그때마다 보안 그룹을 그 공인 IP `/32` 로 잠시 연다 |
+| 캡처 체크리스트의 보류 C6~C9 | 종료 상태 무응답, 재협상 뒤 `HELLO`, 잠정 경로, 무검증 예산을 와이어에서 보려면 지금 가짜 피어 모드로 만들 수 없는 상대가 필요하다. 논리는 단위 시험이 본다 | 그 상대를 만드는 가짜 피어 모드 ([`tools/phase4-capture`](../../tools/phase4-capture/README.md) 의 C6~C9 절) |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | Wintun 어댑터가 아직 없다 | Phase 6(Wintun), 8(시연) |
 | 서로 다른 네트워크의 두 클라이언트 | `roadmap.md` Phase 3 산출물이다. 배포된 서버로 한 NAT 뒤의 두 프로세스는 돌렸다 | 두 번째 기기 |

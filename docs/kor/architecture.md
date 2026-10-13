@@ -93,6 +93,7 @@
 | `console` | `[console]` 스레드의 줄 큐와 그 수명 (`concurrency.md` 6장 텔레메트리 격리가 그 큐 정책을 함께 갖는다). 콘솔 빌드에만 있다 | 없음 |
 | `log` | 9장 로그 출력의 줄 형식과 필드 인코딩 | 없음 |
 | `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md)와 `concurrency.md` 다 | 없음 |
+| `record` | 9장 로컬 기록 파일의 줄 형식, 파일 이름, 시도 번호, 쓰기 실패 뒤 정지. 쓰기와 벽시계는 주입받고 기본은 `platform/record_file` 이다 | 없음 |
 | `args` | 기동 인자 파싱 (3.5) | 없음 |
 | `hash` | `rx.raw` 가 싣는 SHA-256 | Windows CNG |
 | `network/stun` | STUN 메시지 구성과 파싱. `XOR-MAPPED-ADDRESS` 디코드를 포함하고 순수 함수만 둔다. RFC 5389 를 직접 구현한다 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위) | 없음 |
@@ -102,6 +103,7 @@
 | `platform/interfaces` | IPv4 인터페이스 열거(주소, 넷마스크, 형식, 상태, GUID)와 기본 경로 조회. `peer/candidates` 가 쓴다 | Win32 (IP Helper) |
 | `platform/resolve` | 이름을 IPv4 엔드포인트로. 기동 시 한 번 부른다 (3.5) | Win32 |
 | `platform/console_ctrl` | 콘솔 제어 신호를 받아 종료 이벤트를 신호하고 정리 완료를 기다린다 (`concurrency.md` 7장) | Win32 |
+| `platform/record_file` | 실행 파일 폴더 아래 `records` 폴더와 기록 파일을 만들고, 줄 하나를 쓰기 호출 하나로 쓴다. UTC 벽시계와 PID (9장 로컬 기록 파일) | Win32 |
 | `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
 
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 `concurrency.md` 가 갖는다.
@@ -371,7 +373,7 @@ FAIL <실패 코드> <상대> <사람이 읽는 문장>
 
 **둘 다 Phase 6 에서 사라진다.** `[console]` 스레드는 콘솔 빌드에 남는다. 위 로비 명령을 받아야 하기 때문이다(`concurrency.md` 1장 스레드).
 
-**기동 입력이 아닌 것.** 로컬 기록 파일 경로는 9장의 계약이 정해지면 그때 같이 정한다. 텔레메트리 서비스 주소는 Phase 9 다. 둘 다 여기 표에 없다는 것이 현재 상태다.
+**기동 입력이 아닌 것.** 로컬 기록 파일 경로는 9장 로컬 기록 파일의 "경로" 가 정한다. 텔레메트리 서비스 주소는 Phase 9 다. 둘 다 여기 표에 없다.
 
 **인자 오류의 거동.** 알 수 없는 인자, 필수 인자 누락, 형식 위반은 전부 **`ERROR` 한 줄을
 남기고 종료 코드 2로 기동 실패**다. 추측해서 고쳐 받지 않는다.
@@ -1039,8 +1041,9 @@ Sangtachi/
 |   |   +-- console.cpp  [console] 줄 큐 (concurrency.md 6장)
 |   |   +-- log.cpp      로그 줄 형식 (9장)
 |   |   +-- counters.cpp 카운터 표 (9장)
+|   |   +-- record.cpp   로컬 기록 파일의 줄과 쓰기 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher

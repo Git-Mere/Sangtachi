@@ -65,6 +65,7 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DupAck: return "dup_ack";
         case Counter::EndpointLearned: return "endpoint_learned";
         case Counter::PathProbeFailed: return "path_probe_failed";
+        case Counter::RecordWriteFailed: return "record_write_failed";
         case Counter::RxErrRecv: return "rx_err_recv";
         case Counter::TelemetryQueueDropped: return "telemetry_queue_dropped";
         case Counter::TxDropBadSrc: return "tx_drop_bad_src";

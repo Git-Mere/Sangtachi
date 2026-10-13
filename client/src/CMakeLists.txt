@@ -9,6 +9,7 @@ target_sources(sangtachi_core PRIVATE
     counters.cpp
     log.cpp
     loop.cpp
+    record.cpp
     timer.cpp
     control/channel.cpp
     control/exchange.cpp
@@ -39,6 +40,7 @@ if(WIN32)
         platform/win32/hash.cpp
         platform/win32/interfaces.cpp
         platform/win32/random.cpp
+        platform/win32/record_file.cpp
         platform/win32/resolve.cpp
         platform/win32/stdout.cpp
         platform/win32/tcp.cpp

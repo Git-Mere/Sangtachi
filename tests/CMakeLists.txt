@@ -21,6 +21,7 @@ add_executable(sangtachi_tests
     hash_test.cpp
     log_test.cpp
     loop_test.cpp
+    record_test.cpp
     timer_test.cpp
     spsc_ring_test.cpp
     control/channel_test.cpp
@@ -41,6 +42,7 @@ add_executable(sangtachi_tests
     platform/console_ctrl_test.cpp
     platform/interfaces_test.cpp
     platform/random_test.cpp
+    platform/record_file_test.cpp
     platform/resolve_test.cpp
     platform/stdout_test.cpp
     platform/tcp_test.cpp

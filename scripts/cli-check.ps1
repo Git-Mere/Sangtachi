@@ -99,17 +99,18 @@ function Format-Argument([string]$value) {
     return '"' + $escaped + '"'
 }
 
-$failed = 0
-foreach ($c in $cases) {
-    # 인자가 맞으면 이 프로그램은 이벤트 루프로 들어가 quit 을 받을 때까지 끝나지 않는다.
-    # 세션이 끝나도 로비로 갈 뿐 프로세스는 남는다 (concurrency.md 7장 로비). 프로세스를
-    # 끝내는 것은 quit 하나이므로 표준 입력으로 그것을 넣고 닫는다.
-    #
-    # 표준 오류는 직접 읽는다. 파이프라인에 섞으면 PowerShell 이 ErrorRecord 로 감싸
-    # 원래 줄을 그대로 볼 수 없다.
+# 클라이언트 하나를 띄운다. 표준 입력, 표준 오류, 표준 출력을 넘겨받는다.
+#
+# 인자가 맞으면 이 프로그램은 이벤트 루프로 들어가 quit 을 받을 때까지 끝나지 않는다.
+# 세션이 끝나도 로비로 갈 뿐 프로세스는 남는다 (concurrency.md 7장 로비). 프로세스를
+# 끝내는 것은 quit 하나이므로 Complete-Client 가 표준 입력으로 그것을 넣고 닫는다.
+#
+# 표준 오류는 직접 읽는다. 파이프라인에 섞으면 PowerShell 이 ErrorRecord 로 감싸
+# 원래 줄을 그대로 볼 수 없다.
+function Start-Client([string]$path, [string[]]$argList) {
     $info = New-Object System.Diagnostics.ProcessStartInfo
-    $info.FileName = $exe
-    $info.Arguments = (($c.args | ForEach-Object { Format-Argument $_ }) -join ' ')
+    $info.FileName = $path
+    $info.Arguments = (($argList | ForEach-Object { Format-Argument $_ }) -join ' ')
     $info.UseShellExecute = $false
     $info.RedirectStandardInput = $true
     $info.RedirectStandardError = $true
@@ -118,10 +119,16 @@ foreach ($c in $cases) {
 
     # 두 스트림을 비동기로 비운다. 동기로 읽으면 끝나지 않는 클라이언트에서 그 읽기가 아래 상한보다 먼저
     # 막혀 상한이 듣지 않는다. 파이프 버퍼가 차서 자식이 멈추는 것도 막는다.
+    $startedUtc = [datetime]::UtcNow
     $p = [System.Diagnostics.Process]::Start($info)
+    return @{ process = $p; id = $p.Id; startedUtc = $startedUtc; errTask = $p.StandardError.ReadToEndAsync(); outTask = $p.StandardOutput.ReadToEndAsync() }
+}
+
+# quit 을 넣고 끝나기를 기다린다. 끝나지 않았으면 error 에 이유를 담는다.
+function Complete-Client($run) {
+    $p = $run.process
+    $result = @{ id = $run.id; code = $null; err = ''; error = $null; startedUtc = $run.startedUtc; endedUtc = $null }
     try {
-        $errTask = $p.StandardError.ReadToEndAsync()
-        $outTask = $p.StandardOutput.ReadToEndAsync()
         # 기동 실패 케이스는 이미 끝났을 수 있다. 그때 닫힌 파이프에 쓰는 오류는 판정과 무관하다.
         try {
             $p.StandardInput.WriteLine('quit')
@@ -132,23 +139,35 @@ foreach ($c in $cases) {
         if (-not $p.WaitForExit(10000)) {
             $p.Kill()
             [void]$p.WaitForExit(5000)
-            Write-Host ("FAIL  [{0}] did not exit within 10 seconds" -f ($c.args -join ' '))
-            $failed++
-            continue
+            $result.error = 'did not exit within 10 seconds'
+            return $result
         }
         # 프로세스가 끝났으므로 파이프가 닫혀 읽기도 곧 끝난다. 그래도 상한을 둔다.
-        if (-not $errTask.Wait(5000)) {
-            Write-Host ("FAIL  [{0}] stderr was not closed within 5 seconds after exit" -f ($c.args -join ' '))
-            $failed++
-            continue
+        if (-not $run.errTask.Wait(5000)) {
+            $result.error = 'stderr was not closed within 5 seconds after exit'
+            return $result
         }
-        [void]$outTask.Wait(5000)
-        $err = $errTask.Result
-        $code = $p.ExitCode
+        [void]$run.outTask.Wait(5000)
+        $result.err = $run.errTask.Result
+        $result.code = $p.ExitCode
+        $result.endedUtc = [datetime]::UtcNow
     } finally {
         if (-not $p.HasExited) { try { $p.Kill() } catch { } }
         $p.Dispose()
     }
+    return $result
+}
+
+$failed = 0
+foreach ($c in $cases) {
+    $r = Complete-Client (Start-Client $exe $c.args)
+    if ($r.error) {
+        Write-Host ("FAIL  [{0}] {1}" -f ($c.args -join ' '), $r.error)
+        $failed++
+        continue
+    }
+    $err = $r.err
+    $code = $r.code
 
     $label = if ($c.args.Count -eq 0) { '(no arguments)' } else { ($c.args -join ' ') }
     $codeOk = ($code -eq $c.expect)
@@ -171,7 +190,127 @@ foreach ($c in $cases) {
     }
 }
 
-Write-Host ("{0} passed, {1} failed of {2}" -f ($cases.Count - $failed), $failed, $cases.Count)
+# 로컬 기록 파일의 기동 계약 (architecture.md 9장 로컬 기록 파일의 경로). 케이스 표가 보지 않는 것을 본다.
+# 파일이 실제로 생겼는지, 이름의 PID 가 그 프로세스의 것인지, 기동 실패에서 파일이 없는지다.
+$total = $cases.Count
+function Report-Check([string]$label, [bool]$ok, [string]$detail) {
+    $script:total++
+    if ($ok) {
+        Write-Host ("ok    [record] {0}" -f $label)
+    } else {
+        $script:failed++
+        Write-Host ("FAIL  [record] {0}: {1}" -f $label, $detail)
+    }
+}
+
+# 정상 기동 한 번의 결과에서 기록 파일을 확인한다. 고친 것이 없으면 빈 문자열이다.
+# 역할이 없으면 시도가 없으므로 줄도 없다 (9장 "무엇이 시도 하나인가").
+# 이름의 기동 시각은 UTC 다. 띄우기 전과 끝난 뒤의 UTC 사이에 있어야 한다(초 단위).
+function Test-RecordOpened($r, [string]$exeDir) {
+    if ($r.error) { return $r.error }
+    if ($r.code -ne 0) { return "exit=$($r.code)" }
+    $m = [regex]::Match($r.err, '(?m)^INFO record\.open file=(\S+)\r?$')
+    if (-not $m.Success) { return 'no record.open line' }
+    $name = $m.Groups[1].Value
+    $nm2 = [regex]::Match($name, '^\d{8}T\d{6}Z-(\d+)\.log$')
+    if (-not $nm2.Success) { return "bad file name $name" }
+    if ([int64]$nm2.Groups[1].Value -ne $r.id) { return "pid in $name is not $($r.id)" }
+    $stamp = [datetime]::ParseExact($name.Substring(0, 16), "yyyyMMdd'T'HHmmss'Z'",
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal)
+    $lower = $r.startedUtc.AddTicks(-($r.startedUtc.Ticks % [TimeSpan]::TicksPerSecond))
+    if ($stamp -lt $lower -or $stamp -gt $r.endedUtc) { return "start time in $name is outside $($r.startedUtc.ToString('o'))..$($r.endedUtc.ToString('o'))" }
+    $path = Join-Path (Join-Path $exeDir 'records') $name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return "file not found: $path" }
+    if ((Get-Item -LiteralPath $path).Length -ne 0) { return "file is not empty: $path" }
+    return ''
+}
+
+$exeDir = Split-Path -Parent $exe
+$okArgs = @('--server', $srv, '--name', $nm)
+
+# 같은 기기의 두 프로세스가 서로 다른 파일을 만든다 (roadmap.md Phase 4 기록과 실패 코드).
+$runA = Start-Client $exe $okArgs
+$runB = Start-Client $exe $okArgs
+$resA = Complete-Client $runA
+$resB = Complete-Client $runB
+$whyA = Test-RecordOpened $resA $exeDir
+$whyB = Test-RecordOpened $resB $exeDir
+Report-Check 'normal start opens records\<UTC start>-<PID>.log next to the executable' ($whyA -eq '') $whyA
+Report-Check 'a second process at the same time opens its own file' ($whyB -eq '' -and $resA.id -ne $resB.id) "$whyB pids=$($resA.id),$($resB.id)"
+
+# 인자 오류로 기동에 실패하면 파일을 만들지 않는다. 인자 검사 뒤에 연다.
+# 앞선 실행의 파일이 쌓여 있고 PID 는 다시 쓰인다. 그래서 띄우기 전에 없던 파일만 본다.
+function Get-RecordNames([string]$dir) {
+    return @(Get-ChildItem -LiteralPath (Join-Path $dir 'records') -Filter '*.log' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+}
+$before = Get-RecordNames $exeDir
+$bad = Complete-Client (Start-Client $exe @('bogus'))
+$leftover = @(Get-RecordNames $exeDir | Where-Object { $before -notcontains $_ -and $_.EndsWith("-$($bad.id).log") })
+# 실패가 인자 검사의 것이어야 한다. 앞서 열다가 이름이 부딪혀 실패한 것이면 새 파일이 없어도 통과로 보지 않는다.
+Report-Check 'an argument error creates no record file' ($bad.code -eq 2 -and $leftover.Count -eq 0 -and $bad.err.Contains('ERROR args.invalid reason=bad_role arg=bogus') -and -not $bad.err.Contains('record.open') -and -not $bad.err.Contains('socket.error')) "exit=$($bad.code) files=$($leftover.Count) stderr=$(($bad.err -replace "`r?`n", ' | ').Trim())"
+
+# 폴더나 파일을 만들 수 없으면 기동 실패다. 새 실행 파일 폴더에 실행 파일을 복사하고 현재 사용자에게
+# 만들기를 거부하는 ACE 를 단다. 먼저 거부 없이 기동해 복사본이 그 자체로 도는지 본다. 그래야 아래
+# 실패가 거부 때문이라고 읽을 수 있다.
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+function Invoke-Icacls([string[]]$icaclsArgs) {
+    $out = & icacls @icaclsArgs 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "icacls $($icaclsArgs -join ' ') failed: $out" }
+}
+
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("sangtachi-cli-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $tmp | Out-Null
+try {
+    $tmpExe = Join-Path $tmp 'sangtachi_client.exe'
+    Copy-Item -LiteralPath $exe -Destination $tmpExe
+
+    # 하위 폴더를 만들 수 없는 폴더. `records` 가 없다.
+    $sub = Join-Path $tmp 'nodir'
+    New-Item -ItemType Directory -Path $sub | Out-Null
+    Copy-Item -LiteralPath $exe -Destination (Join-Path $sub 'sangtachi_client.exe')
+    # 파일을 만들 수 없는 `records` 가 이미 있는 폴더.
+    $sub2 = Join-Path $tmp 'nofile'
+    New-Item -ItemType Directory -Path (Join-Path $sub2 'records') | Out-Null
+    Copy-Item -LiteralPath $exe -Destination (Join-Path $sub2 'sangtachi_client.exe')
+
+    $copy = Complete-Client (Start-Client $tmpExe $okArgs)
+    $whyCopy = Test-RecordOpened $copy $tmp
+    Report-Check 'a copied executable opens its record file in its own folder' ($whyCopy -eq '') $whyCopy
+
+    Invoke-Icacls @($sub, '/deny', "*${sid}:(AD)")
+    $noDir = Complete-Client (Start-Client (Join-Path $sub 'sangtachi_client.exe') $okArgs)
+    Invoke-Icacls @($sub, '/remove:d', "*$sid")
+    Report-Check 'no right to create records\ is a startup failure' ($noDir.code -eq 2 -and $noDir.err.Contains('ERROR socket.error op=CreateDirectoryW') -and -not (Test-Path -LiteralPath (Join-Path $sub 'records'))) "exit=$($noDir.code) stderr=$(($noDir.err -replace "`r?`n", ' | ').Trim())"
+
+    $recDir = Join-Path $sub2 'records'
+    Invoke-Icacls @($recDir, '/deny', "*${sid}:(WD)")
+    $noFile = Complete-Client (Start-Client (Join-Path $sub2 'sangtachi_client.exe') $okArgs)
+    Invoke-Icacls @($recDir, '/remove:d', "*$sid")
+    Report-Check 'no right to create the file is a startup failure' ($noFile.code -eq 2 -and $noFile.err.Contains('ERROR socket.error op=CreateFileW') -and @(Get-ChildItem -LiteralPath $recDir).Count -eq 0) "exit=$($noFile.code) stderr=$(($noFile.err -replace "`r?`n", ' | ').Trim())"
+} finally {
+    # 거부 ACE 가 남아 있으면 지우기가 막힌다. 위에서 이미 걷었어도 다시 걷는다. 걷기와 지우기는 모든 자리에
+    # 시도하고, 남은 것은 아래에서 실패로 알린다.
+    $cleanup = @()
+    foreach ($d in @((Join-Path $tmp 'nodir'), (Join-Path $tmp 'nofile\records'))) {
+        # Windows PowerShell 5.1 은 Stop 아래에서 네이티브 표준 오류를 예외로 바꾼다. 하나가 던져도 나머지를 시도한다.
+        try {
+            if (Test-Path -LiteralPath $d) {
+                $out = & icacls $d '/remove:d' "*$sid" 2>&1
+                if ($LASTEXITCODE -ne 0) { $cleanup += "icacls /remove:d $d failed: $out" }
+            }
+        } catch {
+            $cleanup += "icacls /remove:d $d failed: $_"
+        }
+    }
+    try {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    } catch { }
+    if (Test-Path -LiteralPath $tmp) { $cleanup += "left behind: $tmp" }
+}
+Report-Check 'deny ACEs and the temporary folder are cleaned up' ($cleanup.Count -eq 0) ($cleanup -join '; ')
+
+Write-Host ("{0} passed, {1} failed of {2}" -f ($total - $failed), $failed, $total)
 
 # 성공 코드를 명시한다. 마지막 케이스가 종료 코드 2 를 내는 프로그램이라, 적지 않으면
 # 부르는 쪽의 $LASTEXITCODE 가 그 2 를 그대로 물고 간다.

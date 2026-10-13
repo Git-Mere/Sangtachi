@@ -8,10 +8,12 @@
 #include "sangtachi/counters.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/loop.hpp"
+#include "sangtachi/record.hpp"
 #include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
 #include "sangtachi/platform/console_ctrl.hpp"
+#include "sangtachi/platform/record_file.hpp"
 #include "sangtachi/platform/resolve.hpp"
 #include "sangtachi/platform/stdout.hpp"
 #include "sangtachi/platform/wait.hpp"
@@ -101,7 +103,10 @@ private:
 // 0 이면 루프가 종료로 끝났다. 그 밖의 값은 기동 실패의 종료 코드다.
 int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
                sangtachi::platform::WaitHandle shutdown_event,
-               sangtachi::control::ControlChannel& control) {
+               sangtachi::control::ControlChannel& control,
+               sangtachi::record::RecordWriter& records) {
+    // 기록 줄을 쓰는 자리(수립, 세션 종료, 종료 절차의 (3))는 랑데부·로비 연결과 같이 붙는다.
+    (void)records;
     // **이름 해석은 `[loop]` 시작 전에 목록 전체를 한 번 한다** (architecture.md 3.5
     // 기동 입력). getaddrinfo 는 동기 호출이라 `[loop]` 안에 두면 응답이 올 때까지 한
     // 바퀴가 멈춘다. 해석 실패와 중복 엔드포인트를 거르는 규칙은 그 절에 있고
@@ -322,6 +327,25 @@ int main(int argc, char** argv) {
 
     sangtachi::Counters counters;
 
+    // 로컬 기록 파일 (architecture.md 9장). 인자 검사 뒤, `[loop]` 를 시작하기 전에 연다. 열지 못하면
+    // 기동 실패다. 기록 없이 돈 실행은 M-6 으로 판정할 수 없다. 로그에는 파일 이름만 싣는다.
+    const std::string record_name = sangtachi::record::file_name(
+        sangtachi::platform::wall_clock_unix_ms(), sangtachi::platform::current_process_id());
+    auto record_file = sangtachi::platform::open_record_file(record_name);
+    if (!record_file.ok()) {
+        emit_op_error(record_file.failed_op, record_file.error);
+        return kStartupFailure;
+    }
+    {
+        const sangtachi::LogField fields[] = {
+            sangtachi::field("file", record_name),
+        };
+        sangtachi::emit(sangtachi::LogLevel::Info, "record.open", fields);
+    }
+    sangtachi::record::RecordWriter records(
+        [&file = record_file.file](std::string_view bytes) { return file.write(bytes); },
+        [] { return sangtachi::platform::wall_clock_unix_ms(); }, counters);
+
     // `[control]` 의 채널. **try 블록 밖에 둔다.** concurrency.md 7장 종료가 join(8) 을 정리
     // 완료(7) 뒤에 두고, 정리 완료는 try 블록이 닫힌 뒤에 신호하기 때문이다(아래). 블록 안에
     // 두면 블록이 닫힐 때 소멸자가 join 해 순서가 뒤집힌다. 채널은 Winsock 참조를 따로 들므로
@@ -409,7 +433,7 @@ int main(int argc, char** argv) {
                 std::span<const sangtachi::platform::WaitHandle>(shutdown_handles, 1), 0)
                 .status != sangtachi::platform::WaitStatus::Timeout;
         if (!stopped_during_startup) {
-            const int code = run_client(*parsed.args, counters, shutdown_event.get(), *control);
+            const int code = run_client(*parsed.args, counters, shutdown_event.get(), *control, records);
             if (code != 0) {
                 return code;
             }

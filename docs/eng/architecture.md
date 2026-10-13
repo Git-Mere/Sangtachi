@@ -95,6 +95,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `console` | The line queue of the `[console]` thread and its lifetime (`concurrency.md` chapter 6 Telemetry Isolation also owns that queue policy). Present only in the console build | None |
 | `log` | Line format and field encoding of the chapter 9 log output | None |
 | `counters` | The table of the chapter 9 `counter` event. The names come from [`protocol.md`](protocol.md) and `concurrency.md` | None |
+| `record` | Line format, file name, attempt numbers, and stopping after a write failure of the chapter 9 local record file. The write and the wall clock are injected and default to `platform/record_file` | None |
 | `args` | Startup argument parsing (3.5) | None |
 | `hash` | The SHA-256 carried by `rx.raw` | Windows CNG |
 | `network/stun` | STUN message construction and parsing. Includes `XOR-MAPPED-ADDRESS` decoding and holds pure functions only. RFC 5389 is implemented directly ([`protocol.md`](protocol.md) chapter 13 STUN Scope) | None |
@@ -104,6 +105,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `platform/interfaces` | IPv4 interface enumeration (address, netmask, type, status, GUID) and default route lookup. Used by `peer/candidates` | Win32 (IP Helper) |
 | `platform/resolve` | Name to IPv4 endpoint. Called once at startup (3.5) | Win32 |
 | `platform/console_ctrl` | Receives console control signals, signals the shutdown event and waits for cleanup to finish (`concurrency.md` chapter 7) | Win32 |
+| `platform/record_file` | Creates the `records` folder and the record file under the executable folder, and writes one line with one write call. UTC wall clock and PID (chapter 9 Local Record File) | Win32 |
 | `control/control_client` | Control plane HTTP/JSON calls and DNS resolution. Owned by the `[control]` thread (`concurrency.md` chapter 8 The `[control]` Thread). Operations and encoding are in [`control_plane.md`](control_plane.md) | Winsock2 |
 
 The client is a single process. Thread composition and state ownership are in `concurrency.md`.
@@ -409,9 +411,8 @@ The decision reads `len` and `sha256`; `from` is what lets a person tell the two
 
 **Both go away in Phase 6.** The `[console]` thread stays in the console build, because it has to accept the lobby commands above (`concurrency.md` chapter 1 Threads).
 
-**What is not a startup input.** The local record file path is decided together with the
-chapter 9 contract when that is settled. The telemetry service address is Phase 9. That both
-are absent from the table above is the current state.
+**What is not a startup input.** The local record file path is set by "Path" under chapter 9
+Local Record File. The telemetry service address is Phase 9. Neither is in the table above.
 
 **Behavior on argument errors.** An unknown argument, a missing required argument, or a format
 violation all leave **one `ERROR` line and fail startup with exit code 2**. Nothing is guessed
@@ -1160,8 +1161,9 @@ Sangtachi/
 |   |   +-- console.cpp  [console] line queue (concurrency.md chapter 6)
 |   |   +-- log.cpp      log line format (chapter 9)
 |   |   +-- counters.cpp counter table (chapter 9)
+|   |   +-- record.cpp   local record file lines and writes (chapter 9)
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher

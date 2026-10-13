@@ -21,7 +21,7 @@ using sangtachi::to_token;
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
     // 이름은 protocol.md 5.7 / 6장 / 7장 / 8장 과 concurrency.md 3장 / 6장 / 8장 이 갖는다.
     // 개수가 바뀌면 이 줄을 먼저 보게 된다.
-    REQUIRE(kCounterCount == 54);
+    REQUIRE(kCounterCount == 55);
 }
 
 TEST_CASE("counters: every token is unique, non-empty and sorted", "[counters]") {
@@ -65,6 +65,8 @@ TEST_CASE("counters: known names are present", "[counters]") {
     REQUIRE(tokens.count("drop_bad_source") == 1);
     REQUIRE(tokens.count("drop_unclassified") == 1);
     REQUIRE(tokens.count("drop_stun_parse") == 1);
+    // architecture.md 9장 로컬 기록 파일의 쓰기 실패.
+    REQUIRE(tokens.count("record_write_failed") == 1);
 }
 
 TEST_CASE("counters: start at zero and count up", "[counters]") {

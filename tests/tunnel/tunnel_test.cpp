@@ -52,8 +52,12 @@ struct TunnelFixture {
     Tunnel tunnel;
 
     explicit TunnelFixture(bool sink = false) : with_sink(sink), tunnel(counters, deps()) {
-        tunnel.set_terminal_handler(
-            [this](const peer::Session& s) { terminal_peers.push_back(s.peer_id()); });
+        tunnel.set_transition_handler(
+            [this](const peer::Session& s, peer::SessionState, peer::SessionState to) {
+                if (peer::is_terminal(to)) {
+                    terminal_peers.push_back(s.peer_id());
+                }
+            });
     }
 
     tunnel::TunnelDeps deps() {
@@ -842,8 +846,12 @@ TEST_CASE("tunnel: a terminal session empties its slot before the terminal handl
     TunnelFixture f;
     peer::Session* s = f.connect();
     bool slot_was_empty = false;
-    f.tunnel.set_terminal_handler(
-        [&](const peer::Session&) { slot_was_empty = f.tunnel.route(kPeerVip) == nullptr; });
+    f.tunnel.set_transition_handler([&](const peer::Session&, peer::SessionState,
+                                        peer::SessionState to) {
+        if (peer::is_terminal(to)) {
+            slot_was_empty = f.tunnel.route(kPeerVip) == nullptr;
+        }
+    });
     s->close_by_user(f.now);
     REQUIRE(slot_was_empty);
     // 회수된 가상 IP 를 받은 새 피어는 그 칸을 다시 쓴다. 종료 세션은 칸이 없다

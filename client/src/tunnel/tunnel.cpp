@@ -203,12 +203,15 @@ void Tunnel::on_transition(const peer::Session& session, peer::SessionState from
         roster_.on_connected_change(session.peer_id(), to == peer::SessionState::kConnected);
     }
     if (!peer::is_terminal(to)) {
+        if (on_transition_) {
+            on_transition_(session, from, to);
+        }
         return;
     }
     // 8.5: 라우팅 칸을 먼저 비운다. 기록 줄과 카운터는 그 뒤다.
     routes_.release(&session);
-    if (on_terminal_) {
-        on_terminal_(session);
+    if (on_transition_) {
+        on_transition_(session, from, to);
     }
     // architecture.md 9장: 세션이 종료 상태에 닿을 때 그 세션의 표 전량.
     const CounterPeer peer = session.counter_peer();

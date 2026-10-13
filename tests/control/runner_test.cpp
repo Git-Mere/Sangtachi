@@ -12,6 +12,9 @@
 #include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/timer.hpp"
+#include "sangtachi/tunnel/tunnel.hpp"
+
+#include "../session_fixture.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -75,6 +78,17 @@ struct Sent {
     std::vector<std::byte> bytes;
 };
 
+// RecordSink 가 받은 줄 하나 (architecture.md 9장 줄 형식의 값).
+struct Line {
+    bool end = false;
+    std::uint64_t attempt = 0;
+    std::string role;
+    std::optional<std::uint32_t> peer;
+    std::string result;
+    std::optional<std::uint64_t> rtt_us;
+    std::optional<std::uint64_t> setup_ms;
+};
+
 // 가짜 의존성 한 벌. 넣은 요청, 보낸 데이터그램, 표준 출력 줄을 모은다.
 struct Rig {
     TimerSet timers;
@@ -84,11 +98,31 @@ struct Rig {
     std::vector<ControlRequest> submitted;
     std::vector<Sent> sent;
     std::vector<std::string> printed;
-    std::unique_ptr<ControlRunner> runner;
     // 실행기가 해석 때 읽는 자기 서브넷 집합 (RunnerDeps::own_subnets). 시험이 바꿔 넣는다.
     sangtachi::peer::OwnSubnets own_subnets;
+    // 터널. 세션의 송신은 tunnel_sent 에 모은다.
+    std::vector<Sent> tunnel_sent;
+    std::unique_ptr<sangtachi::tunnel::Tunnel> tunnel;
+    std::vector<Line> lines;
+    std::uint64_t next_attempt = 0;
+    std::unique_ptr<ControlRunner> runner;
 
-    explicit Rig(std::size_t stun_count = 2) {
+    explicit Rig(std::size_t stun_count = 2, sangtachi::peer::CandidateSources sources = {}) {
+        sangtachi::tunnel::TunnelDeps tdeps;
+        tdeps.send = [this](const Endpoint& to, std::span<const std::byte> payload) {
+            tunnel_sent.push_back(Sent{to, std::vector<std::byte>(payload.begin(), payload.end())});
+            return true;
+        };
+        tdeps.clock = [this] { return now; };
+        tdeps.rtt_clock_us = [this] { return static_cast<std::uint64_t>(now) * 1000; };
+        tdeps.random = [](std::span<std::byte> out) {
+            for (std::size_t i = 0; i < out.size(); ++i) {
+                out[i] = static_cast<std::byte>(i + 1);
+            }
+            return true;
+        };
+        tunnel = std::make_unique<sangtachi::tunnel::Tunnel>(counters, std::move(tdeps));
+
         RunnerDeps deps;
         deps.host_header = std::string(kHostHeader);
         for (std::size_t i = 0; i < stun_count; ++i) {
@@ -112,7 +146,31 @@ struct Rig {
         deps.print = [this](std::string_view line) { printed.emplace_back(line); };
         deps.clock = [this] { return now; };
         deps.own_subnets = [this]() -> const sangtachi::peer::OwnSubnets& { return own_subnets; };
+        deps.candidate_sources = std::move(sources);
+        deps.local_port = 50000;
+        deps.set_own_subnets = [this](sangtachi::peer::OwnSubnets s) { own_subnets = std::move(s); };
+        deps.tunnel = tunnel.get();
+        deps.records.establish = [this](std::string_view role, std::optional<std::uint32_t> peer,
+                                        std::string_view result, std::optional<std::uint64_t> rtt,
+                                        std::optional<std::uint64_t> setup) {
+            lines.push_back(Line{false, ++next_attempt, std::string(role), peer, std::string(result), rtt, setup});
+            return next_attempt;
+        };
+        deps.records.end = [this](std::uint64_t attempt, std::string_view role,
+                                  std::optional<std::uint32_t> peer, std::string_view result,
+                                  std::optional<std::uint64_t> rtt) {
+            lines.push_back(Line{true, attempt, std::string(role), peer, std::string(result), rtt, std::nullopt});
+        };
         runner = std::make_unique<ControlRunner>(std::move(deps), timers, counters);
+        tunnel->set_transition_handler([this](const sangtachi::peer::Session& s,
+                                              sangtachi::peer::SessionState from,
+                                              sangtachi::peer::SessionState to) {
+            runner->on_session_transition(s, from, to);
+        });
+    }
+
+    ~Rig() {
+        tunnel->set_transition_handler(nullptr);
     }
 
     void command(LobbyCommandKind kind, std::string argument = {}) {
@@ -442,4 +500,399 @@ TEST_CASE("control_runner: leaving during STUN forgets that attempt's transactio
     rig.runner->on_stun_datagram(rig.sent[0].to,
                                  stun_success(*first, Endpoint(0xC6336401u, 40000)));
     REQUIRE(rig.counters.value(Counter::DropStunParse) == 1);
+}
+
+// ---------------------------------------------------------------- 4차 J: 세션, 기록 줄, 로컬 후보
+
+namespace {
+
+using sangtachi::control::SessionEvent;
+using sangtachi::peer::SessionFailure;
+using sangtachi::peer::SessionState;
+using sangtachi::tunnel::CloseReason;
+
+constexpr std::uint32_t kHostPeer = 7;
+constexpr std::uint32_t kHostVip = 0x0A640002u;  // 10.100.0.2
+const Endpoint kHostCand(0xC6336407u, 5000);     // 198.51.100.7:5000
+
+std::string ready_reply(std::string_view vip = "10.100.0.2", std::int64_t elapsed = 0) {
+    return "{\"ready\":true,\"peers\":[{\"peer_id\":7,\"virtual_ip\":\"" + std::string(vip) +
+           "\",\"name\":\"Host\",\"ready\":true,\"punch_delay_ms\":1000,\"elapsed_since_ready_ms\":" +
+           std::to_string(elapsed) +
+           ",\"candidates\":[{\"ip\":\"198.51.100.7\",\"port\":5000,\"kind\":\"reflexive\"}]}],\"ok\":true}";
+}
+
+// join 부터 STUN 성공까지. STUN 은 now 에 시작한다.
+void player_registered(Rig& rig) {
+    rig.command(LobbyCommandKind::kJoin, "ABCDEF");
+    rig.reply(Op::kJoinRoom, respond(kIssued));
+    const Endpoint mapped(0xC6336401u, 40000);
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto id = sangtachi::network::peek_transaction_id(rig.sent[i].bytes);
+        rig.runner->on_stun_datagram(rig.sent[i].to, stun_success(*id, mapped));
+    }
+    rig.reply(Op::kRegisterCandidate, respond("{\"accepted\":1,\"rejected\":0,\"ok\":true}"));
+}
+
+void player_ready(Rig& rig, std::string_view vip = "10.100.0.2") {
+    player_registered(rig);
+    rig.runner->on_timer("control.poll");
+    REQUIRE(rig.submitted.back().op == Op::kGetPeers);
+    rig.reply(Op::kGetPeers, respond(ready_reply(vip)), rig.submitted.back().self_peer_id);
+}
+
+// 호스트 쪽에서 본 HELLO 와 HELLO_ACK 을 넣어 플레이어 세션을 CONNECTED 로 만든다.
+void connect_host(Rig& rig) {
+    using namespace sangtachi::testing;
+    sangtachi::peer::Session* s = rig.tunnel->find(kHostPeer);
+    REQUIRE(s != nullptr);
+    Rx h = hello(kPeerEpoch, 0, kHostCand, kHostVip);
+    h.header.peer_id = kHostPeer;
+    rig.tunnel->on_datagram(kHostCand, h.wire());
+    Rx a = hello_ack(kPeerEpoch, 1, kHostCand, kHostVip, s->attempt_nonce());
+    a.header.peer_id = kHostPeer;
+    rig.tunnel->on_datagram(kHostCand, a.wire());
+    rig.runner->flush();
+    REQUIRE(s->state() == SessionState::kConnected);
+}
+
+}  // namespace
+
+TEST_CASE("control_runner: record_result table of architecture 9", "[control][runner][record]") {
+    struct Row {
+        SessionState to;
+        std::optional<SessionFailure> failure;
+        std::optional<CloseReason> reason;
+        bool connected;
+        std::string_view result;
+    };
+    const Row rows[] = {
+        {SessionState::kFailed, SessionFailure::kHolePunchTimeout, std::nullopt, false, "HOLE_PUNCH_TIMEOUT"},
+        {SessionState::kFailed, SessionFailure::kPeerHandshakeFailed, std::nullopt, false, "PEER_HANDSHAKE_FAILED"},
+        {SessionState::kFailed, SessionFailure::kTunnelDropped, std::nullopt, true, "TUNNEL_DROPPED"},
+        // 재협상 뒤 펀치 마감은 닿은 뒤에도 그 코드다
+        {SessionState::kFailed, SessionFailure::kHolePunchTimeout, std::nullopt, true, "HOLE_PUNCH_TIMEOUT"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kNormal, false, "ABORTED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kUserCancel, false, "ABORTED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kConfigError, false, "PEER_FAILED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kSetupFailed, false, "PEER_FAILED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kNormal, true, "CLOSED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kUserCancel, true, "CLOSED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kConfigError, true, "PEER_FAILED"},
+        {SessionState::kClosed, std::nullopt, CloseReason::kSetupFailed, true, "PEER_FAILED"},
+        {SessionState::kClosed, std::nullopt, std::nullopt, false, "ABORTED"},  // 이쪽이 닫음
+        {SessionState::kClosed, std::nullopt, std::nullopt, true, "CLOSED"},
+    };
+    for (const auto& row : rows) {
+        SessionEvent e;
+        e.peer_id = 9;
+        e.to = row.to;
+        e.failure = row.failure;
+        e.peer_close_reason = row.reason;
+        INFO("result=" << row.result << " connected=" << row.connected);
+        CHECK(sangtachi::control::record_result(e, row.connected) == row.result);
+    }
+}
+
+TEST_CASE("control_runner: a player opens the session on ready and punches after the delay",
+          "[control][runner]") {
+    // control_plane.md 8.4 의 9번, protocol.md 10.2 의 6번. 지연이 끝나기 전에는 HELLO 가 없다.
+    Rig rig;
+    player_ready(rig);
+    sangtachi::peer::Session* s = rig.tunnel->find(kHostPeer);
+    REQUIRE(s != nullptr);
+    CHECK(s->peer_virtual_ip() == kHostVip);
+    CHECK(s->is_candidate(kHostCand));
+    CHECK_FALSE(s->punch_started());
+    CHECK(rig.tunnel_sent.empty());
+    REQUIRE(rig.timers.contains("control.punch.7"));
+
+    rig.runner->on_timer("control.punch.7");
+    CHECK(s->punch_started());
+    REQUIRE(rig.tunnel_sent.size() == 1);
+    CHECK(rig.tunnel_sent[0].to == kHostCand);
+}
+
+TEST_CASE("control_runner: a connected player records OK with setup_ms and CLOSED on leave",
+          "[control][runner][record]") {
+    // architecture.md 9장. 플레이어의 기점은 STUN 단계 시작이다. 수립 줄은 CONNECTED 진입에, 종료 줄은
+    // 세션이 끝날 때 쓰고 같은 시도 번호를 쓴다.
+    Rig rig;
+    rig.now = 1000;
+    player_ready(rig);  // STUN 은 1000 에 시작했다
+    rig.runner->on_timer("control.punch.7");
+    // 전이는 3410 에 일어나고 flush 는 그 뒤다. setup_ms 는 전이 시각으로 잰다.
+    {
+        using namespace sangtachi::testing;
+        sangtachi::peer::Session* s = rig.tunnel->find(kHostPeer);
+        rig.now = 3410;
+        Rx h = hello(kPeerEpoch, 0, kHostCand, kHostVip);
+        h.header.peer_id = kHostPeer;
+        rig.tunnel->on_datagram(kHostCand, h.wire());
+        Rx a = hello_ack(kPeerEpoch, 1, kHostCand, kHostVip, s->attempt_nonce());
+        a.header.peer_id = kHostPeer;
+        rig.tunnel->on_datagram(kHostCand, a.wire());
+        REQUIRE(s->state() == SessionState::kConnected);
+        rig.now = 5000;
+        rig.runner->flush();
+    }
+    REQUIRE(rig.lines.size() == 1);
+    CHECK_FALSE(rig.lines[0].end);
+    CHECK(rig.lines[0].role == "player");
+    CHECK(rig.lines[0].peer == kHostPeer);
+    CHECK(rig.lines[0].result == "OK");
+    CHECK(rig.lines[0].setup_ms == 2410);
+
+    rig.command(LobbyCommandKind::kLeave);
+    REQUIRE(rig.lines.size() == 2);
+    CHECK(rig.lines[1].end);
+    CHECK(rig.lines[1].attempt == rig.lines[0].attempt);
+    CHECK(rig.lines[1].result == "CLOSED");
+    CHECK(rig.lines[1].setup_ms == std::nullopt);
+    CHECK(rig.runner->lobby().in_lobby());
+    CHECK(rig.tunnel->session_count() == 0);  // 방을 떠나면 남긴 세션까지 지운다 (protocol.md 5.6)
+}
+
+TEST_CASE("control_runner: a punch timeout prints FAIL with the host name and records one line",
+          "[control][runner][record]") {
+    Rig rig;
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    rig.now += sangtachi::protocol::kPunchDeadlineMs;
+    rig.tunnel->run_timers(rig.now);
+    rig.runner->flush();
+    REQUIRE(rig.printed_starts_with("FAIL HOLE_PUNCH_TIMEOUT Host "));
+    REQUIRE(rig.lines.size() == 1);
+    CHECK(rig.lines[0].result == "HOLE_PUNCH_TIMEOUT");
+    CHECK(rig.lines[0].peer == kHostPeer);
+    CHECK(rig.runner->lobby().in_lobby());
+    CHECK(rig.tunnel->session_count() == 0);
+}
+
+TEST_CASE("control_runner: a session the tunnel cannot open fails the attempt with CPEF",
+          "[control][runner][record]") {
+    // 10.100.0.9 는 라우팅 칸 밖이라 터널이 만들지 않는다 (tunnel.hpp 의 머리 표).
+    Rig rig;
+    player_ready(rig, "10.100.0.9");
+    CHECK(rig.tunnel->session_count() == 0);
+    REQUIRE(rig.printed_starts_with("FAIL CONTROL_PLANE_EXCHANGE_FAILED - "));
+    REQUIRE(rig.lines.size() == 1);
+    CHECK(rig.lines[0].result == "CONTROL_PLANE_EXCHANGE_FAILED");
+    CHECK(rig.lines[0].peer == kHostPeer);
+    CHECK(rig.runner->lobby().in_lobby());
+    CHECK_FALSE(rig.timers.contains("control.punch.7"));
+}
+
+TEST_CASE("control_runner: shutdown records ABORTED for an attempt without a session",
+          "[control][runner][record]") {
+    // concurrency.md 7장 종료 3번. 요청을 더 내지 않는다.
+    Rig rig;
+    rig.command(LobbyCommandKind::kJoin, "ABCDEF");
+    rig.reply(Op::kJoinRoom, respond(kIssued));
+    const std::size_t submitted = rig.submitted.size();
+    rig.runner->shutdown();
+    REQUIRE(rig.lines.size() == 1);
+    CHECK(rig.lines[0].result == "ABORTED");
+    CHECK(rig.lines[0].peer == std::nullopt);
+    CHECK(rig.submitted.size() == submitted);
+    CHECK(rig.runner->lobby().in_lobby());
+}
+
+TEST_CASE("control_runner: shutdown with a connected session leaves the lines to close_all",
+          "[control][runner][record]") {
+    Rig rig;
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    connect_host(rig);
+    rig.runner->shutdown();
+    CHECK(rig.lines.size() == 1);            // Lobby 는 세션이 있는 시도에 줄을 쓰지 않는다
+    CHECK(rig.tunnel->session_count() == 1);  // LeaveRoom 을 내지 않는다
+    rig.tunnel->close_all(rig.now);
+    rig.runner->flush();
+    REQUIRE(rig.lines.size() == 2);
+    CHECK(rig.lines[1].end);
+    CHECK(rig.lines[1].result == "CLOSED");
+}
+
+TEST_CASE("control_runner: local candidates are collected before register_candidate",
+          "[control][runner]") {
+    // protocol.md 10.1 수집 시점과 등록 목록. 반사 후보 뒤에 기본 경로 인터페이스의 로컬 후보가 오고,
+    // 자기 서브넷 집합이 그 수집의 것으로 바뀐다. 로컬 후보의 포트는 bind 한 포트다.
+    using sangtachi::platform::DadState;
+    using sangtachi::platform::OperStatus;
+    sangtachi::peer::CandidateSources sources;
+    int interface_calls = 0;
+    sources.query_interfaces = [&interface_calls] {
+        ++interface_calls;
+        sangtachi::platform::InterfaceQuery q;
+        q.ok = true;
+        sangtachi::platform::InterfaceInfo info;
+        info.if_index = 4;
+        info.if_type = 71;
+        info.oper_status = OperStatus::kUp;
+        info.addresses.push_back({0xC0A8000Au, 24, DadState::kPreferred});  // 192.168.0.10/24
+        q.interfaces.push_back(info);
+        return q;
+    };
+    sources.query_routes = [] {
+        sangtachi::platform::RouteQuery q;
+        q.ok = true;
+        q.routes.push_back({0, 0, 4, 10, 25});
+        return q;
+    };
+    Rig rig(2, sources);
+    rig.command(LobbyCommandKind::kJoin, "ABCDEF");
+    rig.reply(Op::kJoinRoom, respond(kIssued));
+    CHECK(interface_calls == 0);  // STUN 이 끝나기 전에는 모으지 않는다
+    const Endpoint mapped(0xC6336401u, 40000);
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto id = sangtachi::network::peek_transaction_id(rig.sent[i].bytes);
+        rig.runner->on_stun_datagram(rig.sent[i].to, stun_success(*id, mapped));
+    }
+    CHECK(interface_calls == 1);
+    REQUIRE(rig.submitted.back().op == Op::kRegisterCandidate);
+    const std::string& bytes = rig.submitted.back().bytes;
+    const auto reflexive = bytes.find("\"198.51.100.1\"");
+    const auto local = bytes.find("\"192.168.0.10\"");
+    REQUIRE(reflexive != std::string::npos);
+    REQUIRE(local != std::string::npos);
+    CHECK(reflexive < local);
+    CHECK(bytes.find("50000") != std::string::npos);
+    CHECK(rig.own_subnets.blocks_broadcast(0xC0A800FFu));
+}
+
+TEST_CASE("control_runner: a host opens a session per ready pair with the first-seen setup base",
+          "[control][runner][record]") {
+    // architecture.md 9장: 호스트의 기점은 그 플레이어가 host_report 응답에 처음 보인 때다.
+    // 세션이 끝나면 departed 를 담은 host_report 가 바로 나간다 (control_plane.md 4.6).
+    Rig rig;
+    rig.now = 1000;
+    rig.command(LobbyCommandKind::kHost);
+    rig.reply(Op::kCreateRoom, respond(kIssued));  // 호스트의 가상 IP 는 10.100.0.1
+    const Endpoint mapped(0xC6336401u, 40000);
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto id = sangtachi::network::peek_transaction_id(rig.sent[i].bytes);
+        rig.runner->on_stun_datagram(rig.sent[i].to, stun_success(*id, mapped));
+    }
+    rig.reply(Op::kRegisterCandidate, respond("{\"accepted\":1,\"rejected\":0,\"ok\":true}"));
+    CHECK(rig.tunnel->roster().active());
+
+    rig.now = 5000;
+    rig.runner->on_timer("control.host_report");
+    REQUIRE(rig.submitted.back().op == Op::kHostReport);
+    const std::string unready =
+        "{\"expires_in_s\":120,\"released\":[],\"confirmed\":[],\"peers\":[{\"peer_id\":9,"
+        "\"virtual_ip\":\"10.100.0.2\",\"name\":\"Bob\",\"ready\":false}],\"ok\":true}";
+    rig.reply(Op::kHostReport, respond(unready), 123);
+    CHECK(rig.tunnel->session_count() == 0);
+
+    rig.now = 10000;
+    rig.runner->on_timer("control.host_report");
+    const std::string ready =
+        "{\"expires_in_s\":120,\"released\":[],\"confirmed\":[9],\"peers\":[{\"peer_id\":9,"
+        "\"virtual_ip\":\"10.100.0.2\",\"name\":\"Bob\",\"ready\":true,\"punch_delay_ms\":1000,"
+        "\"elapsed_since_ready_ms\":1000,\"candidates\":[{\"ip\":\"198.51.100.9\",\"port\":6000,"
+        "\"kind\":\"reflexive\"}]}],\"ok\":true}";
+    rig.reply(Op::kHostReport, respond(ready), 123);
+    sangtachi::peer::Session* s = rig.tunnel->find(9);
+    REQUIRE(s != nullptr);
+    CHECK(s->punch_started());  // 지연이 0 이면 바로 시작한다
+
+    // 12410 에 연결된다. 기점은 처음 보인 5000 이다.
+    using namespace sangtachi::testing;
+    const Endpoint from(0xC6336409u, 6000);
+    rig.now = 12410;
+    Rx h = hello(kPeerEpoch, 0, from, 0x0A640002u);
+    h.header.peer_id = 9;
+    rig.tunnel->on_datagram(from, h.wire());
+    Rx a = hello_ack(kPeerEpoch, 1, from, 0x0A640002u, s->attempt_nonce());
+    a.header.peer_id = 9;
+    rig.tunnel->on_datagram(from, a.wire());
+    rig.runner->flush();
+    REQUIRE(s->state() == SessionState::kConnected);
+    REQUIRE(rig.lines.size() == 1);
+    CHECK(rig.lines[0].result == "OK");
+    CHECK(rig.lines[0].setup_ms == 7410);
+
+    // 상대가 CLOSE 0x03 으로 끝낸다.
+    Rx c = close_rx(kPeerEpoch, 2, 0x03, from);
+    c.header.peer_id = 9;
+    rig.tunnel->on_datagram(from, c.wire());
+    rig.runner->flush();
+    REQUIRE(s->state() == SessionState::kClosed);
+    REQUIRE(rig.lines.size() == 2);
+    CHECK(rig.lines[1].end);
+    CHECK(rig.lines[1].role == "host");
+    CHECK(rig.lines[1].peer == 9u);
+    CHECK(rig.lines[1].result == "PEER_FAILED");
+    CHECK_FALSE(rig.printed_starts_with("FAIL PEER"));  // 상대의 통지는 이쪽의 실패가 아니다
+    REQUIRE(rig.submitted.back().op == Op::kHostReport);
+    CHECK(rig.submitted.back().bytes.find("\"departed\":[9]") != std::string::npos);
+    CHECK_FALSE(rig.runner->lobby().in_lobby());
+}
+
+TEST_CASE("control_runner: a renegotiated session keeps one establish line and its attempt number",
+          "[control][runner][record]") {
+    // runner.hpp: 다시 CONNECTED 에 들어가도 수립 줄을 다시 쓰지 않는다. 종료 줄은 처음 번호다.
+    using namespace sangtachi::testing;
+    Rig rig;
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    connect_host(rig);
+    sangtachi::peer::Session* s = rig.tunnel->find(kHostPeer);
+    rig.now += 2000;
+    Rx h = hello(kPeerEpoch2, 0, kHostCand, kHostVip);
+    h.header.peer_id = kHostPeer;
+    rig.tunnel->on_datagram(kHostCand, h.wire());
+    rig.runner->flush();
+    REQUIRE(s->renegotiations() == 1);
+    REQUIRE(s->state() != SessionState::kConnected);
+    Rx a = hello_ack(kPeerEpoch2, 1, kHostCand, kHostVip, s->attempt_nonce());
+    a.header.peer_id = kHostPeer;
+    rig.tunnel->on_datagram(kHostCand, a.wire());
+    rig.runner->flush();
+    REQUIRE(s->state() == SessionState::kConnected);
+    CHECK(rig.lines.size() == 1);
+    rig.command(LobbyCommandKind::kLeave);
+    REQUIRE(rig.lines.size() == 2);
+    CHECK(rig.lines[1].end);
+    CHECK(rig.lines[1].attempt == rig.lines[0].attempt);
+    CHECK(rig.lines[1].result == "CLOSED");
+}
+
+TEST_CASE("control_runner: the end line carries the last RTT sample and the establish line none",
+          "[control][runner][record]") {
+    // architecture.md 9장: 수립 줄은 대개 비고 종료 줄에 마지막 표본이 들어간다. RTT 시계는 now * 1000 us 다.
+    using namespace sangtachi::testing;
+    Rig rig;
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    connect_host(rig);
+    REQUIRE(rig.lines.size() == 1);
+    CHECK(rig.lines[0].rtt_us == std::nullopt);
+    // 진입 5초 뒤 첫 PING 이 나간다 (protocol.md 11장).
+    rig.tunnel_sent.clear();
+    rig.now += 5000;
+    rig.tunnel->run_timers(rig.now);
+    rig.runner->flush();
+    std::optional<std::uint64_t> ping_id;
+    for (const auto& sent : rig.tunnel_sent) {
+        const auto check = sangtachi::tunnel::check_common(sent.bytes);
+        if (check.ok() && check.header.type == static_cast<std::uint8_t>(sangtachi::tunnel::PacketType::kPing)) {
+            std::uint64_t id = 0;
+            for (const std::byte b : check.payload) {
+                id = (id << 8) | std::to_integer<std::uint64_t>(b);
+            }
+            ping_id = id;
+        }
+    }
+    REQUIRE(ping_id.has_value());
+    rig.now += 23;
+    Rx p = pong(kPeerEpoch, 2, *ping_id, kHostCand);
+    p.header.peer_id = kHostPeer;
+    rig.tunnel->on_datagram(kHostCand, p.wire());
+    rig.runner->flush();
+    rig.command(LobbyCommandKind::kLeave);
+    REQUIRE(rig.lines.size() == 2);
+    CHECK(rig.lines[1].rtt_us == 23000u);
 }

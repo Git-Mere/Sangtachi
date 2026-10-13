@@ -1081,7 +1081,7 @@ nonce로 시작하는 것이지, 끝난 세션이 되살아나는 것이 아니�
 | 조건 | 기록 코드 |
 |------|-----------|
 | STUN 서버 목록을 다 쓰고도 서로 다른 두 서버의 응답을 얻지 못함 ([`architecture.md`](architecture.md) 3.5) | `STUN_DISCOVERY_FAILED` |
-| `get_peers` 폴링 마감 초과, 제어 평면 오류, 또는 `peer_id` 충돌 | `CONTROL_PLANE_EXCHANGE_FAILED` |
+| `get_peers` 폴링 마감 초과, 제어 평면 오류, `peer_id` 충돌, 또는 받은 상대 정보로 세션을 만들지 못함(가상 IP 가 8.5 라우팅 칸으로 갈 수 없거나 epoch·nonce 를 뽑지 못함) | `CONTROL_PLANE_EXCHANGE_FAILED` |
 | 펀치 마감까지 `got_ack`, `sent_ack` 둘 다 미성립 | `HOLE_PUNCH_TIMEOUT` |
 | 펀치 마감까지 하나만 성립 | `PEER_HANDSHAKE_FAILED` |
 | `CONNECTED` 이후 유휴 타임아웃 | `TUNNEL_DROPPED` |

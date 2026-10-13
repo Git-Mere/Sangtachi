@@ -985,7 +985,7 @@ The line-count verdict follows this table.
 | A player's STUN, join, or polling failure (including `name_taken` and `room_full`) | One establishment line. Failure code |
 | A player's punch or handshake failure | One establishment line. Failure code |
 | A host failure before the room is set up (`create_room`, STUN, `register_candidate`) | One establishment line. `peer=-`. The room is set up when `register_candidate` succeeds (`concurrency.md` chapter 7 Lobby) |
-| One host pair | Each pair is counted separately. Four players means four attempts. A pair's attempt comes into being when that pair is ready and punching starts |
+| One host pair | Each pair is counted separately. Four players means four attempts. A pair's attempt comes into being when the host sees that pair ready and opens its session. It is an attempt even if it ends during the punch delay |
 | A player seen by the host disappears from `peers` before ready (reclaim) | No host-side line. It is before the pair's attempt exists. That attempt remains in that player's record |
 | The host created a room and nobody came | No line. There was no connection attempt |
 | The host's room ended on the server and the session continues | No line. It is neither establishment nor end of a session. The end line is written when the session ends later |

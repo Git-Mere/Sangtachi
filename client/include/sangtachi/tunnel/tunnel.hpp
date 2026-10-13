@@ -40,9 +40,8 @@
 //
 // ## 3차·4차의 자리
 //
-// - 세션을 실제로 만드는 랑데부(10.2)와 로비 연결은 4차 J 다. 그때까지 제품 경로에는 세션이
-//   없으므로 터널 패킷은 전부 `drop_unknown_peer` 로 끝난다. 그것이 맞다 (9.1)
-// - 종료 전이 때의 기록 줄(architecture.md 9장)은 `set_terminal_handler` 자리다
+// - 세션을 만들고 펀치를 시작하는 것은 로비(control/lobby, control/runner)다. 터널은 상태 전이를
+//   `set_transition_handler` 로 알린다. 기록 줄(architecture.md 9장)과 로비의 반응이 그 자리다
 
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
@@ -186,10 +185,12 @@ public:
         on_tx_ = std::move(observer);
     }
 
-    // 세션이 종료 상태에 닿을 때마다. 라우팅 칸을 비운 뒤에 부른다 (기록 줄의 자리. 4차 J).
-    void set_terminal_handler(std::function<void(const peer::Session&)> handler) {
-        on_terminal_ = std::move(handler);
-    }
+    // 세션의 상태가 바뀔 때마다(`PUNCHING` 생성은 빼고). 종료 상태면 라우팅 칸을 비운 뒤, 그 세션의
+    // 카운터 표를 내기 전에 부른다 (8.5 순서 표). **세션의 메서드 안에서 불린다.** 받는 쪽은 여기서
+    // 터널을 다시 부르지 않는다. 값을 베껴 두고 터널 호출이 끝난 뒤에 처리한다 (control/runner).
+    using TransitionHandler =
+        std::function<void(const peer::Session&, peer::SessionState from, peer::SessionState to)>;
+    void set_transition_handler(TransitionHandler handler) { on_transition_ = std::move(handler); }
 
 private:
     struct Entry {
@@ -213,7 +214,7 @@ private:
     Router routes_;                            // 8.5 (tunnel/router)
     RosterPublisher roster_;                   // 5.7. 호스트일 때만 켜진다
     std::optional<std::uint32_t> local_vip_;   // 8.5 검사 4번 (위 머리 표)
-    std::function<void(const peer::Session&)> on_terminal_;
+    TransitionHandler on_transition_;
     std::function<void(std::span<const std::byte>)> on_tx_;
 };
 

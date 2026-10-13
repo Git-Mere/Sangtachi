@@ -2019,6 +2019,13 @@ information through different operations. The data path does not split
 **The host starts `host_report` right after step 4.** The room stays alive only if the lease is
 renewed (5.1). The cycle runs even when there is no pair to confirm.
 
+**The host goes to step 9 only on responses after its room is set up.** The room is set up when step 6
+succeeds. If a ready pair shows up in a `host_report` response before that, punching starts on the next
+response after the room is set up.
+
+> **Why.** If step 6 fails in the end, that attempt goes to the lobby ([`concurrency.md`](concurrency.md)
+> chapter 7 Lobby). A session opened before then would be left without a room.
+
 ---
 
 ## 9. Verification

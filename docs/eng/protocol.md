@@ -1161,7 +1161,7 @@ deadline and **a session under establishment is recorded as a disconnect.**
 | Condition | Recorded code |
 |------|-----------|
 | The STUN server list is exhausted without responses from two different servers ([`architecture.md`](architecture.md) 3.5) | `STUN_DISCOVERY_FAILED` |
-| `get_peers` polling deadline exceeded, control plane error, or `peer_id` collision | `CONTROL_PLANE_EXCHANGE_FAILED` |
+| `get_peers` polling deadline exceeded, control plane error, `peer_id` collision, or a session cannot be created from the received peer information (the virtual IP cannot go to an 8.5 routing slot, or the epoch or nonce cannot be drawn) | `CONTROL_PLANE_EXCHANGE_FAILED` |
 | Neither `got_ack` nor `sent_ack` set by the punch deadline | `HOLE_PUNCH_TIMEOUT` |
 | Only one set by the punch deadline | `PEER_HANDSHAKE_FAILED` |
 | Idle timeout after `CONNECTED` | `TUNNEL_DROPPED` |

@@ -8,6 +8,9 @@
 #include "sangtachi/log.hpp"
 #include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/peer/candidates.hpp"
+#include "sangtachi/peer/session.hpp"
+#include "sangtachi/tunnel/packet.hpp"
+#include "sangtachi/tunnel/tunnel.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -62,8 +65,40 @@ void emit_transport(const ControlResponse& response) {
 
 }  // namespace
 
+std::string_view record_result(const SessionEvent& event, bool connected) noexcept {
+    if (event.to == peer::SessionState::kFailed) {
+        return peer::to_token(event.failure.value_or(peer::SessionFailure::kTunnelDropped));
+    }
+    if (event.peer_close_reason == tunnel::CloseReason::kConfigError ||
+        event.peer_close_reason == tunnel::CloseReason::kSetupFailed) {
+        return "PEER_FAILED";
+    }
+    return connected ? "CLOSED" : "ABORTED";
+}
+
 ControlRunner::ControlRunner(RunnerDeps deps, TimerSet& timers, Counters& counters)
-    : deps_(std::move(deps)), timers_(timers), counters_(counters), lobby_(deps_.nonce, deps_.name) {}
+    : deps_(std::move(deps)),
+      timers_(timers),
+      counters_(counters),
+      lobby_(deps_.nonce, deps_.name, deps_.clock,
+             [this](std::span<const network::Endpoint> reflexive) { return collect(reflexive); }) {}
+
+std::vector<Candidate> ControlRunner::collect(std::span<const network::Endpoint> reflexive) {
+    const auto& sources = deps_.candidate_sources;
+    if (!sources.query_interfaces || !sources.query_routes) {
+        return peer::registration_list(reflexive, {}, std::nullopt, deps_.local_port);
+    }
+    static const peer::OwnSubnets kNoSubnets;
+    const peer::OwnSubnets& previous = deps_.own_subnets ? deps_.own_subnets() : kNoSubnets;
+    // 자기 Wintun 식별자는 Phase 6 까지 없다 (protocol.md 10.1 제외 단계).
+    peer::Collection collection =
+        peer::collect(sources, reflexive, deps_.local_port, std::nullopt, previous);
+    peer::emit_collection_warnings(collection);
+    if (deps_.set_own_subnets) {
+        deps_.set_own_subnets(std::move(collection.own_subnets));
+    }
+    return std::move(collection.registration);
+}
 
 ControlRunner::~ControlRunner() {
     // 루프의 타이머 집합은 이 객체보다 오래 산다. 남긴 STUN 타이머가 버린 객체를 부르지 않게 한다.
@@ -107,6 +142,26 @@ void ControlRunner::on_timer(std::string_view name) {
     }
 }
 
+void ControlRunner::on_session_transition(const peer::Session& session, peer::SessionState from,
+                                          peer::SessionState to) {
+    SessionEvent event;
+    event.peer_id = session.peer_id();
+    event.from = from;
+    event.to = to;
+    event.failure = session.failure();
+    event.peer_close_reason = session.peer_close_reason();
+    event.last_rtt_us = session.last_rtt_us();
+    events_.push_back(QueuedEvent{std::move(event), deps_.clock()});
+}
+
+void ControlRunner::flush() {
+    run({});
+}
+
+void ControlRunner::shutdown() {
+    run(lobby_.on_shutdown());
+}
+
 void ControlRunner::run(LobbyActions actions) {
     for (auto& action : actions) {
         queue_.push_back(std::move(action));
@@ -115,12 +170,61 @@ void ControlRunner::run(LobbyActions actions) {
         return;  // 바깥 run 이 이어서 한다. Lobby 를 다시 들어가지 않는다
     }
     running_ = true;
-    while (!queue_.empty()) {
-        LobbyAction action = std::move(queue_.front());
-        queue_.pop_front();
-        execute(action);
+    // 행동을 먼저 다 하고 그 사이 쌓인 전이를 하나씩 처리한다. 전이가 낸 행동은 다시 큐로 간다.
+    while (!queue_.empty() || !events_.empty()) {
+        if (!queue_.empty()) {
+            LobbyAction action = std::move(queue_.front());
+            queue_.pop_front();
+            execute(action);
+            continue;
+        }
+        const QueuedEvent queued = std::move(events_.front());
+        events_.pop_front();
+        record(queued.event, queued.at);
+        for (auto& action : lobby_.on_session_event(queued.event)) {
+            queue_.push_back(std::move(action));
+        }
     }
     running_ = false;
+}
+
+void ControlRunner::record(const SessionEvent& event, Millis at) {
+    const auto it = tracks_.find(event.peer_id);
+    if (it == tracks_.end()) {
+        return;
+    }
+    Track& track = it->second;
+    const std::string_view role = to_token(track.role);
+    const RecordSink& sink = deps_.records;
+    if (event.to == peer::SessionState::kConnected && !track.connected) {
+        track.connected = true;
+        const std::uint64_t setup = at >= track.setup_base_ms ? at - track.setup_base_ms : 0;
+        track.attempt =
+            sink.establish ? sink.establish(role, event.peer_id, "OK", event.last_rtt_us, setup) : 0;
+        return;
+    }
+    if (!peer::is_terminal(event.to)) {
+        return;
+    }
+    const std::string_view result = record_result(event, track.connected);
+    if (track.connected) {
+        if (sink.end) {
+            sink.end(track.attempt, role, event.peer_id, result, event.last_rtt_us);
+        }
+    } else if (sink.establish) {
+        (void)sink.establish(role, event.peer_id, result, event.last_rtt_us, std::nullopt);
+    }
+    tracks_.erase(it);
+}
+
+void ControlRunner::open_session(const OpenSession& open) {
+    const std::uint32_t peer_id = open.request.peer_id;
+    peer::Session* session = deps_.tunnel ? deps_.tunnel->create_session(open.request) : nullptr;
+    if (session == nullptr) {
+        run(lobby_.on_session_open_failed(peer_id));
+        return;
+    }
+    tracks_[peer_id] = Track{open.role, open.setup_base_ms, false, 0};
 }
 
 void ControlRunner::execute(LobbyAction& action) {
@@ -134,7 +238,7 @@ void ControlRunner::execute(LobbyAction& action) {
             } else if constexpr (std::is_same_v<T, CancelStun>) {
                 drop_stun();
             } else if constexpr (std::is_same_v<T, ArmTimer>) {
-                if (!timers_.add_once(std::string(a.name), a.delay_ms, deps_.clock())) {
+                if (!timers_.add_once(a.name, a.delay_ms, deps_.clock())) {
                     // 같은 이름이 이미 걸려 있다. 조용히 넘기면 그 마감이 영영 오지 않는다.
                     const LogField fields[] = {field("name", a.name)};
                     emit(LogLevel::Warn, "timer.rejected", fields);
@@ -147,6 +251,31 @@ void ControlRunner::execute(LobbyAction& action) {
                 }
             } else if constexpr (std::is_same_v<T, LogLine>) {
                 emit(a.level, a.event, a.fields);
+            } else if constexpr (std::is_same_v<T, OpenSession>) {
+                open_session(a);
+            } else if constexpr (std::is_same_v<T, StartPunch>) {
+                if (deps_.tunnel != nullptr) {
+                    if (peer::Session* s = deps_.tunnel->find(a.peer_id); s != nullptr) {
+                        (void)s->start_punch(deps_.clock());
+                    }
+                }
+            } else if constexpr (std::is_same_v<T, LeaveRoom>) {
+                if (deps_.tunnel != nullptr) {
+                    deps_.tunnel->leave_room(deps_.clock());
+                }
+            } else if constexpr (std::is_same_v<T, StartRoster>) {
+                if (deps_.tunnel != nullptr) {
+                    deps_.tunnel->start_roster(a.self);
+                }
+            } else if constexpr (std::is_same_v<T, SetRosterPeers>) {
+                if (deps_.tunnel != nullptr) {
+                    deps_.tunnel->set_roster_peers(std::move(a.peers));
+                }
+            } else if constexpr (std::is_same_v<T, RecordAttempt>) {
+                if (deps_.records.establish) {
+                    (void)deps_.records.establish(to_token(a.role), a.peer, a.result, std::nullopt,
+                                                  std::nullopt);
+                }
             }
         },
         action);

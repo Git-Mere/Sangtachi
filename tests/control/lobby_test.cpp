@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -156,7 +157,7 @@ struct Sent {
 class Sim {
 public:
     explicit Sim(std::string name = std::string(kName))
-        : lobby([this] { return next_nonce(); }, std::move(name)) {
+        : lobby([this] { return next_nonce(); }, std::move(name), [this] { return now; }) {
         secrets.emplace_back(kToken);
     }
 
@@ -174,6 +175,14 @@ public:
     bool drop_next = false;
     int dropped = 0;
     std::vector<std::string> secrets;  // 로그에 나오면 안 되는 문자열
+    // 4차 J 의 행동. Sim 은 터널 대신 받은 것을 적어 둔다.
+    std::vector<OpenSession> opened;
+    std::vector<std::uint32_t> punched;
+    int leaves = 0;
+    std::vector<sangtachi::tunnel::RosterPeer> roster_starts;
+    std::vector<std::vector<sangtachi::tunnel::RosterPeer>> roster_sets;
+    std::vector<RecordAttempt> records;
+    std::vector<std::uint32_t> fail_open;  // 이 peer_id 의 OpenSession 은 실패한다
 
     void command(std::string_view line) {
         const auto parsed = parse_lobby_command(line);
@@ -193,6 +202,26 @@ public:
     void stun_done(bool ok, const std::vector<StunMapping>& mappings) {
         stun_running = false;
         apply(lobby.on_stun_done(ok, mappings));
+    }
+
+    // 세션 하나의 전이. 터널이 낼 값을 그대로 넣는다.
+    void session(std::uint32_t peer_id, sangtachi::peer::SessionState to,
+                 std::optional<sangtachi::peer::SessionFailure> failure = std::nullopt,
+                 std::optional<sangtachi::tunnel::CloseReason> reason = std::nullopt) {
+        SessionEvent e;
+        e.peer_id = peer_id;
+        e.to = to;
+        e.failure = failure;
+        e.peer_close_reason = reason;
+        apply(lobby.on_session_event(e));
+    }
+
+    [[nodiscard]] std::size_t count_punch(std::uint32_t peer_id) const {
+        std::size_t n = 0;
+        for (const auto id : punched) {
+            n += id == peer_id ? 1 : 0;
+        }
+        return n;
     }
 
     // 시계를 ms 만큼 돌린다. 마감이 온 타이머를 마감 순서대로 넘긴다.
@@ -360,13 +389,35 @@ private:
             } else if (auto* l = std::get_if<LogLine>(&action)) {
                 check_log(*l);
                 logs.push_back(*l);
+            } else if (auto* o = std::get_if<OpenSession>(&action)) {
+                opened.push_back(*o);
+                // 실행기처럼 지금 목록을 다 한 뒤에 알린다 (runner.cpp 의 큐).
+                if (std::find(fail_open.begin(), fail_open.end(), o->request.peer_id) != fail_open.end()) {
+                    open_failures.push_back(o->request.peer_id);
+                }
+            } else if (auto* sp = std::get_if<StartPunch>(&action)) {
+                punched.push_back(sp->peer_id);
+            } else if (std::holds_alternative<LeaveRoom>(action)) {
+                ++leaves;
+            } else if (auto* rs = std::get_if<StartRoster>(&action)) {
+                roster_starts.push_back(rs->self);
+            } else if (auto* rp = std::get_if<SetRosterPeers>(&action)) {
+                roster_sets.push_back(rp->peers);
+            } else if (auto* ra = std::get_if<RecordAttempt>(&action)) {
+                records.push_back(*ra);
             }
+        }
+        std::vector<std::uint32_t> failures;
+        failures.swap(open_failures);
+        for (const auto id : failures) {
+            apply(lobby.on_session_open_failed(id));
         }
         // STUN 결과가 오면 Sim 은 STUN 을 끝난 것으로 본다.
         CHECK(lobby.request_pending() == in_flight.has_value());
     }
 
     int nonce_counter_ = 0;
+    std::vector<std::uint32_t> open_failures;
 };
 
 const std::string kCpefLine = fail_line(FailCode::kControlPlaneExchangeFailed);
@@ -375,26 +426,31 @@ const std::string kCpefLine = fail_line(FailCode::kControlPlaneExchangeFailed);
 
 // ---------------------------------------------------------------- 표준 출력 줄
 
-TEST_CASE("lobby: fail lines carry the code and the sentence of architecture 8") {
+TEST_CASE("lobby: fail lines carry the code, the peer and the sentence of architecture 8") {
+    // architecture.md 3.5: `FAIL <코드> <상대> <문장>`. 칸은 늘 있다. 세션 전이거나 방 전체의 실패는 `-` 다.
     struct Row {
         FailCode code;
+        std::string_view peer;
         std::string_view line;
     };
     const Row rows[] = {
-        {FailCode::kStunDiscoveryFailed,
-         "FAIL STUN_DISCOVERY_FAILED 인터넷에서 내 주소를 확인하지 못했습니다. 네트워크 연결을 확인하고 다시 시도하세요."},
-        {FailCode::kControlPlaneExchangeFailed,
-         "FAIL CONTROL_PLANE_EXCHANGE_FAILED 방 정보를 주고받지 못했습니다. 방 코드가 맞는지, 방이 아직 열려 있는지 확인하고 다시 시도하세요."},
-        {FailCode::kHolePunchTimeout,
-         "FAIL HOLE_PUNCH_TIMEOUT 상대와 직접 연결을 만들지 못했습니다. 둘 중 한 명이 다른 네트워크에서 다시 시도해 보세요."},
-        {FailCode::kPeerHandshakeFailed,
-         "FAIL PEER_HANDSHAKE_FAILED 연결이 한쪽 방향만 열렸습니다. 방화벽 설정을 확인하고 다시 시도하세요."},
-        {FailCode::kTunnelDropped,
-         "FAIL TUNNEL_DROPPED 상대와의 연결이 끊어졌습니다. 상대가 접속을 종료했거나 네트워크가 불안정합니다."},
+        {FailCode::kStunDiscoveryFailed, "-",
+         "FAIL STUN_DISCOVERY_FAILED - 인터넷에서 내 주소를 확인하지 못했습니다. 네트워크 연결을 확인하고 다시 시도하세요."},
+        {FailCode::kControlPlaneExchangeFailed, "-",
+         "FAIL CONTROL_PLANE_EXCHANGE_FAILED - 방 정보를 주고받지 못했습니다. 방 코드가 맞는지, 방이 아직 열려 있는지 확인하고 다시 시도하세요. 방에 같은 이름이 있으면 다른 이름을 쓰세요."},
+        {FailCode::kHolePunchTimeout, "Bob",
+         "FAIL HOLE_PUNCH_TIMEOUT Bob 상대와 직접 연결을 만들지 못했습니다. 둘 중 한 명이 다른 네트워크에서 다시 시도해 보세요."},
+        {FailCode::kPeerHandshakeFailed, "bob_01",
+         "FAIL PEER_HANDSHAKE_FAILED bob_01 연결이 한쪽 방향만 열렸습니다. 방화벽 설정을 확인하고 다시 시도하세요."},
+        {FailCode::kTunnelDropped, "Host",
+         "FAIL TUNNEL_DROPPED Host 상대와의 연결이 끊어졌습니다. 상대가 접속을 종료했거나 네트워크가 불안정합니다."},
     };
     for (const auto& row : rows) {
-        CHECK(fail_line(row.code) == row.line);
+        CHECK(fail_line(row.code, row.peer) == row.line);
     }
+    // 이름을 주지 않거나 빈 이름이면 `-` 다.
+    CHECK(fail_line(FailCode::kStunDiscoveryFailed) == rows[0].line);
+    CHECK(fail_line(FailCode::kStunDiscoveryFailed, "") == rows[0].line);
     CHECK(room_line("ABCDEF") == "ROOM ABCDEF");
 }
 
@@ -509,6 +565,14 @@ TEST_CASE("lobby: owns_timer is an exact allow list") {
     CHECK_FALSE(Lobby::owns_timer("stun.retry.0"));
     CHECK_FALSE(Lobby::owns_timer("probe200"));
     CHECK_FALSE(Lobby::owns_timer(""));
+    // 쌍마다 하나인 펀치 지연. 접두 뒤가 10진수일 때만이다.
+    CHECK(Lobby::owns_timer("control.punch.7"));
+    CHECK(Lobby::owns_timer("control.punch.4294967295"));
+    CHECK_FALSE(Lobby::owns_timer("control.punch."));
+    CHECK_FALSE(Lobby::owns_timer("control.punch.7a"));
+    CHECK_FALSE(Lobby::owns_timer("control.punch.-7"));
+    CHECK_FALSE(Lobby::owns_timer("control.punch.4294967296"));
+    CHECK_FALSE(Lobby::owns_timer("control.punch7"));
 }
 
 // ---------------------------------------------------------------- 명령을 받는 때 (architecture.md 3.5)
@@ -1019,9 +1083,12 @@ TEST_CASE("lobby: player polls get_peers 500ms after each response") {
     CHECK(line->fields[0].value == "7");
     CHECK(line->fields[2].value == "198.51.100.7:5000,192.168.0.10:5000");
     CHECK(sim.lobby.stage() == LobbyStage::kSettled);
-    CHECK(sim.timers.empty());  // 폴링과 마감을 멈춘다
+    // 폴링과 마감을 멈추고 펀치 지연만 남는다 (protocol.md 10.2 의 6번).
+    REQUIRE(sim.timers.size() == 1);
+    CHECK(sim.armed("control.punch.7"));
+    REQUIRE(sim.opened.size() == 1);
 
-    // 그 뒤 leave 나 quit 까지 방에 남는다. 더 부르지 않고 실패하지도 않는다.
+    // 그 뒤 세션이 끝나거나 leave 나 quit 까지 방에 남는다. 더 부르지 않고 실패하지도 않는다.
     sim.advance(600000);
     CHECK(sim.count_sent(http::Op::kGetPeers) == 5);
     CHECK(sim.count_fail() == 0);
@@ -1408,6 +1475,8 @@ TEST_CASE("lobby: secrets never reach a log line") {
     sim.reply(report({unready(21), ready(22, {cand("198.51.100.22", 6000)})}));
     sim.advance(kHostReportOpenMs);
     sim.reply(err<HostReport>(Outcome::kDefinite, Failure::kRoomExpired));
+    // 22 와의 세션이 남아 있어 방에 남는다 (control_plane.md 4.6 오류 표 첫 행).
+    sim.command("leave");
     sim.command("join abcdef");
     sim.reply(issued());
     sim.stun_done(true, two_mappings());
@@ -1593,4 +1662,431 @@ TEST_CASE("lobby: an invalid start name never reaches the server") {
         REQUIRE(sim.in_flight.has_value());
         CHECK(body_string(sim.in_flight->body, "name") == "Bob");
     }
+}
+
+// ---------------------------------------------------------------- 4차 J: 랑데부, 세션, 기록 줄
+
+namespace {
+
+using sangtachi::peer::SessionFailure;
+using sangtachi::peer::SessionState;
+using sangtachi::tunnel::CloseReason;
+
+PeerView ready_at(std::uint32_t peer_id, std::uint32_t vip, std::string name, std::int64_t elapsed) {
+    PeerView v = ready(peer_id, {cand("198.51.100.30", 7000)});
+    v.virtual_ip = vip;
+    v.name = std::move(name);
+    v.elapsed_since_ready_ms = elapsed;
+    return v;
+}
+
+PeerView unready_named(std::uint32_t peer_id, std::string name) {
+    PeerView v = unready(peer_id);
+    v.name = std::move(name);
+    return v;
+}
+
+// 플레이어가 준비 응답을 받아 세션을 연 상태. STUN 은 0 에 시작했다.
+void player_open(Sim& sim) {
+    sim.player_polling();
+    sim.advance(kGetPeersPollMs);
+    sim.reply(peers({ready(kHostId, {cand("198.51.100.7", 5000)})}));
+    REQUIRE(sim.opened.size() == 1);
+}
+
+// 방을 세운 호스트가 다음 host_report 에서 준비된 플레이어 하나를 받은 상태.
+void host_open(Sim& sim, std::uint32_t peer_id = 21, std::string name = "Bob") {
+    sim.host_settled();
+    sim.advance(kHostReportOpenMs);
+    sim.reply(report({ready_at(peer_id, ip("10.100.0.3"), std::move(name), 0)}));
+    REQUIRE_FALSE(sim.opened.empty());
+}
+
+}  // namespace
+
+TEST_CASE("lobby: a ready player reply opens one session with the delay of 10.2") {
+    // control_plane.md 8.4 의 9번, protocol.md 10.2 의 6번. 지연은 punch_delay_ms - elapsed 다.
+    Sim sim;
+    sim.player_polling();
+    sim.advance(kGetPeersPollMs);
+    sim.reply(peers({ready(kHostId, {cand("198.51.100.7", 5000), cand("192.168.0.10", 5000)})}));
+    REQUIRE(sim.opened.size() == 1);
+    const OpenSession& o = sim.opened[0];
+    CHECK(o.role == LobbyRole::kPlayer);
+    CHECK(o.setup_base_ms == 0);  // STUN 을 시작한 시각
+    CHECK(o.request.local_peer_id == kSelf);
+    CHECK(o.request.local_virtual_ip == ip("10.100.0.2"));
+    CHECK(o.request.peer_id == kHostId);
+    CHECK(o.request.peer_virtual_ip == ip("10.100.0.3"));
+    CHECK(o.request.peer_is_host);
+    CHECK(o.request.peer_name == "Host");
+    REQUIRE(o.request.candidates.size() == 2);
+    CHECK(o.request.candidates[0] == Endpoint(ip("198.51.100.7"), 5000));
+    CHECK(sim.punched.empty());
+    sim.advance(989);
+    CHECK(sim.punched.empty());
+    sim.advance(1);
+    CHECK(sim.punched == std::vector<std::uint32_t>{kHostId});
+    CHECK(sim.timers.empty());
+}
+
+TEST_CASE("lobby: the punch starts at once when the delay is already spent") {
+    for (const std::int64_t elapsed : {1000, 1500}) {
+        INFO("elapsed=" << elapsed);
+        Sim sim;
+        sim.player_polling();
+        sim.advance(kGetPeersPollMs);
+        PeerView v = ready(kHostId, {cand("198.51.100.7", 5000)});
+        v.elapsed_since_ready_ms = elapsed;
+        sim.reply(peers({v}));
+        CHECK(sim.punched == std::vector<std::uint32_t>{kHostId});
+        CHECK(sim.timers.empty());
+    }
+}
+
+TEST_CASE("lobby: the player setup base is the STUN start of the attempt") {
+    Sim sim;
+    sim.now = 7000;
+    sim.player_polling();  // join 응답(=STUN 시작)이 7000 이다
+    sim.advance(kGetPeersPollMs);
+    sim.reply(peers({ready(kHostId, {cand("198.51.100.7", 5000)})}));
+    REQUIRE(sim.opened.size() == 1);
+    CHECK(sim.opened[0].setup_base_ms == 7000);
+}
+
+TEST_CASE("lobby: a failed player session prints FAIL with the host name and goes to the lobby") {
+    // concurrency.md 7장 로비 "시도가 실패했다 | 플레이어는 언제나". <상대> 는 호스트의 이름이다.
+    struct Row {
+        SessionFailure failure;
+        std::string_view prefix;
+    };
+    const Row rows[] = {
+        {SessionFailure::kHolePunchTimeout, "FAIL HOLE_PUNCH_TIMEOUT Host "},
+        {SessionFailure::kPeerHandshakeFailed, "FAIL PEER_HANDSHAKE_FAILED Host "},
+        {SessionFailure::kTunnelDropped, "FAIL TUNNEL_DROPPED Host "},
+    };
+    for (const auto& row : rows) {
+        INFO("prefix=" << row.prefix);
+        Sim sim;
+        player_open(sim);
+        sim.session(kHostId, SessionState::kConnected);
+        CHECK(sim.count_fail() == 0);
+        sim.session(kHostId, SessionState::kFailed, row.failure);
+        REQUIRE(sim.count_fail() == 1);
+        CHECK(sim.printed.back().rfind(row.prefix, 0) == 0);
+        CHECK(sim.lobby.in_lobby());
+        CHECK(sim.leaves == 1);
+        CHECK(sim.records.empty());  // 세션의 줄은 실행기가 쓴다
+        CHECK(sim.timers.empty());
+        CHECK(sim.last_log("attempt.end")->fields[0].value == "failed");
+    }
+}
+
+TEST_CASE("lobby: a closed player session goes to the lobby without FAIL") {
+    for (const auto reason : {std::optional<CloseReason>{}, std::optional<CloseReason>{CloseReason::kNormal},
+                              std::optional<CloseReason>{CloseReason::kSetupFailed}}) {
+        Sim sim;
+        player_open(sim);
+        sim.session(kHostId, SessionState::kClosed, std::nullopt, reason);
+        CHECK(sim.count_fail() == 0);
+        CHECK(sim.lobby.in_lobby());
+        CHECK(sim.leaves == 1);
+        CHECK(sim.timers.empty());  // 펀치 지연 중에 끝나도 그 타이머가 남지 않는다
+        CHECK(sim.last_log("attempt.end")->fields[0].value == "closed");
+        // 늦은 전이는 무시한다
+        sim.session(kHostId, SessionState::kFailed, SessionFailure::kTunnelDropped);
+        CHECK(sim.count_fail() == 0);
+    }
+}
+
+TEST_CASE("lobby: events of other peers or after the lobby do nothing") {
+    Sim sim;
+    player_open(sim);
+    sim.session(99, SessionState::kFailed, SessionFailure::kTunnelDropped);
+    CHECK(sim.count_fail() == 0);
+    CHECK_FALSE(sim.lobby.in_lobby());
+    sim.command("leave");
+    sim.session(kHostId, SessionState::kClosed);
+    CHECK(sim.count_fail() == 0);
+    CHECK(sim.leaves == 1);
+}
+
+TEST_CASE("lobby: player attempts without a session record one line") {
+    // architecture.md 9장 "무엇이 시도 하나인가". peer 는 get_peers 응답에서 본 호스트, 못 봤으면 없다.
+    SECTION("join failure before any get_peers") {
+        Sim sim;
+        sim.command("join ABCDEF");
+        sim.reply(err<Issued>(Outcome::kDefinite, Failure::kNameTaken));
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].role == LobbyRole::kPlayer);
+        CHECK(sim.records[0].peer == std::nullopt);
+        CHECK(sim.records[0].result == "CONTROL_PLANE_EXCHANGE_FAILED");
+    }
+    SECTION("STUN failure") {
+        Sim sim;
+        sim.player_to_stun();
+        sim.stun_done(false, {});
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].result == "STUN_DISCOVERY_FAILED");
+    }
+    SECTION("polling deadline after an unready reply knows the host") {
+        Sim sim;
+        sim.player_polling();
+        sim.advance(kGetPeersPollMs);
+        sim.reply(peers({unready(kHostId)}));
+        sim.advance(kGetPeersDeadlineMs);
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].peer == kHostId);
+        CHECK(sim.records[0].result == "CONTROL_PLANE_EXCHANGE_FAILED");
+    }
+    SECTION("leave while polling is ABORTED") {
+        Sim sim;
+        sim.player_polling();
+        sim.command("leave");
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].result == "ABORTED");
+        CHECK(sim.leaves == 1);
+    }
+    SECTION("leave after the session opened writes nothing here") {
+        Sim sim;
+        player_open(sim);
+        sim.command("leave");
+        CHECK(sim.records.empty());
+        CHECK(sim.leaves == 1);
+    }
+}
+
+TEST_CASE("lobby: host attempts before the room is set record one line with no peer") {
+    SECTION("create_room failure") {
+        Sim sim;
+        sim.command("host");
+        sim.reply(err<Issued>(Outcome::kDefinite, Failure::kBadRequest));
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].role == LobbyRole::kHost);
+        CHECK(sim.records[0].peer == std::nullopt);
+    }
+    SECTION("leave during STUN") {
+        Sim sim;
+        sim.host_to_stun();
+        sim.command("leave");
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].result == "ABORTED");
+    }
+    SECTION("a set room that nobody joined writes nothing") {
+        Sim sim;
+        sim.host_settled();
+        sim.command("leave");
+        CHECK(sim.records.empty());
+        CHECK(sim.leaves == 1);
+    }
+}
+
+TEST_CASE("lobby: the host opens pairs only after the room is set and once per peer") {
+    // 머리의 경계 표 "호스트가 세션을 여는 응답". 방을 세운 응답에서 명부를 켠다.
+    Sim sim;
+    sim.host_to_stun();
+    sim.advance(kHostReportOpenMs);  // STUN 중의 host_report
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0)}));
+    CHECK(sim.opened.empty());
+    CHECK(sim.roster_sets.empty());
+    sim.stun_done(true, two_mappings());
+    sim.reply(registered());
+    REQUIRE(sim.roster_starts.size() == 1);
+    CHECK(sim.roster_starts[0].peer_id == kSelf);
+    CHECK(sim.roster_starts[0].virtual_ip == ip("10.100.0.2"));
+    CHECK(sim.roster_starts[0].name == "Alice");
+
+    sim.advance(kHostReportOpenMs);
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0), unready_named(22, "Carol")}));
+    REQUIRE(sim.opened.size() == 1);
+    CHECK(sim.opened[0].role == LobbyRole::kHost);
+    CHECK_FALSE(sim.opened[0].request.peer_is_host);
+    CHECK(sim.opened[0].request.peer_name == "Bob");
+    REQUIRE(sim.roster_sets.size() == 1);
+    CHECK(sim.roster_sets[0].size() == 2);
+    CHECK(sim.roster_sets[0][1].name == "Carol");
+
+    sim.advance(kHostReportOpenMs);
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0), ready_at(22, ip("10.100.0.4"), "Carol", 0)}));
+    REQUIRE(sim.opened.size() == 2);  // 21 은 다시 열지 않는다
+    CHECK(sim.opened[1].request.peer_id == 22);
+    CHECK(sim.roster_sets.size() == 2);
+}
+
+TEST_CASE("lobby: the host setup base is the first host_report that listed the player") {
+    Sim sim;
+    sim.host_settled();
+    sim.advance(kHostReportOpenMs);
+    const Millis first = sim.now;
+    sim.reply(report({unready_named(21, "Bob")}));
+    sim.advance(kHostReportOpenMs);
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0)}));
+    REQUIRE(sim.opened.size() == 1);
+    CHECK(sim.opened[0].setup_base_ms == first);
+}
+
+TEST_CASE("lobby: an ended host pair reports departed at once and stays in the room") {
+    // control_plane.md 4.6 "세션이 끝나면 다음 주기를 기다리지 않고 바로 한 번 부른다".
+    Sim sim;
+    host_open(sim, 21, "Bob");
+    REQUIRE_FALSE(sim.in_flight.has_value());
+    const auto reports = sim.count_sent(http::Op::kHostReport);
+    sim.session(21, SessionState::kFailed, SessionFailure::kHolePunchTimeout);
+    REQUIRE(sim.count_fail() == 1);
+    CHECK(sim.printed.back().rfind("FAIL HOLE_PUNCH_TIMEOUT Bob ", 0) == 0);
+    CHECK_FALSE(sim.lobby.in_lobby());
+    CHECK(sim.leaves == 0);
+    REQUIRE(sim.count_sent(http::Op::kHostReport) == reports + 1);
+    CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{21});
+    // 주기 타이머는 그 송신에서 다시 센다
+    CHECK(sim.timers.at(std::string(kHostReportTimer)) == sim.now + kHostReportOpenMs);
+    sim.reply(report({}));
+    CHECK(sim.lobby.departed().empty());
+}
+
+TEST_CASE("lobby: departed waits for a pending request and survives a failed report") {
+    Sim sim;
+    host_open(sim, 21, "Bob");
+    sim.advance(kHostReportOpenMs);
+    REQUIRE(sim.in_flight->op == http::Op::kHostReport);  // 주기 호출이 미결이다
+    const auto reports = sim.count_sent(http::Op::kHostReport);
+    sim.session(21, SessionState::kClosed);
+    CHECK(sim.count_sent(http::Op::kHostReport) == reports);  // 미결 응답 직후에 보낸다
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0)}));
+    REQUIRE(sim.count_sent(http::Op::kHostReport) == reports + 1);
+    CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{21});
+    CHECK(sim.opened.size() == 1);  // 끝난 쌍은 응답에 남아 있어도 다시 열지 않는다
+    // 실패하면 다음 호출에 다시 담는다
+    sim.reply(err<HostReport>(Outcome::kTransient, Failure::kUnavailable));
+    CHECK(sim.lobby.departed() == std::vector<std::uint32_t>{21});
+    sim.advance(kHostReportOpenMs);
+    CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{21});
+    sim.reply(report({}));
+    CHECK(sim.lobby.departed().empty());
+    sim.advance(kHostReportOpenMs);
+    CHECK(body_ids(sim.in_flight->body, "departed").empty());
+}
+
+TEST_CASE("lobby: one host pair failing leaves the other pair and its timer alone") {
+    Sim sim;
+    sim.host_settled();
+    sim.advance(kHostReportOpenMs);
+    PeerView late = ready_at(22, ip("10.100.0.4"), "Carol", 0);
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0), late}));
+    REQUIRE(sim.armed("control.punch.21"));
+    REQUIRE(sim.armed("control.punch.22"));
+    sim.session(21, SessionState::kClosed, std::nullopt, CloseReason::kUserCancel);
+    CHECK_FALSE(sim.armed("control.punch.21"));
+    CHECK(sim.armed("control.punch.22"));
+    CHECK(sim.lobby.active_pairs() == 1);
+}
+
+TEST_CASE("lobby: a room that ends on the server keeps live sessions until the last one ends") {
+    // control_plane.md 4.6 오류 표 첫 행, concurrency.md 7장 로비 "방이 서버에서 끝났고 남은 세션도".
+    Sim sim;
+    host_open(sim, 21, "Bob");
+    sim.advance(kHostReportOpenMs);
+    sim.reply(err<HostReport>(Outcome::kDefinite, Failure::kRoomExpired));
+    REQUIRE(sim.count_fail() == 1);
+    CHECK(sim.printed.back() == kCpefLine);
+    CHECK(sim.lobby.room_ended());
+    CHECK_FALSE(sim.lobby.in_lobby());
+    CHECK_FALSE(sim.lobby.host_reporting());
+    CHECK_FALSE(sim.armed(kHostReportTimer));
+    CHECK(sim.records.empty());  // 방이 끝난 것은 줄이 없다
+    sim.session(21, SessionState::kConnected);
+    const auto reports = sim.count_sent(http::Op::kHostReport);
+    sim.session(21, SessionState::kClosed);
+    CHECK(sim.count_sent(http::Op::kHostReport) == reports);  // 즉시 보고도 하지 않는다
+    CHECK(sim.lobby.in_lobby());
+    CHECK(sim.leaves == 1);
+    CHECK(sim.last_log("attempt.end")->fields[0].value == "room_ended");
+    CHECK(sim.count_fail() == 1);
+}
+
+TEST_CASE("lobby: a dropped host_report of a set room is handled like a room that ended") {
+    Sim sim;
+    host_open(sim, 21, "Bob");
+    sim.drop_next = true;
+    sim.advance(kHostReportOpenMs);
+    CHECK(sim.lobby.room_ended());
+    CHECK_FALSE(sim.lobby.in_lobby());
+    CHECK(sim.count_fail() == 1);
+}
+
+TEST_CASE("lobby: a session the tunnel could not open fails like CPEF for that pair") {
+    SECTION("player") {
+        Sim sim;
+        sim.fail_open.push_back(kHostId);
+        sim.player_polling();
+        sim.advance(kGetPeersPollMs);
+        sim.reply(peers({ready(kHostId, {cand("198.51.100.7", 5000)})}));
+        CHECK(sim.printed.back() == kCpefLine);
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].peer == kHostId);
+        CHECK(sim.records[0].result == "CONTROL_PLANE_EXCHANGE_FAILED");
+        CHECK(sim.lobby.in_lobby());
+        CHECK(sim.timers.empty());
+        const LogLine* failed = sim.last_log("session.failed");
+        REQUIRE(failed != nullptr);
+        CHECK(failed->fields[0].value == "7");
+    }
+    SECTION("host") {
+        Sim sim;
+        sim.fail_open.push_back(21);
+        sim.host_settled();
+        sim.advance(kHostReportOpenMs);
+        sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0)}));
+        CHECK(sim.printed.back() == kCpefLine);
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].role == LobbyRole::kHost);
+        CHECK(sim.records[0].peer == 21u);
+        CHECK_FALSE(sim.lobby.in_lobby());
+        REQUIRE(sim.in_flight.has_value());
+        CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{21});
+        CHECK_FALSE(sim.armed("control.punch.21"));
+    }
+}
+
+TEST_CASE("lobby: shutdown records ABORTED only for attempts without a session") {
+    struct Row {
+        Setup setup;
+        std::size_t records;
+    };
+    const Row rows[] = {
+        {Setup::kLobby, 0},          {Setup::kIssuing, 1},       {Setup::kStun, 1},
+        {Setup::kRegistering, 1},    {Setup::kPolling, 1},       {Setup::kPlayerSettled, 0},
+        {Setup::kHostSettled, 0},
+    };
+    for (const auto& row : rows) {
+        INFO("setup=" << static_cast<int>(row.setup));
+        Sim sim;
+        setup(sim, row.setup);
+        const auto submitted = sim.sent.size();
+        const auto leaves = sim.leaves;
+        sim.apply(sim.lobby.on_shutdown());
+        CHECK(sim.records.size() == row.records);
+        if (row.records == 1) {
+            CHECK(sim.records[0].result == "ABORTED");
+        }
+        CHECK(sim.sent.size() == submitted);
+        CHECK(sim.leaves == leaves);  // 세션은 [loop] 의 close_all 이 닫는다
+        CHECK(sim.lobby.in_lobby());
+    }
+}
+
+TEST_CASE("lobby: a pair that ends while a departed report is pending is reported next") {
+    // control_plane.md 4.6: 성공 응답이 빼는 것은 그 요청에 실었던 것뿐이다.
+    Sim sim;
+    sim.host_settled();
+    sim.advance(kHostReportOpenMs);
+    sim.reply(report({ready_at(21, ip("10.100.0.3"), "Bob", 0), ready_at(22, ip("10.100.0.4"), "Carol", 0)}));
+    sim.session(21, SessionState::kClosed);
+    REQUIRE(sim.in_flight.has_value());
+    CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{21});
+    sim.session(22, SessionState::kClosed);  // 21 의 보고가 미결이다
+    sim.reply(report({ready_at(22, ip("10.100.0.4"), "Carol", 0)}));
+    REQUIRE(sim.in_flight.has_value());
+    CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{22});
+    CHECK(sim.lobby.departed() == std::vector<std::uint32_t>{22});
 }

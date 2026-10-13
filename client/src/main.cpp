@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -105,8 +106,6 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
                sangtachi::platform::WaitHandle shutdown_event,
                sangtachi::control::ControlChannel& control,
                sangtachi::record::RecordWriter& records) {
-    // 기록 줄을 쓰는 자리(수립, 세션 종료, 종료 절차의 (3))는 랑데부·로비 연결과 같이 붙는다.
-    (void)records;
     // **이름 해석은 `[loop]` 시작 전에 목록 전체를 한 번 한다** (architecture.md 3.5
     // 기동 입력). getaddrinfo 는 동기 호출이라 `[loop]` 안에 두면 응답이 올 때까지 한
     // 바퀴가 멈춘다. 해석 실패와 중복 엔드포인트를 거르는 규칙은 그 절에 있고
@@ -134,6 +133,9 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
         };
         sangtachi::emit(sangtachi::LogLevel::Info, "socket.bind", fields);
     }
+
+    // 로컬 후보의 포트다. 6장 getsockname 의 값 하나를 모든 로컬 후보에 쓴다 (protocol.md 10.1).
+    const std::uint16_t local_port = opened.socket->local().port();
 
     sangtachi::LoopOptions options;
     options.peer = args.peer;
@@ -182,48 +184,8 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
         return kStartupFailure;
     }
 
-    // 로비와 그 행동 실행기 (control/runner.hpp). STUN 은 시도마다 새로 돈다
-    // (control_plane.md 8.4: 2번 DNS 와 3번 bind 만 프로세스에 한 번이다). 그래서 기동 시
-    // 여기서 STUN 을 돌리지 않는다. 해석한 서버 목록만 넘긴다.
-    sangtachi::control::RunnerDeps deps;
-    deps.host_header = std::move(*host_header);
-    deps.stun_servers = std::move(stun_servers);
-    deps.nonce = [] { return sangtachi::control::generate_client_nonce(); };
-    // 처음 표시 이름 (architecture.md 3.5 --name). 인자 검사가 Phase 4 이후 필수로 받아 둔 값이다.
-    deps.name = *args.name;
-    deps.submit = [&control](sangtachi::control::ControlRequest request) {
-        return control.submit(std::move(request));
-    };
-    deps.send = [&loop](const sangtachi::network::Endpoint& to,
-                        std::span<const std::byte> payload) {
-        // STUN 은 루프의 소켓으로 보낸다 (protocol.md 6장 소켓 소유권).
-        return loop.send_datagram(to, payload);
-    };
-    deps.print = [](std::string_view line) {
-        // architecture.md 3.5: 리다이렉트면 UTF-8 과 LF, 콘솔이면 유니코드 쓰기.
-        (void)sangtachi::platform::write_stdout_line(line);
-    };
-    deps.clock = [] { return now_ms(); };
-    // 받은 후보 위생의 자기 서브넷 행 (protocol.md 10.1). 집합은 루프가 소유한다 (concurrency.md 5장).
-    deps.own_subnets = [&loop]() -> const sangtachi::peer::OwnSubnets& { return loop.own_subnets(); };
-    sangtachi::control::ControlRunner runner(std::move(deps), loop.timers(), counters);
-
-    loop.set_lobby_command_handler([&runner](const sangtachi::control::LobbyCommand& command) {
-        runner.on_command(command);
-    });
-    loop.set_control_handler([&runner](sangtachi::control::ControlResponse response) {
-        runner.on_response(response);
-    });
-    loop.set_stun_handler([&runner](const sangtachi::network::Endpoint& from,
-                                    std::span<const std::byte> payload) {
-        runner.on_stun_datagram(from, payload);
-    });
-    loop.set_tick_handler([&runner](const sangtachi::TimerTick& tick) {
-        runner.on_timer(tick.name);
-    });
-
-    // 8장 수신 검증 파이프라인과 세션 표 (tunnel/tunnel.hpp). 세션을 만드는 랑데부 연결은 아직
-    // 없다(roadmap.md Phase 4 의 랑데부·로비 통합). 그때까지 터널 패킷은 drop_unknown_peer 다.
+    // 8장 수신 검증 파이프라인과 세션 표 (tunnel/tunnel.hpp). 세션은 로비가 랑데부(10.2)에서 연다.
+    // 실행기보다 먼저 만든다. 실행기가 이것을 가리킨다.
     //
     // 페이로드 훅은 제품 빌드에서 비워 둔다. 8.4 를 통과한 DATA 는 drop_no_sink 다 (concurrency.md
     // 3장). 시험 빌드는 그 칸에 `data.rx` 와 에코 응답기를 붙인다 (ADR 0023).
@@ -250,13 +212,83 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     tunnel.set_tx_observer(
         [](std::span<const std::byte> inner) { sangtachi::testbuild::emit_data_tx(inner); });
 #endif
-    loop.set_tunnel_handler([&tunnel](const sangtachi::network::Endpoint& from,
-                                      std::span<const std::byte> payload) {
+
+    // 로비와 그 행동 실행기 (control/runner.hpp). STUN 은 시도마다 새로 돈다
+    // (control_plane.md 8.4: 2번 DNS 와 3번 bind 만 프로세스에 한 번이다). 그래서 기동 시
+    // 여기서 STUN 을 돌리지 않는다. 해석한 서버 목록만 넘긴다.
+    sangtachi::control::RunnerDeps deps;
+    deps.host_header = std::move(*host_header);
+    deps.stun_servers = std::move(stun_servers);
+    deps.nonce = [] { return sangtachi::control::generate_client_nonce(); };
+    // 처음 표시 이름 (architecture.md 3.5 --name). 인자 검사가 Phase 4 이후 필수로 받아 둔 값이다.
+    deps.name = *args.name;
+    deps.submit = [&control](sangtachi::control::ControlRequest request) {
+        return control.submit(std::move(request));
+    };
+    deps.send = [&loop](const sangtachi::network::Endpoint& to,
+                        std::span<const std::byte> payload) {
+        // STUN 은 루프의 소켓으로 보낸다 (protocol.md 6장 소켓 소유권).
+        return loop.send_datagram(to, payload);
+    };
+    deps.print = [](std::string_view line) {
+        // architecture.md 3.5: 리다이렉트면 UTF-8 과 LF, 콘솔이면 유니코드 쓰기.
+        (void)sangtachi::platform::write_stdout_line(line);
+    };
+    deps.clock = [] { return now_ms(); };
+    // 받은 후보 위생의 자기 서브넷 행 (protocol.md 10.1). 집합은 루프가 소유한다 (concurrency.md 5장).
+    deps.own_subnets = [&loop]() -> const sangtachi::peer::OwnSubnets& { return loop.own_subnets(); };
+    // 로컬 후보 수집 (protocol.md 10.1). register_candidate 직전에 한 번 모으고 자기 서브넷 집합을 바꾼다.
+    deps.candidate_sources = sangtachi::peer::platform_candidate_sources();
+    deps.local_port = local_port;
+    deps.set_own_subnets = [&loop](sangtachi::peer::OwnSubnets subnets) {
+        loop.set_own_subnets(std::move(subnets));
+    };
+    deps.tunnel = &tunnel;
+    // 로컬 기록 파일 (architecture.md 9장). 줄은 실행기가 정하고 이 파일이 쓴다.
+    deps.records.establish = [&records](std::string_view role, std::optional<std::uint32_t> peer,
+                                        std::string_view result, std::optional<std::uint64_t> rtt_us,
+                                        std::optional<std::uint64_t> setup_ms) {
+        return records.establish(role, peer, result, rtt_us, setup_ms);
+    };
+    deps.records.end = [&records](std::uint64_t attempt, std::string_view role,
+                                  std::optional<std::uint32_t> peer, std::string_view result,
+                                  std::optional<std::uint64_t> rtt_us) {
+        records.end(attempt, role, peer, result, rtt_us);
+    };
+    sangtachi::control::ControlRunner runner(std::move(deps), loop.timers(), counters);
+
+    // 세션의 전이는 실행기가 베껴 두고, 터널 호출이 끝난 뒤 flush 가 처리한다 (control/runner.hpp).
+    tunnel.set_transition_handler([&runner](const sangtachi::peer::Session& session,
+                                            sangtachi::peer::SessionState from,
+                                            sangtachi::peer::SessionState to) {
+        runner.on_session_transition(session, from, to);
+    });
+
+    loop.set_lobby_command_handler([&runner](const sangtachi::control::LobbyCommand& command) {
+        runner.on_command(command);
+    });
+    loop.set_control_handler([&runner](sangtachi::control::ControlResponse response) {
+        runner.on_response(response);
+    });
+    loop.set_stun_handler([&runner](const sangtachi::network::Endpoint& from,
+                                    std::span<const std::byte> payload) {
+        runner.on_stun_datagram(from, payload);
+    });
+    loop.set_tick_handler([&runner](const sangtachi::TimerTick& tick) {
+        runner.on_timer(tick.name);
+    });
+
+    loop.set_tunnel_handler([&tunnel, &runner](const sangtachi::network::Endpoint& from,
+                                               std::span<const std::byte> payload) {
         tunnel.on_datagram(from, payload);
+        runner.flush();
     });
     loop.set_deadline_source(sangtachi::EventLoop::DeadlineSource{
         [&tunnel] { return tunnel.earliest_deadline(); },
-        [&tunnel](sangtachi::Millis now) { tunnel.run_timers(now); },
+        [&tunnel, &runner](sangtachi::Millis now) {
+            tunnel.run_timers(now);
+            runner.flush();
+        },
     });
     // 콘솔 `counters`: 프로세스 표 뒤에 남아 있는 세션마다 그 세션의 표 (architecture.md 9장).
     loop.set_counter_dump_handler([&tunnel] { tunnel.emit_session_counters(); });
@@ -285,8 +317,12 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.run();
     session->request_stop();
 
-    // concurrency.md 7장 종료의 (2). 5.6 이 정한 대상 세션마다 CLOSE 1회.
+    // concurrency.md 7장 종료의 (2)와 (3). 세션 없이 진행 중이던 시도의 기록 줄을 먼저 쓰고 시도를
+    // 끝낸다(요청을 더 내지 않는다). 그 뒤 5.6 이 정한 대상 세션마다 CLOSE 1회를 보내고, 그 전이가
+    // 세션의 기록 줄을 쓴다.
+    runner.shutdown();
     tunnel.close_all(now_ms());
+    runner.flush();
     // 같은 장의 (4) 가운데 세션 표 몫. 프로세스 표는 main 이 run_client 뒤에 낸다. 세션 표는
     // 터널과 함께 이 함수 끝에서 사라지므로 여기서 낸다.
     tunnel.emit_session_counters();
@@ -302,6 +338,7 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.set_counter_dump_handler(nullptr);
     loop.set_send_handler(nullptr);
     loop.set_work_source(nullptr);
+    tunnel.set_transition_handler(nullptr);
     return 0;
 }
 

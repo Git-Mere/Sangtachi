@@ -416,6 +416,7 @@ function Scenario-LeavePending {
 
 function Scenario-HostReportStop {
     # host_report 첫 행 오류 넷 (control_plane.md 4.6 오류 표). 각각 FAIL 한 번, 그 뒤 host_report 없음, 로비.
+    # 방을 세운 호스트이고 세션이 없으므로 바로 로비로 간다. 그 계기의 이름은 room_ended 다 (control/lobby.hpp).
     foreach ($code in @('room_expired', 'room_not_found', 'unauthorized', 'bad_request')) {
         Reset-Harness
         $c = Start-Client "hrs-$code"
@@ -437,7 +438,7 @@ function Scenario-HostReportStop {
         Start-Sleep -Milliseconds 7000
         Check "${code}: no host_report after the FAIL" ((H-Count $after (Req 'host_report')) -eq 0)
         Check "${code}: exactly one FAIL line" ((Get-Count $c.out $om '^FAIL ') -eq 1)
-        Check "${code}: back in the lobby" ((Get-Count $c.err $em 'attempt\.end reason=failed') -eq 1)
+        Check "${code}: back in the lobby" ((Get-Count $c.err $em 'attempt\.end reason=room_ended') -eq 1)
         $em = Get-Mark $c.err
         Send-Line $c 'leave'
         Check "${code}: leave now warns in_lobby" (Wait-Count $c.err $em '^WARN console\.rejected reason=in_lobby command=leave')

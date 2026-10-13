@@ -149,6 +149,18 @@ public:
         on_lobby_command_ = std::move(handler);
     }
 
+    // 콘솔 `send` 의 나머지를 넘길 곳 (roadmap.md Phase 4 콘솔 명령). 제품 경로는
+    // tunnel::DataSender::on_command 다. 비워 두면 `send` 는 unknown_command 다.
+    void set_send_handler(std::function<void(std::string_view rest)> handler) {
+        on_send_ = std::move(handler);
+    }
+
+    // 바퀴마다 나눠 하는 송신 (concurrency.md 3장 "콘솔이 만든 송신 잔량은 busy 에 포함한다").
+    // 타이머 다음에 많아야 kMaxDrain 개를 맡긴다. 참이면 남았으므로 다음 대기가 타임아웃 0 이다.
+    void set_work_source(std::function<bool(std::size_t budget)> source) {
+        work_ = std::move(source);
+    }
+
     // 터널 후보로 분류된 데이터그램을 넘길 곳 (protocol.md 8장 검증 파이프라인). 제품 경로는
     // tunnel::Tunnel::on_datagram 이다 (main.cpp). 비워 두면 아무것도 하지 않는다.
     void set_tunnel_handler(DatagramHandler handler) { on_tunnel_ = std::move(handler); }
@@ -259,6 +271,8 @@ private:
     std::function<void(const TimerTick&)> on_tick_;
     std::function<void(control::ControlResponse)> on_control_;
     std::function<void(const control::LobbyCommand&)> on_lobby_command_;
+    std::function<void(std::string_view)> on_send_;
+    std::function<bool(std::size_t)> work_;
     control::ControlChannel* control_ = nullptr;  // 소유하지 않는다
     peer::OwnSubnets own_subnets_;                // protocol.md 10.1. 첫 수집 전에는 비어 있다
 

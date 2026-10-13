@@ -47,7 +47,11 @@ add_executable(sangtachi_tests
     platform/wait_test.cpp
     tunnel/packet_test.cpp
     tunnel/replay_test.cpp
+    tunnel/data_sender_test.cpp
     tunnel/tunnel_test.cpp
+    testbuild/instrument_test.cpp
+    # 시험 빌드 장치는 core 에 없다. 단위 시험을 위해 여기서 컴파일한다 (ADR 0023)
+    ${PROJECT_SOURCE_DIR}/client/src/testbuild/instrument.cpp
 )
 
 target_link_libraries(sangtachi_tests
@@ -65,4 +69,8 @@ include(Catch)
 # 그 변이는 `FAIL` 이 아니라 무한 대기로 나타났다.
 #
 # 30초는 가장 느린 케이스(루프백 왕복과 100ms 잠)의 백 배가 넘는다.
-catch_discover_tests(sangtachi_tests PROPERTIES TIMEOUT 30)
+# `[slow]` 는 시간을 재는 시험이다(벽시계로 간격이나 상한을 본다). 다른 시험 프로세스와 CPU 를 다투면 재는 값이 그 다툼을 담는다.
+# 실측으로 겪었다. 시험이 늘자 -j 16 에서 부하 아래 타이머 시험의 최악 간격이 750ms 가 됐고
+# 혼자 돌리면 219ms 였다. 그래서 혼자 돈다.
+catch_discover_tests(sangtachi_tests TEST_SPEC "~[slow]" PROPERTIES TIMEOUT 30)
+catch_discover_tests(sangtachi_tests TEST_SPEC "[slow]" PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)

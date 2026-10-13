@@ -82,6 +82,8 @@
 | `tunnel/replay` | `sequence` 비교와 수용 창 (`protocol.md` 4.4, 4.5). `tunnel/tunnel` 이 쓴다 | 없음 |
 | `tunnel/tunnel` | 패킷 타입별 디스패치, 캡슐화/역캡슐화, 시퀀스 관리 | 없음 |
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
+| `tunnel/data_sender` | 콘솔 `send` 와 합성 내부 패킷, 바퀴마다 나눠 보내기 ([`roadmap.md`](roadmap.md) Phase 4 콘솔 명령) | 없음 |
+| `testbuild/instrument` | 시험 빌드 장치. `data.tx`, `data.rx`, 에코 응답기. 실행 파일은 시험 빌드에서만 컴파일한다 ([ADR 0023](decisions/0023-3차-h-i-착수-전-결정.md)) | 없음 |
 | `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
@@ -1040,7 +1042,8 @@ Sangtachi/
 |   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
-|   |   +-- tunnel/      packet, tunnel, router, replay
+|   |   +-- tunnel/      packet, tunnel, router, replay, data_sender
+|   |   +-- testbuild/   instrument (시험 빌드에서만)
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
 |   |   +-- ui/          main_window

@@ -25,13 +25,24 @@
 // | 폐기 목록의 개수 | 프로세스(터널)에 하나. 상한 `MAX_RETIRED_EPOCHS` | 4.3 이 "폐기 목록" 을 단수로 적었다 |
 // | 4.3 등록 표의 첫 행과 5.1 시도 nonce 폐기 | **다음 `create_session` 때** 등록한다. 그때 남아 있는 종료 세션의 고정 상대 epoch 와, 끝난 시도의 nonce 다 | 4.3 "우리가 `IDLE`에서 새 시도를 시작할 때", 3장 "항목은 우리가 새 시도를 시작할 때만 생긴다". 지워진 세션의 epoch 는 4.3 대로 등록할 값이 없다 |
 // | 같은 `peer_id` 의 활성 세션이 있는데 또 만든다 | 만들지 않고 널 | 8.5 "비어 있지 않으면 구현 결함" 과 같은 종류다 |
+// | 상대 가상 IP 가 라우팅 칸으로 갈 수 없다 | 만들지 않고 널. `10.100.0.1`~`.5` 밖이거나, 자신의 가상 IP 이거나, 그 칸에 활성 세션이 있다 | 8.5 "자신의 칸도 비어 있다", "비어 있지 않으면 구현 결함이다" |
+// | 8.5 검사 4번의 자신의 가상 IP | 마지막으로 만든 세션의 `local_virtual_ip`. 방을 떠나면 잊는다. 모르면 출발지가 맞을 수 없으므로 `tx_drop_bad_src` | 한 방에서 자신의 가상 IP 는 하나다(control_plane.md 4장 연산) |
+// | 송신 실패 | `sendto` 가 실패하면 `kSendFailed`. 학습 전이라 후보 전체로 나갈 때는 실패한 자리에서 멈춘다 | roadmap.md Phase 4 `send` "중간에 `sendto` 가 실패하면 거기서 멈춘다" |
+//
+// ## 송신 (8.5 송신 측 검증, 라우팅 표)
+//
+// `send_data` 가 내부 패킷 하나를 8.5 의 순서대로 본다. 1~5 의 폐기는 프로세스 표, 6 은 고른 세션의
+// 표다(세션을 고르기 전과 뒤, counters.hpp). 통과하면 송신 관찰 칸(시험 빌드의 `data.tx`)을 부르고 그
+// 세션이 `DATA` 로 캡슐화해 보낸다(10.4 목적지).
+//
+// 라우팅 표(tunnel/router)의 칸은 세션을 만들 때 채우고 세션이 종료 상태에 닿으면 **기록 줄과
+// 카운터보다 먼저** 비운다(8.5 순서 표). 종료 상태로 남긴 세션은 칸이 없다.
 //
 // ## 3차·4차의 자리
 //
 // - 세션을 실제로 만드는 랑데부(10.2)와 로비 연결은 4차 J 다. 그때까지 제품 경로에는 세션이
 //   없으므로 터널 패킷은 전부 `drop_unknown_peer` 로 끝난다. 그것이 맞다 (9.1)
-// - 종료 전이 때 라우팅 칸 비우기(8.5), 기록 줄(architecture.md 9장)은 `set_terminal_handler` 자리다
-// - 8.5 송신 측 검증, 라우팅 표, `send` 명령, 에코 응답기는 3차 H 다
+// - 종료 전이 때의 기록 줄(architecture.md 9장)은 `set_terminal_handler` 자리다
 
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
@@ -39,6 +50,7 @@
 #include "sangtachi/peer/session.hpp"
 #include "sangtachi/timer.hpp"
 #include "sangtachi/tunnel/packet.hpp"
+#include "sangtachi/tunnel/router.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -98,6 +110,13 @@ struct TunnelDeps {
     peer::DataSink data_sink;
 };
 
+// 8.5 의 결과. 폐기면 카운터는 이미 올렸다.
+enum class TxOutcome : std::uint8_t {
+    kSent,        // 통과했고 보냈다
+    kDropped,     // 8.5 에서 버렸다
+    kSendFailed,  // 통과했지만 sendto 가 실패했다. tx_err_send 는 세션이 올렸다
+};
+
 // 새 세션의 입력. epoch 와 nonce 는 터널이 뽑는다.
 struct NewSession {
     std::uint32_t local_peer_id = 0;
@@ -124,6 +143,15 @@ public:
     // 7장이 터널 후보로 분류한 데이터그램 하나. 위 머리 표의 순서다.
     void on_datagram(const network::Endpoint& from, std::span<const std::byte> datagram);
 
+    // 내부 패킷 하나를 8.5 대로 보고 보낸다 (위 머리 "송신").
+    TxOutcome send_data(std::span<const std::byte> inner);
+
+    // 8.5 라우팅 표의 두 단계 조회. 경로가 없으면 널.
+    [[nodiscard]] peer::Session* route(std::uint32_t virtual_ip) const noexcept;
+    // 라우팅 칸이 있는 세션 가운데 CONNECTED 인 것들의 상대 가상 IP. 칸 순서다.
+    [[nodiscard]] std::vector<std::uint32_t> connected_peers() const;
+    [[nodiscard]] std::optional<std::uint32_t> local_virtual_ip() const noexcept { return local_vip_; }
+
     // 세션 타이머와 종료 세션 보존 마감 가운데 가장 이른 것 (concurrency.md 4장).
     [[nodiscard]] std::optional<Millis> earliest_deadline() const noexcept;
 
@@ -146,7 +174,12 @@ public:
     [[nodiscard]] peer::RetiredEpochs& retired_epochs() noexcept { return retired_; }
     [[nodiscard]] const peer::RetiredNonces& retired_nonces() const noexcept { return retired_nonces_; }
 
-    // 세션이 종료 상태에 닿을 때마다 (8.5 라우팅 칸 비우기, 기록 줄의 자리. 3차 H, 4차 J).
+    // 8.5 를 통과해 캡슐화하기 직전의 내부 패킷마다 (시험 빌드의 `data.tx`). 제품 빌드는 비워 둔다.
+    void set_tx_observer(std::function<void(std::span<const std::byte>)> observer) {
+        on_tx_ = std::move(observer);
+    }
+
+    // 세션이 종료 상태에 닿을 때마다. 라우팅 칸을 비운 뒤에 부른다 (기록 줄의 자리. 4차 J).
     void set_terminal_handler(std::function<void(const peer::Session&)> handler) {
         on_terminal_ = std::move(handler);
     }
@@ -170,7 +203,10 @@ private:
     peer::RetiredEpochs retired_;              // 4.3. 프로세스에 하나
     peer::RetiredNonces retired_nonces_;       // 5.1
     std::vector<peer::Nonce> ended_nonces_;    // 지워진 세션의 nonce. 다음 create_session 때 등록한다
+    Router routes_;                            // 8.5 (tunnel/router)
+    std::optional<std::uint32_t> local_vip_;   // 8.5 검사 4번 (위 머리 표)
     std::function<void(const peer::Session&)> on_terminal_;
+    std::function<void(std::span<const std::byte>)> on_tx_;
 };
 
 }  // namespace sangtachi::tunnel

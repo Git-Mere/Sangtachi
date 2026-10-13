@@ -124,6 +124,12 @@ peer::Session* Tunnel::create_session(const NewSession& request) {
     if (existing != sessions_.end() && existing->second.session->active()) {
         return nullptr;  // 같은 상대의 활성 세션 위에 새 시도를 겹치지 않는다
     }
+    // 8.5: 칸이 있어야 하고 비어 있어야 한다. 자신의 칸은 늘 비어 있다.
+    if (!route_index(request.peer_virtual_ip) ||
+        request.peer_virtual_ip == request.local_virtual_ip ||
+        routes_.lookup(request.peer_virtual_ip) != nullptr) {
+        return nullptr;
+    }
 
     // 새 시도의 시작이다. 4.3 등록 표 첫 행과 5.1 시도 nonce 폐기를 여기서 한다 (머리 표).
     for (auto& [id, entry] : sessions_) {
@@ -185,6 +191,8 @@ peer::Session* Tunnel::create_session(const NewSession& request) {
     entry.session = std::make_unique<peer::Session>(std::move(config), std::move(io), t);
     peer::Session* raw = entry.session.get();
     sessions_[request.peer_id] = std::move(entry);
+    (void)routes_.assign(request.peer_virtual_ip, raw);  // 위에서 비어 있음을 봤다
+    local_vip_ = request.local_virtual_ip;
     return raw;
 }
 
@@ -193,7 +201,8 @@ void Tunnel::on_transition(const peer::Session& session, peer::SessionState /*fr
     if (!peer::is_terminal(to)) {
         return;
     }
-    // 8.5: 라우팅 칸을 먼저 비운다. 그 처리기가 이 자리다. 기록 줄과 카운터는 그 뒤다.
+    // 8.5: 라우팅 칸을 먼저 비운다. 기록 줄과 카운터는 그 뒤다.
+    routes_.release(&session);
     if (on_terminal_) {
         on_terminal_(session);
     }
@@ -318,6 +327,53 @@ void Tunnel::leave_room(Millis now) {
     while (!sessions_.empty()) {
         erase(sessions_.begin());
     }
+    local_vip_.reset();
+}
+
+peer::Session* Tunnel::route(std::uint32_t virtual_ip) const noexcept {
+    return routes_.lookup(virtual_ip);
+}
+
+std::vector<std::uint32_t> Tunnel::connected_peers() const {
+    std::vector<std::uint32_t> out;
+    for (const peer::Session* s : routes_.slots()) {
+        if (s != nullptr && s->state() == peer::SessionState::kConnected) {
+            out.push_back(s->peer_virtual_ip());
+        }
+    }
+    return out;
+}
+
+TxOutcome Tunnel::send_data(std::span<const std::byte> inner) {
+    // 8.5 의 표 순서. 길이가 맨 앞이다. 출발지와 목적지는 오프셋 12~20 에 있다.
+    auto drop = [this](Counter c) {
+        counters_.increment(c);
+        return TxOutcome::kDropped;
+    };
+    if (inner.size() < 20) {
+        return drop(Counter::TxDropShort);
+    }
+    if ((std::to_integer<std::uint8_t>(inner[0]) >> 4) != 4) {
+        return drop(Counter::TxDropNotIpv4);
+    }
+    if (inner.size() > protocol::kMaxInner) {
+        return drop(Counter::TxDropOversize);
+    }
+    if (!local_vip_ || be32_at(inner, 12) != *local_vip_) {
+        return drop(Counter::TxDropBadSrc);
+    }
+    peer::Session* session = route(be32_at(inner, 16));
+    if (session == nullptr) {
+        return drop(Counter::TxDropNoRoute);  // 세션을 고르지 못했다. 전역이다
+    }
+    if (session->state() != peer::SessionState::kConnected) {
+        session->counters().increment(Counter::TxDropNotConnected);  // 고른 세션의 표
+        return TxOutcome::kDropped;
+    }
+    if (on_tx_) {
+        on_tx_(inner);  // 캡슐화 직전 (roadmap.md Phase 4 M-5 의 송신 측 비교 지점)
+    }
+    return session->send_data(inner) ? TxOutcome::kSent : TxOutcome::kSendFailed;
 }
 
 }  // namespace sangtachi::tunnel

@@ -23,8 +23,10 @@ target_sources(sangtachi_core PRIVATE
     peer/candidates.cpp
     peer/epoch.cpp
     peer/session.cpp
+    tunnel/data_sender.cpp
     tunnel/packet.cpp
     tunnel/replay.cpp
+    tunnel/router.cpp
     tunnel/tunnel.cpp
 )
 

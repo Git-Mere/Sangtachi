@@ -781,6 +781,29 @@ TEST_CASE("session: without a learned endpoint KEEPALIVE and PING go to every ca
     REQUIRE(f.io.sent.empty());
 }
 
+TEST_CASE("session: DATA goes to every candidate before learning and stops at a failed send",
+          "[peer][session]") {
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 0, kOutside), kT0).accepted());
+    REQUIRE(f.rx(hello_ack(kPeerEpoch, 1, kOutside), kT0).accepted());
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE_FALSE(f.session.peer_endpoint().has_value());
+    const auto inner = inner_ipv4(kLocalVip, kPeerVip);
+    f.io.sent.clear();
+    REQUIRE(f.session.send_data(inner));
+    REQUIRE(f.io.sent.size() == 2);
+    REQUIRE(f.io.sent[0].to == kCandA);
+    REQUIRE(f.io.sent[1].to == kCandB);
+    REQUIRE(f.io.sent[0].payload == inner);
+    f.io.sent.clear();
+    f.io.send_ok = false;
+    REQUIRE_FALSE(f.session.send_data(inner));
+    REQUIRE(f.io.sent.size() == 1);  // 첫 후보에서 멈췄다
+    REQUIRE(f.count(Counter::TxErrSend) == 1);
+}
+
+
 // ---------------------------------------------------------------- 5.7 ROSTER 수신
 
 TEST_CASE("session: ROSTER records the generation and rejects stale ones", "[peer][session]") {

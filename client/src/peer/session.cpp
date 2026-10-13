@@ -189,6 +189,20 @@ void Session::send_to_peer(PacketType type, std::span<const std::byte> payload) 
     }
 }
 
+bool Session::send_data(std::span<const std::byte> inner) {
+    // 10.4 목적지. 후보 전체로 나갈 때는 sendto 가 실패한 자리에서 멈춘다. roadmap.md Phase 4 `send`
+    // "중간에 sendto 가 실패하면 거기서 멈춘다". KEEPALIVE·PING 은 남은 후보로 계속 보낸다.
+    if (peer_endpoint_) {
+        return send_packet(PacketType::kData, inner, *peer_endpoint_);
+    }
+    for (const auto& c : config_.candidates) {
+        if (!send_packet(PacketType::kData, inner, c)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void Session::send_hello_round() {
     // 10.3, 9.5 9번: 후보 전체. 학습 여부와 무관하다. nonce 는 시도당 하나다 (5.1).
     const auto payload =

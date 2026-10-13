@@ -1,5 +1,7 @@
 #include "sangtachi/tunnel/tunnel.hpp"
 
+#include "sangtachi/tunnel/data_sender.hpp"
+
 #include "../log_capture.hpp"
 #include "../session_fixture.hpp"
 
@@ -40,6 +42,7 @@ struct TunnelFixture {
     Counters counters;
     std::vector<SentPacket> sent;
     Millis now = kT0;
+    bool send_ok = true;
     std::uint8_t next_random = 1;
     bool random_ok = true;
     std::size_t random_bytes_left = static_cast<std::size_t>(-1);  // 이만큼 내준 뒤 실패한다
@@ -62,7 +65,7 @@ struct TunnelFixture {
             p.header = check.header;
             p.payload.assign(check.payload.begin(), check.payload.end());
             sent.push_back(std::move(p));
-            return true;
+            return send_ok;
         };
         d.clock = [this] { return now; };
         d.rtt_clock_us = [] { return std::uint64_t{0}; };
@@ -86,7 +89,13 @@ struct TunnelFixture {
         return d;
     }
 
-    peer::Session* create(std::uint32_t peer_id = kPeerId, std::uint32_t peer_vip = kPeerVip) {
+    // 상대마다 다른 라우팅 칸 (8.5). 자신은 10.100.0.2, kPeerId 는 10.100.0.1, 나머지는 .3~.5 다.
+    static std::uint32_t vip_of(std::uint32_t peer_id) {
+        return peer_id == kPeerId ? kPeerVip : 0x0A640003u + peer_id % 3;
+    }
+
+    peer::Session* create(std::uint32_t peer_id = kPeerId) { return create(peer_id, vip_of(peer_id)); }
+    peer::Session* create(std::uint32_t peer_id, std::uint32_t peer_vip) {
         tunnel::NewSession r;
         r.local_peer_id = kLocalPeerId;
         r.local_virtual_ip = kLocalVip;
@@ -108,10 +117,10 @@ struct TunnelFixture {
         peer::Session* s = create(peer_id);
         REQUIRE(s != nullptr);
         s->start_punch(now);
-        Rx h = hello(epoch, 0);
+        Rx h = hello(epoch, 0, kCandA, vip_of(peer_id));
         h.header.peer_id = peer_id;
         feed(h);
-        Rx a = hello_ack(epoch, 1, kCandA, kPeerVip, s->attempt_nonce());
+        Rx a = hello_ack(epoch, 1, kCandA, vip_of(peer_id), s->attempt_nonce());
         a.header.peer_id = peer_id;
         feed(a);
         REQUIRE(s->state() == SessionState::kConnected);
@@ -783,6 +792,361 @@ TEST_CASE("tunnel: a malformed peer name is logged as a dash", "[tunnel][counter
     REQUIRE(s->counter_peer().peer_name == "-");
 }
 
+// ---------------------------------------------------------------- 8.5 라우팅 표와 송신 측 검증
+
+namespace {
+
+constexpr std::uint32_t kOtherPeer = 0x60000000u;  // vip_of: 10.100.0.3
+
+std::vector<std::byte> inner_to(std::uint32_t dst, std::uint32_t src = kLocalVip) {
+    return tunnel::make_synthetic(100, src, dst, 0, 0);
+}
+
+std::size_t data_count(const TunnelFixture& f) {
+    std::size_t n = 0;
+    for (const auto& p : f.sent) {
+        n += p.type() == PacketType::kData ? 1 : 0;
+    }
+    return n;
+}
+
+}  // namespace
+
+TEST_CASE("tunnel: the 8.5 routing case table", "[tunnel][route]") {
+    TunnelFixture f;
+    peer::Session* host = f.connect();  // 10.100.0.1
+    REQUIRE(f.tunnel.route(kPeerVip) == host);
+    for (const std::uint32_t vip : {0x0A640003u, kLocalVip, 0x0A640000u, 0x0A640006u, 0x0A6400FFu,
+                                    0x08080808u, 0xE0000001u, 0xFFFFFFFFu}) {
+        INFO("vip=" << vip);
+        REQUIRE(f.tunnel.route(vip) == nullptr);
+        REQUIRE(f.tunnel.send_data(inner_to(vip)) == tunnel::TxOutcome::kDropped);
+    }
+    REQUIRE(f.count(Counter::TxDropNoRoute) == 8);
+    REQUIRE(f.scount(Counter::TxDropNotConnected) == 0);
+}
+
+TEST_CASE("tunnel: a session is created only into an empty slot of its own", "[tunnel][route]") {
+    TunnelFixture f;
+    REQUIRE(f.create() != nullptr);
+    REQUIRE(f.create(kOtherPeer, kPeerVip) == nullptr);      // 활성 세션이 든 칸
+    REQUIRE(f.create(kOtherPeer, kLocalVip) == nullptr);     // 자신의 칸
+    REQUIRE(f.create(kOtherPeer, 0x0A640006u) == nullptr);   // 1단계 밖
+    REQUIRE(f.create(kOtherPeer, 0x0A640000u) == nullptr);   // 네트워크 주소. 인덱스 0 칸은 영구히 빈다
+    REQUIRE(f.create(kOtherPeer, 0x08080808u) == nullptr);
+    REQUIRE(f.create(kOtherPeer) != nullptr);                // 10.100.0.3
+}
+
+TEST_CASE("tunnel: a terminal session empties its slot before the terminal handler",
+          "[tunnel][route]") {
+    TunnelFixture f;
+    peer::Session* s = f.connect();
+    bool slot_was_empty = false;
+    f.tunnel.set_terminal_handler(
+        [&](const peer::Session&) { slot_was_empty = f.tunnel.route(kPeerVip) == nullptr; });
+    s->close_by_user(f.now);
+    REQUIRE(slot_was_empty);
+    // 회수된 가상 IP 를 받은 새 피어는 그 칸을 다시 쓴다. 종료 세션은 칸이 없다
+    peer::Session* fresh = f.create(kOtherPeer, kPeerVip);
+    REQUIRE(fresh != nullptr);
+    REQUIRE(f.tunnel.route(kPeerVip) == fresh);
+}
+
+TEST_CASE("tunnel: 8.5 checks run in order and count in the right table", "[tunnel][route]") {
+    SECTION("before any session the own address is unknown") {
+        TunnelFixture f;
+        REQUIRE(f.tunnel.send_data(inner_to(kPeerVip)) == tunnel::TxOutcome::kDropped);
+        REQUIRE(f.count(Counter::TxDropBadSrc) == 1);
+    }
+    TunnelFixture f;
+    f.connect();
+    peer::Session* other = f.create(kOtherPeer);  // PUNCHING
+    REQUIRE(other != nullptr);
+    f.sent.clear();
+    std::vector<std::byte> short_packet(19, std::byte{0x45});
+    REQUIRE(f.tunnel.send_data(short_packet) == tunnel::TxOutcome::kDropped);
+    auto v6 = inner_to(kPeerVip);
+    v6[0] = std::byte{0x65};
+    REQUIRE(f.tunnel.send_data(v6) == tunnel::TxOutcome::kDropped);
+    auto oversize = tunnel::make_synthetic(protocol::kMaxInner, kLocalVip, kPeerVip, 0, 0);
+    oversize.push_back(std::byte{0xA5});
+    REQUIRE(f.tunnel.send_data(oversize) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.tunnel.send_data(inner_to(kPeerVip, 0x0A640004u)) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.tunnel.send_data(inner_to(0x0A640005u)) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.tunnel.send_data(inner_to(TunnelFixture::vip_of(kOtherPeer))) ==
+            tunnel::TxOutcome::kDropped);
+    REQUIRE(f.count(Counter::TxDropShort) == 1);
+    REQUIRE(f.count(Counter::TxDropNotIpv4) == 1);
+    REQUIRE(f.count(Counter::TxDropOversize) == 1);
+    REQUIRE(f.count(Counter::TxDropBadSrc) == 1);
+    REQUIRE(f.count(Counter::TxDropNoRoute) == 1);
+    // 결함이 겹치면 앞의 검사가 센다. 순서가 바뀌면 다른 카운터가 오른다
+    std::vector<std::byte> short_v6(19, std::byte{0x65});
+    REQUIRE(f.tunnel.send_data(short_v6) == tunnel::TxOutcome::kDropped);           // 1 > 2
+    auto oversize_v6 = oversize;
+    oversize_v6[0] = std::byte{0x65};
+    REQUIRE(f.tunnel.send_data(oversize_v6) == tunnel::TxOutcome::kDropped);        // 2 > 3
+    auto oversize_bad_src = tunnel::make_synthetic(protocol::kMaxInner, 0x0A640004u, 0x0A640005u, 0, 0);
+    oversize_bad_src.push_back(std::byte{0xA5});
+    REQUIRE(f.tunnel.send_data(oversize_bad_src) == tunnel::TxOutcome::kDropped);   // 3 > 4, 5
+    REQUIRE(f.tunnel.send_data(inner_to(0x0A640005u, 0x0A640004u)) ==
+            tunnel::TxOutcome::kDropped);                                            // 4 > 5
+    REQUIRE(f.count(Counter::TxDropShort) == 2);
+    REQUIRE(f.count(Counter::TxDropNotIpv4) == 2);
+    REQUIRE(f.count(Counter::TxDropOversize) == 2);
+    REQUIRE(f.count(Counter::TxDropBadSrc) == 2);
+    REQUIRE(f.count(Counter::TxDropNoRoute) == 1);
+    // 세션을 고른 뒤의 폐기는 그 세션의 표다
+    REQUIRE(f.count(Counter::TxDropNotConnected) == 0);
+    REQUIRE(other->counters().value(Counter::TxDropNotConnected) == 1);
+    REQUIRE(f.sent.empty());
+    // 통과하면 그 바이트열 그대로 DATA 로 나간다
+    const auto inner = inner_to(kPeerVip);
+    REQUIRE(f.tunnel.send_data(inner) == tunnel::TxOutcome::kSent);
+    REQUIRE(f.sent.size() == 1);
+    REQUIRE(f.sent[0].type() == PacketType::kData);
+    REQUIRE(f.sent[0].to == kCandA);  // 학습한 peer_endpoint (10.4)
+    REQUIRE(f.sent[0].payload == inner);
+    f.send_ok = false;
+    REQUIRE(f.tunnel.send_data(inner) == tunnel::TxOutcome::kSendFailed);
+    REQUIRE(f.scount(Counter::TxErrSend) == 1);
+}
+
+// ---------------------------------------------------------------- 콘솔 send (roadmap.md Phase 4)
+
+namespace {
+
+struct SenderFixture {
+    TunnelFixture f;
+    tunnel::DataSender sender{f.tunnel, [this] { return f.now; }};
+};
+
+std::uint32_t number_of(const SentPacket& p) {
+    std::uint32_t v = 0;
+    for (std::size_t i = 28; i < 32; ++i) {
+        v = (v << 8) | std::to_integer<std::uint32_t>(p.payload[i]);
+    }
+    return v;
+}
+
+}  // namespace
+
+TEST_CASE("send: n packets to the only CONNECTED session, a budget per round", "[tunnel][send]") {
+    SenderFixture s;
+    s.f.connect();
+    s.f.sent.clear();
+    std::size_t observed = 0;
+    s.f.tunnel.set_tx_observer([&](std::span<const std::byte>) { ++observed; });
+    LogCapture logs;
+    s.sender.on_command(" 100");
+    REQUIRE(s.sender.busy());
+    REQUIRE(s.sender.pump(64));
+    REQUIRE(data_count(s.f) == 64);
+    REQUIRE_FALSE(s.sender.pump(64));
+    REQUIRE(data_count(s.f) == 100);
+    REQUIRE(observed == 100);
+    for (std::size_t i = 0; i < s.f.sent.size(); ++i) {
+        REQUIRE(number_of(s.f.sent[i]) == i);  // 0 부터 세는 패킷 번호
+        REQUIRE(s.f.sent[i].payload.size() == 100);
+    }
+    const auto done = logs.with_event("console.send");
+    REQUIRE(done.size() == 1);
+    REQUIRE(done[0].find(" sent=100 requested=100 ") != std::string::npos);
+}
+
+TEST_CASE("send: the command stage rejects and sends nothing", "[tunnel][send]") {
+    // 거른 명령은 작업을 만들지 않는다. 앞 작업이 도는 경우만 busy 가 남는다.
+    auto rejected = [](SenderFixture& s, std::string_view rest, std::string_view reason,
+                       bool busy_before = false) {
+        LogCapture logs;
+        s.sender.on_command(rest);
+        const auto lines = logs.with_event("console.rejected");
+        REQUIRE(lines.size() == 1);
+        REQUIRE(lines[0].find("reason=" + std::string(reason)) != std::string::npos);
+        REQUIRE(s.sender.busy() == busy_before);
+        if (!busy_before) {
+            s.f.sent.clear();
+            REQUIRE_FALSE(s.sender.pump(64));
+            REQUIRE(s.f.sent.empty());
+        }
+    };
+    SECTION("no CONNECTED session") {
+        SenderFixture s;
+        rejected(s, " 5", "not_connected");
+    }
+    SECTION("the chosen session is not CONNECTED") {
+        SenderFixture s;
+        s.f.connect();
+        REQUIRE(s.f.create(kOtherPeer) != nullptr);
+        rejected(s, " 5 10.100.0.3", "not_connected");
+    }
+    SECTION("a session that is not CONNECTED does not count as a destination") {
+        SenderFixture s;
+        s.f.connect();
+        REQUIRE(s.f.create(kOtherPeer) != nullptr);  // PUNCHING
+        s.f.sent.clear();
+        s.sender.on_command(" 2");
+        REQUIRE_FALSE(s.sender.pump(64));
+        REQUIRE(data_count(s.f) == 2);  // 하나뿐인 CONNECTED 세션으로 갔다
+    }
+    SECTION("two CONNECTED sessions and no destination") {
+        SenderFixture s;
+        s.f.connect();
+        s.f.connect(kOtherPeer);
+        rejected(s, " 5", "ambiguous_destination");
+    }
+    SECTION("bad arguments") {
+        SenderFixture s;
+        s.f.connect();
+        rejected(s, " 0", "bad_send_args");
+    }
+    SECTION("a job is still running") {
+        SenderFixture s;
+        s.f.connect();
+        s.sender.on_command(" 5");
+        rejected(s, " 5", "send_busy", true);
+        REQUIRE_FALSE(s.sender.pump(64));
+        REQUIRE(data_count(s.f) == 5);  // 앞 작업의 다섯뿐이다
+    }
+}
+
+TEST_CASE("send: with a destination it picks that session, an empty slot is 8.5 no_route",
+          "[tunnel][send]") {
+    SenderFixture s;
+    s.f.connect();
+    s.f.connect(kOtherPeer);  // 10.100.0.3
+    s.f.sent.clear();
+    s.sender.on_command(" 3 10.100.0.3");
+    REQUIRE_FALSE(s.sender.pump(64));
+    REQUIRE(data_count(s.f) == 3);
+    const peer::Session* other = s.f.tunnel.find(kOtherPeer);
+    for (const auto& p : s.f.sent) {
+        REQUIRE(p.header.session_epoch == other->local_epoch());  // 그 세션이 캡슐화했다
+        REQUIRE(p.payload[19] == std::byte{3});                    // 목적지 10.100.0.3
+    }
+    REQUIRE(s.f.scount(Counter::TxDropNoRoute, kOtherPeer) == 0);
+    LogCapture logs;
+    s.sender.on_command(" 2 10.100.0.4");
+    REQUIRE_FALSE(s.sender.pump(64));
+    REQUIRE(data_count(s.f) == 3);
+    REQUIRE(s.f.count(Counter::TxDropNoRoute) == 2);
+    REQUIRE(logs.with_event("console.send")[0].find(" sent=0 requested=2 ") != std::string::npos);
+}
+
+TEST_CASE("send: a failing sendto stops the job and reports the count", "[tunnel][send]") {
+    SenderFixture s;
+    s.f.connect();
+    s.f.sent.clear();
+    LogCapture logs;
+    s.sender.on_command(" 10");
+    REQUIRE(s.sender.pump(3));
+    s.f.send_ok = false;
+    REQUIRE_FALSE(s.sender.pump(64));
+    REQUIRE(data_count(s.f) == 4);  // 넷째가 실패했다
+    const auto done = logs.with_event("console.send");
+    REQUIRE(done.size() == 1);
+    REQUIRE(done[0].rfind("WARN ", 0) == 0);
+    REQUIRE(done[0].find(" sent=3 requested=10 reason=send_failed") != std::string::npos);
+}
+
+TEST_CASE("send: queued echoes go first and share the budget", "[tunnel][send]") {
+    SenderFixture s;
+    s.f.connect();
+    s.f.sent.clear();
+    s.sender.on_command(" 2");
+    auto echo = tunnel::make_synthetic(100, kLocalVip, kPeerVip, 9, 0);
+    echo[40] = std::byte{0x5A};
+    s.sender.enqueue(echo);
+    REQUIRE(s.sender.pump(2));
+    REQUIRE(s.f.sent.size() == 2);
+    REQUIRE(s.f.sent[0].payload == echo);
+    REQUIRE(number_of(s.f.sent[1]) == 0);
+    REQUIRE_FALSE(s.sender.pump(2));
+}
+
+TEST_CASE("send: the size and the clock of the command reach the bytes", "[tunnel][send]") {
+    SenderFixture s;
+    s.f.connect();
+    s.f.sent.clear();
+    s.sender.on_command(" 2 576");
+    REQUIRE(s.sender.pump(1));
+    s.f.now += 7;
+    REQUIRE_FALSE(s.sender.pump(1));
+    REQUIRE(s.f.sent.size() == 2);
+    for (std::size_t i = 0; i < 2; ++i) {
+        const auto& p = s.f.sent[i].payload;
+        REQUIRE(p.size() == 576);
+        std::uint64_t t = 0;
+        for (std::size_t k = 32; k < 40; ++k) {
+            t = (t << 8) | std::to_integer<std::uint64_t>(p[k]);
+        }
+        REQUIRE(t == kT0 + 7 * i);  // 패킷마다 그 순간의 단조 시계
+    }
+}
+
+TEST_CASE("send: echoes keep their order, a failed one does not stop the rest", "[tunnel][send]") {
+    SenderFixture s;
+    s.f.connect();
+    s.f.sent.clear();
+    auto echo = [](std::uint32_t n) {
+        auto e = tunnel::make_synthetic(100, kLocalVip, kPeerVip, n, 0);
+        e[40] = std::byte{0x5A};
+        tunnel::fill_ipv4_checksum(e);
+        return e;
+    };
+    s.sender.enqueue(echo(1));
+    s.sender.enqueue(echo(2));
+    s.sender.enqueue(echo(3));
+    REQUIRE(s.sender.busy());  // 작업 없이 큐만 있어도 남은 일이다
+    s.f.send_ok = false;
+    REQUIRE(s.sender.pump(1));
+    s.f.send_ok = true;
+    REQUIRE_FALSE(s.sender.pump(64));
+    REQUIRE(s.f.sent.size() == 3);
+    REQUIRE(number_of(s.f.sent[0]) == 1);  // 실패한 첫째도 한 번 나갔다
+    REQUIRE(number_of(s.f.sent[1]) == 2);
+    REQUIRE(number_of(s.f.sent[2]) == 3);
+}
+
+TEST_CASE("tunnel: the tx observer sees a packet after 8.5 and before the send", "[tunnel][send]") {
+    TunnelFixture f;
+    f.connect();
+    f.sent.clear();
+    std::vector<std::size_t> sent_at_observe;
+    f.tunnel.set_tx_observer([&](std::span<const std::byte>) { sent_at_observe.push_back(f.sent.size()); });
+    REQUIRE(f.tunnel.send_data(inner_to(0x0A640005u)) == tunnel::TxOutcome::kDropped);  // 8.5 에서 버림
+    REQUIRE(sent_at_observe.empty());
+    f.send_ok = false;
+    REQUIRE(f.tunnel.send_data(inner_to(kPeerVip)) == tunnel::TxOutcome::kSendFailed);
+    REQUIRE(sent_at_observe == std::vector<std::size_t>{0});  // 송신 전에 불렸다. 실패해도 남는다
+}
+
+TEST_CASE("tunnel: leaving the room forgets the own address", "[tunnel][route]") {
+    TunnelFixture f;
+    f.connect();
+    REQUIRE(f.tunnel.local_virtual_ip() == kLocalVip);
+    f.tunnel.leave_room(f.now);
+    REQUIRE_FALSE(f.tunnel.local_virtual_ip().has_value());
+    REQUIRE(f.tunnel.send_data(inner_to(kPeerVip)) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.count(Counter::TxDropBadSrc) == 1);
+}
+
+TEST_CASE("router: assign refuses a taken slot and release empties only its own",
+          "[tunnel][route]") {
+    tunnel::Router r;
+    auto* a = reinterpret_cast<peer::Session*>(std::uintptr_t{0x1000});
+    auto* b = reinterpret_cast<peer::Session*>(std::uintptr_t{0x2000});
+    REQUIRE(r.assign(0x0A640001u, a));
+    REQUIRE_FALSE(r.assign(0x0A640001u, b));
+    REQUIRE(r.lookup(0x0A640001u) == a);
+    REQUIRE_FALSE(r.assign(0x0A640000u, b));
+    REQUIRE_FALSE(r.assign(0x0A640006u, b));
+    REQUIRE(r.assign(0x0A640005u, b));
+    r.release(a);
+    REQUIRE(r.lookup(0x0A640001u) == nullptr);
+    REQUIRE(r.lookup(0x0A640005u) == b);
+}
+
 // ---------------------------------------------------------------- 폐기 목록은 프로세스에 하나 (4.3)
 
 TEST_CASE("tunnel: renegotiations of different sessions share one retired list and its cap",
@@ -794,8 +1158,10 @@ TEST_CASE("tunnel: renegotiations of different sessions share one retired list a
     // a 와 b 가 8번씩 재협상한다. 등록되는 것은 각자 직전 상대 epoch 다 (9.5 1번).
     for (std::uint32_t i = 1; i <= 8; ++i) {
         f.now += 1000;
-        f.feed(with_peer(hello(0xA0000000u + i, 0), 0x70000001u));
-        f.feed(with_peer(hello(0xB0000000u + i, 0), 0x70000002u));
+        f.feed(with_peer(hello(0xA0000000u + i, 0, kCandA, TunnelFixture::vip_of(0x70000001u)),
+                         0x70000001u));
+        f.feed(with_peer(hello(0xB0000000u + i, 0, kCandA, TunnelFixture::vip_of(0x70000002u)),
+                         0x70000002u));
     }
     REQUIRE(a->renegotiations() == 8);
     REQUIRE(b->renegotiations() == 8);
@@ -805,7 +1171,7 @@ TEST_CASE("tunnel: renegotiations of different sessions share one retired list a
     REQUIRE(retired.contains(0xB0000007u, f.now));
     // 셋째 세션의 재협상 하나가 17번째다. 가장 오래된 a 의 첫 epoch 가 밀려난다.
     f.now += 1000;
-    f.feed(with_peer(hello(0xC0000001u, 0), 0x70000003u));
+    f.feed(with_peer(hello(0xC0000001u, 0, kCandA, TunnelFixture::vip_of(0x70000003u)), 0x70000003u));
     REQUIRE(c->renegotiations() == 1);
     REQUIRE(retired.size() == 16);
     REQUIRE_FALSE(retired.contains(0xA0000000u, f.now));

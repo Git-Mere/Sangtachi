@@ -1,5 +1,7 @@
 #include "sangtachi/loop.hpp"
 
+#include "log_capture.hpp"
+
 #include "sangtachi/console.hpp"
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
@@ -19,6 +21,8 @@
 
 #include <atomic>
 #include <span>
+#include <string>
+#include <string_view>
 #include <cstddef>
 #include <cstdint>
 #include <thread>
@@ -716,4 +720,52 @@ TEST_CASE("loop: send_datagram counts and logs a failed send", "[loop]") {
     // SO_BROADCAST 를 켜지 않은 소켓에서 브로드캐스트로 보내면 실패가 결정적이다.
     REQUIRE_FALSE(loop.send_datagram(Endpoint(0xFFFFFFFFu, 9), tunnel_pattern(10)));
     REQUIRE(counters.value(Counter::TxErrSend) == 1);
+}
+
+TEST_CASE("loop: send goes to the send handler, a longer word does not", "[loop][send]") {
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
+    std::vector<std::string> got;
+    loop.set_send_handler([&got](std::string_view rest) { got.emplace_back(rest); });
+    sangtachi::testing::LogCapture logs;
+    REQUIRE(console.try_push("send 5 576"));
+    REQUIRE(console.try_push("send"));
+    REQUIRE(console.try_push("sendx 5"));
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());
+    REQUIRE(got == std::vector<std::string>{" 5 576", ""});
+    REQUIRE(logs.with_event("console.rejected").size() == 1);  // sendx 는 unknown_command
+}
+
+TEST_CASE("loop: leftover send work keeps the next wait at zero", "[loop][send][slow]") {
+    // concurrency.md 3장: 콘솔이 만든 송신 잔량은 busy 에 포함한다. 아니면 남은 송신이 다음 마감까지
+    // 늘어진다. 여기서는 마감이 2초 간격의 주기 타이머뿐이다. 주기라서 busy 를 잃은 구현도 매달리지
+    // 않고 이 시험이 떨어진다.
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
+    const auto start = sangtachi::platform::monotonic_ms();
+    REQUIRE(loop.timers().add_periodic("guard", 2000, static_cast<sangtachi::Millis>(start)));
+    std::vector<std::size_t> budgets;
+    loop.set_work_source([&budgets](std::size_t budget) {
+        budgets.push_back(budget);
+        return budgets.size() < 3;
+    });
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());  // 첫 바퀴는 콘솔 이벤트로 깨운다
+    REQUIRE(loop.run_once());
+    REQUIRE(loop.run_once());
+    REQUIRE(sangtachi::platform::monotonic_ms() - start < 1000);
+    REQUIRE(budgets == std::vector<std::size_t>{kMaxDrain, kMaxDrain, kMaxDrain});
 }

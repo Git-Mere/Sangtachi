@@ -310,6 +310,10 @@ void EventLoop::handle_command(std::string_view line) {
         }
         return;
     }
+    if (on_send_ && (command == "send" || command.starts_with("send "))) {
+        on_send_(command.substr(4));  // 형식 검사와 WARN 은 받는 쪽이 한다
+        return;
+    }
     if (is_raw_command(command)) {
         const std::string_view rest = trim(command.substr(kRawCommand.size()));
         std::size_t length = 0;
@@ -436,8 +440,9 @@ bool EventLoop::run_once() {
     if (deadlines_.run) {
         deadlines_.run(now);
     }
+    const bool work_left = work_ ? work_(kMaxDrain) : false;
 
-    busy_ = (udp == DrainOutcome::Budget);
+    busy_ = (udp == DrainOutcome::Budget) || work_left;
     return true;
 }
 

@@ -218,6 +218,11 @@ public:
     // 주기 송신보다 먼저 본다. 같은 바퀴에 둘이 지나면 끝난 세션이 한 번 더 쏘지 않는다.
     void poll(Millis now);
 
+    // 8.5 를 통과한 내부 패킷 하나를 `DATA` 로 보낸다. 목적지는 10.4 다(학습했으면 그 하나, 아니면
+    // 후보 전체). 후보 전체로 나갈 때는 sendto 가 실패한 자리에서 멈추고 거짓이다. 상태는 부르는
+    // 쪽(8.5 검사 6번)이 봤다.
+    bool send_data(std::span<const std::byte> inner);
+
     // 사용자 종료(quit, leave). 5.6 의 "보내는가" 와 "어느 값" 표. 활성이 아니면 아무것도
     // 하지 않는다. 학습했으면 `CLOSE` 를 1회 보내고(`CONNECTED` 면 0x00, 아니면 0x01), 보냈든
     // 못 보냈든 `CLOSED` 다.
@@ -282,7 +287,7 @@ private:
     void start_path_probe(const network::Endpoint& from, Millis now);
     // 5초가 찬 잠정 경로를 비운다. echo 가 없던 것은 path_probe_failed (10.4 (c) 6, 7번).
     void expire_probes(Millis now);
-    // `DATA`, `KEEPALIVE`, `PING` 의 목적지 (10.4). 학습했으면 그 하나, 아니면 후보 전체.
+    // `KEEPALIVE`, `PING` 의 목적지 (10.4). 학습했으면 그 하나, 아니면 후보 전체. `DATA` 는 send_data 다.
     void send_to_peer(tunnel::PacketType type, std::span<const std::byte> payload);
     void send_hello_round();
     void send_hello_ack(const tunnel::Nonce& echo, const network::Endpoint& to, Millis now);

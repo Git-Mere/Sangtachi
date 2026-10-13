@@ -43,8 +43,10 @@ add_executable(sangtachi_client
     src/main.cpp
 )
 
+# 시험 빌드 장치는 실행 파일에만 컴파일한다. core 에 넣지 않는다 (testbuild/instrument.hpp, ADR 0023).
 if(SANGTACHI_TEST_BUILD)
     target_compile_definitions(sangtachi_client PRIVATE SANGTACHI_TEST_BUILD)
+    target_sources(sangtachi_client PRIVATE src/testbuild/instrument.cpp)
 endif()
 
 target_link_libraries(sangtachi_client

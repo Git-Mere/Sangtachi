@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import secrets
 import statistics
@@ -26,6 +27,17 @@ from deploy import DeployError, PORT, check_host  # noqa: E402
 TIMES: dict[str, list[float]] = {}
 RETRIES: list[int] = []
 _LOCK = threading.Lock()
+
+
+_RUN_TAG = secrets.token_hex(3)
+_NAMES = itertools.count()
+
+
+def _name() -> str:
+    """create_room 과 join_room 의 표시 이름 (control_plane.md 2.7). 실행마다 다른 꼬리표에 순번을 붙여 방 안에서 겹치지
+    않는다. 재시도는 같은 본문을 다시 보내므로 이름도 같다. 16자 이하, [0-9a-z]."""
+    with _LOCK:
+        return f"v{_RUN_TAG}{next(_NAMES)}"
 
 
 def call(host: str, op: str, body: dict) -> dict:
@@ -52,7 +64,7 @@ def must(resp: dict, what: str) -> dict:
 
 def flow(host: str, players: int, concurrent: bool, retry: bool) -> list[str]:
     notes = []
-    h = must(call(host, "create_room", {"client_nonce": secrets.token_hex(16)}), "create_room")
+    h = must(call(host, "create_room", {"client_nonce": secrets.token_hex(16), "name": _name()}), "create_room")
     room = h["room_id"]
     auth_h = {"room_id": room, "peer_id": h["peer_id"], "peer_token": h["peer_token"]}
     notes.append(f"create_room virtual_ip={h['virtual_ip']}")
@@ -69,7 +81,7 @@ def flow(host: str, players: int, concurrent: bool, retry: bool) -> list[str]:
 
     def join_once() -> None:
         # control_plane.md 8.3: 일시 오류(internal, unavailable)면 같은 nonce 로 1초 간격, 총 3회.
-        body = {"room_id": room, "client_nonce": secrets.token_hex(16)}
+        body = {"room_id": room, "client_nonce": secrets.token_hex(16), "name": _name()}
         for attempt in range(3 if retry else 1):
             r = call(host, "join_room", body)
             if r.get("ok") or r.get("error") not in ("internal", "unavailable"):
@@ -131,10 +143,10 @@ def soak(host: str, seconds: int) -> list[str]:
     get_peers 를 부르고(protocol.md 11장), 호스트는 5초마다 host_report 를 부른다(4.6). 확인은 하지
     않고 seconds 동안 그 상태를 유지한 뒤 플레이어를 회수한다. 폴링이 가장 무거운 구간을 오래 만든다.
     """
-    h = must(call(host, "create_room", {"client_nonce": secrets.token_hex(16)}), "create_room")
+    h = must(call(host, "create_room", {"client_nonce": secrets.token_hex(16), "name": _name()}), "create_room")
     room = h["room_id"]
     auth_h = {"room_id": room, "peer_id": h["peer_id"], "peer_token": h["peer_token"]}
-    players = [must(call(host, "join_room", {"room_id": room, "client_nonce": secrets.token_hex(16)}), "join_room")
+    players = [must(call(host, "join_room", {"room_id": room, "client_nonce": secrets.token_hex(16), "name": _name()}), "join_room")
                for _ in range(4)]
     for i, p in enumerate(players):
         must(call(host, "register_candidate", {"room_id": room, "peer_id": p["peer_id"], "peer_token": p["peer_token"],

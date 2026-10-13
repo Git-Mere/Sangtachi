@@ -739,7 +739,7 @@ incremented.
 | `HELLO` | `virtual_ip` must match that session's peer virtual IP (5.1). Accepted regardless of whether the epoch is pinned. The source is not required to be in the candidate set (Chapter 7 source hygiene has already passed). The epoch rules of 9.3 apply |
 | `HELLO_ACK` (attempt nonce echo, epoch unpinned or matching the pinned value) | `echo_nonce` matches **the nonce we sent in this attempt**. Used as handshake evidence (`got_ack`), and if the epoch is unpinned, this packet pins it |
 | `HELLO_ACK` (attempt nonce echo, epoch differs from the pinned value) | Drop, `drop_stale_epoch` |
-| `HELLO_ACK` (probe nonce echo) | `echo_nonce` matches one of the active probe nonces and the source equals the address the probe was sent to. **Validates only that tentative path.** Does not set `got_ack` and does not pin the epoch |
+| `HELLO_ACK` (probe nonce echo) | `echo_nonce` matches one of the active probe nonces and the source equals the address the probe was sent to. If the epoch differs from the pinned value, drop, `drop_stale_epoch` (below). **Validates only that tentative path.** Does not set `got_ack` and does not pin the epoch |
 | `HELLO_ACK` (otherwise) | Drop, `drop_bad_nonce` |
 | Everything else | If the epoch is unpinned, drop, `drop_no_epoch`. If it differs from the pinned value, drop, `drop_stale_epoch` |
 
@@ -755,6 +755,12 @@ punch, the new instance echoes our nonce with a new epoch in reply to our retran
 > session in which every subsequent `DATA` hits `drop_stale_epoch` would become `CONNECTED`. Dropping loses
 > nothing. If the peer is alive, its new `HELLO` arrives soon and the 9.5 renegotiation handles the same
 > thing through the normal path.
+
+**A probe nonce echo is also accepted only under the pinned epoch.** The reason is the same. An echo
+under a different epoch means the peer has started a new attempt, and it does not change this attempt's
+`peer_endpoint`. A validation `HELLO` is sent only after the epoch is pinned, so the unpinned case does
+not occur. The trigger of 10.4 (c) is a packet that passed everything from 8.2 through the per-type
+checks, and such a packet has either already pinned the epoch or pins it at that point (9.3, 9.5 step 4).
 
 ### 8.3 Duplicate Suppression
 
@@ -1461,7 +1467,9 @@ forged source cannot be told apart.
 3. Record the new address as a tentative path. Leave peer_endpoint as is.
 4. Send one HELLO carrying a probe nonce to that address (5.1). Do not retransmit.
    The token taken above is spent here.
-5. When a HELLO_ACK echoing that probe nonce arrives from the same address, switch peer_endpoint then.
+5. When a HELLO_ACK echoing that probe nonce arrives from the same address and that ACK also satisfies (b),
+   switch peer_endpoint then. An ACK accepted through reordering does not switch. What passed
+   validation is that one ACK; the address is not remembered separately.
    This ACK does not change the handshake state (got_ack, epoch).
 6. If it does not arrive within 5 seconds, discard the tentative path and increment path_probe_failed.
 7. The table slot is **freed only after the full 5 seconds, regardless of outcome.** Even on a successful switch,
@@ -1483,6 +1491,10 @@ for that state and type.
 
 > **Why.** Dropping the original packet would leave the idle timer unrefreshed, and a live session could
 > be judged disconnected.
+
+**`path_probe_failed` is incremented only at step 6.** A path whose echo arrived within 5 seconds is not
+counted even if it did not switch because (b) failed. If the session enters a terminal state before the 5
+seconds are up, the tentative path table is emptied without counting.
 
 **Why nothing is evicted when the table is full.** If the oldest were evicted, the side sending forged sources quickly
 could push the real new path out of the table. The one filling the table is the attacker, so **protecting what came first is

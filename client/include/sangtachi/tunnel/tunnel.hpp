@@ -92,7 +92,7 @@ struct TunnelDeps {
     peer::SendFn send;                         // EventLoop::send_datagram 과 같은 계약
     std::function<Millis()> clock;             // 타이머 시계 (platform::monotonic_ms)
     peer::MicrosFn rtt_clock_us;               // RTT 시계 (platform::monotonic_us)
-    peer::RandomFn random;                     // 비우면 platform::random_bytes (peer/epoch)
+    peer::RandomFn random;                     // epoch, 시도 nonce, 세션의 probe nonce. 비우면 platform::random_bytes (peer/epoch)
     // concurrency.md 3장 페이로드 훅. **제품 경로는 비워 둔다.** 그러면 8.4 를 통과한 DATA 가
     // drop_no_sink 로 끝난다. 시험 빌드의 M-5 비교와 에코 응답기(3차 H)가 여기에 붙는다.
     peer::DataSink data_sink;

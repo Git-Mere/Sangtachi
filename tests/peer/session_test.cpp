@@ -595,12 +595,21 @@ TEST_CASE("session: renegotiation from CONNECTED follows the ten steps", "[peer]
     REQUIRE_FALSE(f.session.got_ack());
     REQUIRE(f.session.state() == SessionState::kHandshaking);
     REQUIRE(f.session.punch_deadline() == t + 10000);
-    // 9, 10. 후보 전체로 HELLO 재전송을 다시 시작한다. 유발한 출발지는 넣지 않는다
+    // 9, 10. 후보 전체로 HELLO 재전송을 다시 시작한다. 유발한 출발지는 재전송 대상이 아니라 잠정
+    // 경로다. 그 주소로는 probe nonce 를 담은 검증 HELLO 하나만 나간다
     const auto hellos = f.io.of_type(PacketType::kHello);
-    REQUIRE(hellos.size() == 2);
+    REQUIRE(hellos.size() == 3);
     REQUIRE(hellos[0].to == kCandA);
     REQUIRE(hellos[1].to == kCandB);
+    REQUIRE(hellos[2].to == kOutside);
+    REQUIRE(tunnel::decode_hello(hellos[2].payload).value.nonce != wire_nonce(kLocalNonce));
+    REQUIRE(f.session.probe_paths() == 1);
     REQUIRE(f.session.hello_due() == t + 200);
+    f.io.sent.clear();
+    f.session.poll(t + 200);
+    for (const auto& h : f.io.of_type(PacketType::kHello)) {
+        REQUIRE(h.to != kOutside);
+    }
     // 10. KEEPALIVE, PING, 유휴를 멈춘다
     REQUIRE_FALSE(f.session.keepalive_due().has_value());
     REQUIRE_FALSE(f.session.ping_due().has_value());
@@ -832,12 +841,422 @@ TEST_CASE("session: replies go to the datagram source even when an endpoint is l
     f.io.sent.clear();
     REQUIRE(f.rx(hello(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
     REQUIRE(f.rx(ping(kPeerEpoch, 3, 5, kOutside), kT0 + 10).accepted());
-    REQUIRE(f.io.sent.size() == 2);
+    // 회신 둘과, HELLO 가 올린 잠정 경로의 검증 HELLO 하나. PING 은 같은 주소라 다시 올리지 않는다
+    REQUIRE(f.io.sent.size() == 3);
     REQUIRE(f.io.sent[0].type() == PacketType::kHelloAck);
     REQUIRE(f.io.sent[0].to == kOutside);
-    REQUIRE(f.io.sent[1].type() == PacketType::kPong);
+    REQUIRE(f.io.sent[1].type() == PacketType::kHello);
     REQUIRE(f.io.sent[1].to == kOutside);
+    REQUIRE(f.io.sent[2].type() == PacketType::kPong);
+    REQUIRE(f.io.sent[2].to == kOutside);
     REQUIRE(f.session.peer_endpoint() == kCandA);  // 회신은 전환이 아니다
+}
+
+// ---------------------------------------------------------------- 10.4 (c) 경로 검증과 9.4 공통 예산
+
+namespace {
+
+constexpr network::Endpoint outside_port(std::uint16_t port) {
+    return network::Endpoint{0x09090909u, port};
+}
+
+// sent 안에서 to 로 간 검증 HELLO 들 (시도 nonce 가 아닌 HELLO).
+std::vector<SentPacket> probes_to(const FakeIo& io, const network::Endpoint& to) {
+    std::vector<SentPacket> out;
+    for (const auto& p : io.of_type(PacketType::kHello)) {
+        if (p.to == to && tunnel::decode_hello(p.payload).value.nonce != wire_nonce(kLocalNonce)) {
+            out.push_back(p);
+        }
+    }
+    return out;
+}
+
+std::size_t count_to(const FakeIo& io, PacketType type, const network::Endpoint& to) {
+    std::size_t n = 0;
+    for (const auto& p : io.of_type(type)) {
+        n += p.to == to ? 1 : 0;
+    }
+    return n;
+}
+
+// 그 검증 HELLO 의 probe nonce 를 echo 하는 HELLO_ACK.
+Rx probe_echo(const SentPacket& probe, std::uint32_t epoch, std::uint32_t seq,
+              network::Endpoint from) {
+    return hello_ack(epoch, seq, from, kPeerVip,
+                     peer_nonce(tunnel::decode_hello(probe.payload).value.nonce));
+}
+
+}  // namespace
+
+TEST_CASE("session: an advancing packet from outside registers one probe path and one HELLO",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    f.io.sent.clear();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
+    REQUIRE(f.session.peer_endpoint() == kCandA);  // 3. peer_endpoint 는 그대로
+    REQUIRE(f.session.idle_deadline() == kT0 + 10 + 50000);  // 원 패킷은 그대로 처리된다
+    REQUIRE(f.session.probe_paths() == 1);
+    REQUIRE(f.io.sent.size() == 1);
+    const auto& probe = f.io.sent[0];
+    REQUIRE(probe.type() == PacketType::kHello);
+    REQUIRE(probe.to == kOutside);
+    REQUIRE(probe.header.session_epoch == kLocalEpoch);
+    const auto decoded = tunnel::decode_hello(probe.payload);
+    REQUIRE(decoded.value.nonce != wire_nonce(kLocalNonce));  // 시도 nonce 가 아니다 (5.1)
+    REQUIRE(decoded.value.virtual_ip == kLocalVip);
+    // 같은 주소는 다시 올리지 않는다
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 3, kOutside), kT0 + 20).accepted());
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 10, outside_port(7001)), kT0 + 30).accepted());
+    // (b) 를 못 한 재정렬 수용 패킷은 올리지 않는다
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 8, outside_port(7002)), kT0 + 40).accepted());
+    REQUIRE(f.session.probe_paths() == 2);
+    REQUIRE(f.io.sent.size() == 2);
+}
+
+TEST_CASE("session: a probe echo switches the endpoint and leaves the handshake alone",
+          "[peer][session][probe]") {
+    SECTION("CONNECTED") {
+        Fixture f;
+        f.connect();
+        REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
+        const auto probe = probes_to(f.io, kOutside).at(0);
+        REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 3, kOutside), kT0 + 20).accepted());
+        REQUIRE(f.session.peer_endpoint() == kOutside);
+        REQUIRE(f.count(Counter::EndpointLearned) == 2);
+        REQUIRE(f.count(Counter::DupAck) == 0);  // 시도 nonce 의 중복 ACK 이 아니다
+        REQUIRE(f.session.state() == SessionState::kConnected);
+        REQUIRE(f.session.idle_deadline() == kT0 + 20 + 50000);
+        // 전환 뒤에는 검증된 주소다. 그 주소의 회신은 토큰을 쓰지 않고 다시 올리지 않는다
+        f.io.sent.clear();
+        REQUIRE(f.rx(ping(kPeerEpoch, 4, 9, kOutside), kT0 + 30).accepted());
+        REQUIRE(f.io.sent.size() == 1);
+        REQUIRE(f.io.sent[0].type() == PacketType::kPong);
+    }
+    SECTION("PUNCHING: got_ack and the epoch stay as they were") {
+        Fixture f;
+        f.session.start_punch(kT0);
+        REQUIRE(f.rx(hello(kPeerEpoch, 0, kOutside), kT0).accepted());
+        REQUIRE(f.session.sent_ack());
+        const auto probe = probes_to(f.io, kOutside).at(0);
+        REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 1, kOutside), kT0 + 5).accepted());
+        REQUIRE(f.session.peer_endpoint() == kOutside);
+        REQUIRE_FALSE(f.session.got_ack());
+        REQUIRE(f.session.state() == SessionState::kHandshaking);
+        REQUIRE(f.session.pinned_peer_epoch() == kPeerEpoch);
+    }
+}
+
+TEST_CASE("session: a probe echo must come from the probed address under the pinned epoch",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
+    const auto probe = probes_to(f.io, kOutside).at(0);
+    // 다른 주소의 echo 는 probe 행이 아니고 시도 nonce 도 아니다
+    REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 3, kCandB), kT0 + 20).dropped ==
+            Counter::DropBadNonce);
+    // 다른 epoch 의 echo 는 drop_stale_epoch (8.2)
+    REQUIRE(f.rx(probe_echo(probe, kPeerEpoch2, 0, kOutside), kT0 + 20).dropped ==
+            Counter::DropStaleEpoch);
+    REQUIRE(f.session.peer_endpoint() == kCandA);
+    REQUIRE(f.session.pinned_peer_epoch() == kPeerEpoch);
+}
+
+TEST_CASE("session: a reordered probe echo validates without switching", "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 10, kOutside), kT0 + 10).accepted());
+    const auto probe = probes_to(f.io, kOutside).at(0);
+    REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 5, kOutside), kT0 + 20).accepted());
+    REQUIRE(f.session.peer_endpoint() == kCandA);  // (b) 를 못 했다
+    // 자리가 남아 있는 동안 같은 nonce 의 전진 echo 는 전환한다
+    REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 11, kOutside), kT0 + 30).accepted());
+    REQUIRE(f.session.peer_endpoint() == kOutside);
+    f.session.poll(kT0 + 10 + 5000);
+    REQUIRE(f.session.probe_paths() == 0);
+    REQUIRE(f.count(Counter::PathProbeFailed) == 0);  // echo 는 왔다
+}
+
+TEST_CASE("session: a probe slot lasts exactly 5s whatever the outcome", "[peer][session][probe]") {
+    const Millis t = kT0 + 10;
+    SECTION("unanswered: path_probe_failed, and a late echo is a bad nonce") {
+        sangtachi::testing::LogCapture logs;
+        Fixture f;  // 펀치 전이라 세션 타이머가 없다. 마감은 자리의 만료 하나다
+        REQUIRE(f.rx(hello(kPeerEpoch, 0, kOutside), t).accepted());
+        const auto probe = probes_to(f.io, kOutside).at(0);
+        REQUIRE(f.session.next_deadline() == t + 5000);
+        f.session.poll(t + 4999);
+        REQUIRE(f.session.probe_paths() == 1);
+        REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 3, kOutside), t + 5000).dropped ==
+                Counter::DropBadNonce);
+        REQUIRE(f.session.probe_paths() == 0);
+        REQUIRE(f.count(Counter::PathProbeFailed) == 1);
+        f.session.poll(t + 5000);
+        REQUIRE(logs.with_event("timer.tick").empty());  // 항목 수명이지 타이머가 아니다 (11장)
+        // 자리가 비었으니 같은 주소가 다시 올라간다
+        REQUIRE(f.rx(keepalive(kPeerEpoch, 4, kOutside), t + 5001).accepted());
+        REQUIRE(probes_to(f.io, kOutside).size() == 2);
+    }
+    SECTION("answered: the slot stays until 5s and is not a failure") {
+        Fixture f;
+        f.connect();
+        REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), t).accepted());
+        const auto probe = probes_to(f.io, kOutside).at(0);
+        REQUIRE(f.rx(probe_echo(probe, kPeerEpoch, 3, kOutside), t + 1).accepted());
+        f.session.poll(t + 4999);
+        REQUIRE(f.session.probe_paths() == 1);
+        f.session.poll(t + 5000);
+        REQUIRE(f.session.probe_paths() == 0);
+        REQUIRE(f.count(Counter::PathProbeFailed) == 0);
+    }
+}
+
+TEST_CASE("session: four probe paths at most, the fifth packet is still processed",
+          "[peer][session][probe]") {
+    Fixture f(/*sink=*/true);
+    f.connect();
+    f.io.sent.clear();
+    for (std::uint16_t i = 0; i < 4; ++i) {
+        REQUIRE(f.rx(keepalive(kPeerEpoch, 2 + i, outside_port(7100 + i)), kT0 + 10).accepted());
+    }
+    REQUIRE(f.session.probe_paths() == 4);
+    const auto fifth = outside_port(7104);
+    REQUIRE(f.rx(data_rx(kPeerEpoch, 6, inner_ipv4(kPeerVip, kLocalVip), fifth), kT0 + 20)
+                .accepted());
+    REQUIRE(f.count(Counter::DropProbeFull) == 1);
+    REQUIRE(f.io.sunk.size() == 1);                           // DATA 는 주입됐다
+    REQUIRE(f.session.idle_deadline() == kT0 + 20 + 50000);   // 유휴 타이머도 갱신됐다
+    REQUIRE(f.session.probe_paths() == 4);
+    REQUIRE(probes_to(f.io, fifth).empty());
+    // 가장 오래된 경로가 밀려나지 않았다. 검증 HELLO 는 경로마다 하나다
+    for (std::uint16_t i = 0; i < 4; ++i) {
+        REQUIRE(probes_to(f.io, outside_port(7100 + i)).size() == 1);
+    }
+    // 가장 오래된 칸이 표에 그대로 있다. 그 echo 가 받아진다
+    REQUIRE(f.rx(probe_echo(probes_to(f.io, outside_port(7100)).at(0), kPeerEpoch, 7,
+                            outside_port(7100)),
+                 kT0 + 20)
+                .accepted());
+    REQUIRE(f.session.peer_endpoint() == outside_port(7100));
+    // 등록하지 못한 다섯째는 토큰을 쓰지 않았다. 남은 토큰은 10 - 4 = 6. 7100 은 이제
+    // peer_endpoint 라 무료이므로 아직 잠정 경로인 7101 로 센다
+    for (std::uint32_t i = 0; i < 7; ++i) {
+        REQUIRE(f.rx(hello(kPeerEpoch, 8 + i, outside_port(7101)), kT0 + 20).accepted());
+    }
+    REQUIRE(count_to(f.io, PacketType::kHelloAck, outside_port(7101)) == 6);
+    REQUIRE(f.count(Counter::DropUnverifiedTx) == 1);
+}
+
+TEST_CASE("session: the unverified budget counts tokens as the roadmap does",
+          "[peer][session][probe]") {
+    const Millis t = kT0 + 10;
+    SECTION("a new outside source: the first HELLO costs two, the tenth is blocked") {
+        Fixture f;
+        f.connect();
+        f.io.sent.clear();
+        for (std::uint32_t i = 0; i < 10; ++i) {
+            REQUIRE(f.rx(hello(kPeerEpoch, 2 + i, kOutside), t).accepted());
+        }
+        REQUIRE(count_to(f.io, PacketType::kHelloAck, kOutside) == 9);
+        REQUIRE(probes_to(f.io, kOutside).size() == 1);
+        REQUIRE(f.count(Counter::DropUnverifiedTx) == 1);
+        REQUIRE(f.count(Counter::TxErrAck) == 0);  // 보내지 않은 것은 송신 실패가 아니다
+        // 200ms 에 토큰 하나
+        REQUIRE(f.rx(hello(kPeerEpoch, 12, kOutside), t + 199).accepted());
+        REQUIRE(f.count(Counter::DropUnverifiedTx) == 2);
+        REQUIRE(f.rx(hello(kPeerEpoch, 13, kOutside), t + 200).accepted());
+        REQUIRE(count_to(f.io, PacketType::kHelloAck, kOutside) == 10);
+    }
+    SECTION("with one token left the HELLO_ACK takes it before the new probe path") {
+        Fixture f;
+        f.connect();
+        for (std::uint32_t i = 0; i < 8; ++i) {  // 검증 HELLO 하나와 HELLO_ACK 여덟
+            REQUIRE(f.rx(hello(kPeerEpoch, 2 + i, outside_port(7200)), t).accepted());
+        }
+        f.io.sent.clear();
+        REQUIRE(f.rx(hello(kPeerEpoch, 10, kOutside), t).accepted());
+        REQUIRE(count_to(f.io, PacketType::kHelloAck, kOutside) == 1);
+        REQUIRE(probes_to(f.io, kOutside).empty());
+        REQUIRE(f.session.probe_paths() == 1);  // 7200 하나뿐이다. 2번에서 멈췄다
+        REQUIRE(f.count(Counter::DropUnverifiedTx) == 1);
+    }
+    SECTION("an existing probe path: the eleventh is blocked") {
+        Fixture f;
+        f.connect();
+        REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), t).accepted());  // 토큰 하나
+        f.io.sent.clear();
+        // 1초 뒤 다시 가득 찬다. 용량을 넘겨 쌓이지 않는다
+        for (std::uint32_t i = 0; i < 11; ++i) {
+            REQUIRE(f.rx(hello(kPeerEpoch, 3 + i, kOutside), t + 1000).accepted());
+        }
+        REQUIRE(count_to(f.io, PacketType::kHelloAck, kOutside) == 10);
+        REQUIRE(f.count(Counter::DropUnverifiedTx) == 1);
+    }
+    SECTION("HELLO_ACK, PONG and validation HELLO share one bucket") {
+        Fixture f;
+        f.connect();
+        f.io.sent.clear();
+        for (std::uint32_t i = 0; i < 20; ++i) {
+            const Rx rx = i % 2 == 0 ? hello(kPeerEpoch, 2 + i, kOutside)
+                                     : ping(kPeerEpoch, 2 + i, i, kOutside);
+            REQUIRE(f.rx(rx, t).accepted());
+        }
+        // 회신 20개와 검증 HELLO 하나 가운데 10개만 나간다
+        REQUIRE(f.io.sent.size() == 10);
+        REQUIRE(f.count(Counter::DropUnverifiedTx) == 11);
+    }
+    SECTION("candidates are not limited") {
+        Fixture f;
+        f.connect();
+        f.io.sent.clear();
+        for (std::uint32_t i = 0; i < 30; ++i) {
+            REQUIRE(f.rx(hello(kPeerEpoch, 2 + i, kCandB), t).accepted());
+        }
+        REQUIRE(count_to(f.io, PacketType::kHelloAck, kCandB) == 30);
+        REQUIRE(f.count(Counter::DropUnverifiedTx) == 0);
+    }
+}
+
+TEST_CASE("session: a 200ms resend from outside loses nothing when the probe is answered",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    f.io.sent.clear();
+    std::uint32_t seq = 2;
+    bool answered = false;
+    for (int k = 0; k < 150; ++k) {  // 30초
+        const Millis now = kT0 + 10 + static_cast<Millis>(k) * 200;
+        REQUIRE(f.rx(hello(kPeerEpoch, seq++, kOutside), now).accepted());
+        const auto probes = probes_to(f.io, kOutside);
+        if (!answered && !probes.empty()) {
+            REQUIRE(f.rx(probe_echo(probes.back(), kPeerEpoch, seq++, kOutside), now).accepted());
+            answered = true;
+        }
+        f.session.poll(now);
+    }
+    REQUIRE(count_to(f.io, PacketType::kHelloAck, kOutside) == 150);
+    REQUIRE(f.count(Counter::DropUnverifiedTx) == 0);
+    // 전환한 주소는 검증된 주소다. 자리가 빈 뒤에도 다시 올리지 않는다
+    REQUIRE(probes_to(f.io, kOutside).size() == 1);
+}
+
+TEST_CASE("session: a HELLO_ACK withheld by the budget does not raise sent_ack",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    const Millis t = kT0 + 2000;
+    for (std::uint32_t i = 0; i < 9; ++i) {  // 검증 HELLO 하나와 PONG 아홉으로 버킷을 비운다
+        REQUIRE(f.rx(ping(kPeerEpoch, 2 + i, i, kOutside), t).accepted());
+    }
+    REQUIRE(f.count(Counter::DropUnverifiedTx) == 0);
+    // 9.5 6번의 HELLO_ACK 도 같은 예산이다
+    REQUIRE(f.rx(hello(kPeerEpoch2, 0, kOutside), t).accepted());
+    REQUIRE(f.session.renegotiations() == 1);
+    REQUIRE(f.count(Counter::DropUnverifiedTx) == 1);
+    REQUIRE(f.count(Counter::TxErrAck) == 0);
+    REQUIRE_FALSE(f.session.sent_ack());
+    REQUIRE(f.session.state() == SessionState::kPunching);
+}
+
+TEST_CASE("session: without a probe nonce nothing is registered and no token is spent",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    f.io.random_ok = false;
+    f.io.sent.clear();
+    for (std::uint32_t i = 0; i < 11; ++i) {
+        REQUIRE(f.rx(hello(kPeerEpoch, 2 + i, kOutside), kT0 + 10).accepted());
+    }
+    REQUIRE(f.session.probe_paths() == 0);
+    REQUIRE(probes_to(f.io, kOutside).empty());
+    REQUIRE(count_to(f.io, PacketType::kHelloAck, kOutside) == 10);
+    REQUIRE(f.count(Counter::DropUnverifiedTx) == 1);
+}
+
+TEST_CASE("session: outside packets register a path only when every check passed",
+          "[peer][session][probe]") {
+    SECTION("rejected packets register nothing") {
+        Fixture f;
+        f.connect();
+        f.io.sent.clear();
+        REQUIRE(f.rx(keepalive(kPeerEpoch, 1, kOutside), kT0 + 10).dropped == Counter::DropDuplicate);
+        REQUIRE(f.rx(pong(kPeerEpoch, 2, 77, kOutside), kT0 + 10).dropped ==
+                Counter::DropUnmatchedPong);
+        REQUIRE(f.rx(data_rx(kPeerEpoch, 3, inner_ipv4(kLocalVip, kLocalVip), kOutside), kT0 + 10)
+                    .dropped == Counter::DropInnerSrc);
+        REQUIRE(f.session.probe_paths() == 0);
+        REQUIRE(f.io.sent.empty());
+    }
+    SECTION("an outside CLOSE ends the session without a validation HELLO") {
+        Fixture f;
+        f.connect();
+        f.io.sent.clear();
+        REQUIRE(f.rx(close_rx(kPeerEpoch, 2, 0x00, kOutside), kT0 + 10).accepted());
+        REQUIRE(f.session.state() == SessionState::kClosed);
+        REQUIRE(f.io.sent.empty());
+    }
+    SECTION("an outside DATA without a payload hook still registers") {
+        Fixture f;  // 훅이 없다
+        f.connect();
+        f.io.sent.clear();
+        REQUIRE(f.rx(data_rx(kPeerEpoch, 2, inner_ipv4(kPeerVip, kLocalVip), kOutside), kT0 + 10)
+                    .dropped == Counter::DropNoSink);
+        REQUIRE(f.session.probe_paths() == 1);
+        REQUIRE(probes_to(f.io, kOutside).size() == 1);
+        REQUIRE(f.session.idle_deadline() == kT0 + 10 + 50000);
+    }
+}
+
+TEST_CASE("session: a failed validation HELLO still spends its token and holds its slot",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    f.io.send_ok = false;
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
+    REQUIRE(f.count(Counter::TxErrSend) == 1);
+    REQUIRE(f.count(Counter::TxErrAck) == 0);
+    REQUIRE(f.session.probe_paths() == 1);
+    f.io.send_ok = true;
+    f.io.sent.clear();
+    // 토큰 하나를 썼다. 남은 아홉 가운데 둘은 7300 의 첫 PONG 과 검증 HELLO 이고 PONG 은 여덟이다
+    for (std::uint32_t i = 0; i < 10; ++i) {
+        REQUIRE(f.rx(ping(kPeerEpoch, 3 + i, i, outside_port(7300)), kT0 + 10).accepted());
+    }
+    REQUIRE(count_to(f.io, PacketType::kPong, outside_port(7300)) == 8);
+    f.io.sent.clear();
+    f.session.poll(kT0 + 10 + 4999);
+    REQUIRE(probes_to(f.io, kOutside).empty());  // 재전송하지 않는다
+    f.session.poll(kT0 + 10 + 5000);
+    REQUIRE(f.count(Counter::PathProbeFailed) == 2);  // kOutside 와 7300 둘 다 echo 가 없었다
+}
+
+TEST_CASE("session: renegotiation keeps probe paths and their nonces", "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
+    const auto probe = probes_to(f.io, kOutside).at(0);
+    REQUIRE(f.rx(hello(kPeerEpoch2, 0, kCandB), kT0 + 1000).accepted());
+    REQUIRE(f.session.renegotiations() == 1);
+    REQUIRE(f.session.probe_paths() == 1);
+    // 새로 고정한 epoch 아래의 echo 를 받는다. 자리는 처음 등록한 시각부터 5초다
+    REQUIRE(f.rx(probe_echo(probe, kPeerEpoch2, 1, kOutside), kT0 + 1010).accepted());
+    REQUIRE(f.session.peer_endpoint() == kOutside);
+    f.session.poll(kT0 + 10 + 5000);
+    REQUIRE(f.session.probe_paths() == 0);
+}
+
+TEST_CASE("session: a terminal session drops its probe paths and their deadline",
+          "[peer][session][probe]") {
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2, kOutside), kT0 + 10).accepted());
+    REQUIRE(f.session.probe_paths() == 1);
+    f.session.close_by_user(kT0 + 20);
+    REQUIRE(f.session.probe_paths() == 0);
+    REQUIRE_FALSE(f.session.next_deadline().has_value());
+    f.session.poll(kT0 + 10 + 5000);
+    REQUIRE(f.count(Counter::PathProbeFailed) == 0);
 }
 
 // ---------------------------------------------------------------- 같은 바퀴의 마감과 주기 송신 (9.6 1번)

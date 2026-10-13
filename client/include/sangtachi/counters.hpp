@@ -5,7 +5,7 @@
 // 이름의 출처는 세 문서다. 여기서 새로 짓지 않는다.
 //   protocol.md 5.7          drop_roster_direction, drop_roster_flags, drop_roster_name, drop_roster_stale
 //   protocol.md 9.4          dup_ack
-//   protocol.md 10.4         endpoint_learned
+//   protocol.md 10.4         endpoint_learned, path_probe_failed
 //   protocol.md 13장         drop_stun_parse
 //   protocol.md 6장·7장·8장   tx_err_*, tx_drop_*, 나머지 drop_* 의 대부분
 //   concurrency.md 3장     drop_oversize_datagram, drop_inject_error, drop_no_sink, adapter_rx,
@@ -79,6 +79,7 @@ enum class Counter : std::size_t {
     DropVipMismatch,
     DupAck,
     EndpointLearned,
+    PathProbeFailed,
     RxErrRecv,
     TelemetryQueueDropped,
     TxDropBadSrc,
@@ -92,7 +93,7 @@ enum class Counter : std::size_t {
 };
 
 // 이름 순으로 적어 두었다. 값 자체에 의미를 두지 않는다.
-inline constexpr std::size_t kCounterCount = 53;
+inline constexpr std::size_t kCounterCount = 54;
 
 // architecture.md 9장의 `counter` 이벤트가 `name` 으로 싣는 문자열.
 [[nodiscard]] std::string_view to_token(Counter counter) noexcept;

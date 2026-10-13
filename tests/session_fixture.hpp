@@ -46,6 +46,14 @@ inline tunnel::Nonce wire_nonce(const peer::Nonce& n) {
     return out;
 }
 
+inline peer::Nonce peer_nonce(const tunnel::Nonce& n) {
+    peer::Nonce out;
+    for (std::size_t i = 0; i < out.bytes.size(); ++i) {
+        out.bytes[i] = n[i];
+    }
+    return out;
+}
+
 inline const peer::Nonce kLocalNonce = nonce_fill(0x11);
 inline const peer::Nonce kPeerNonce = nonce_fill(0x22);
 
@@ -72,6 +80,8 @@ struct FakeIo {
     std::vector<std::pair<peer::SessionState, peer::SessionState>> transitions;
     std::vector<std::vector<std::byte>> sunk;
     bool with_sink = false;
+    bool random_ok = true;           // 거짓이면 난수원이 실패한다 (probe nonce)
+    std::uint8_t next_random = 0x80; // 결정적인 난수원. 바이트마다 1 씩 오른다
 
     peer::SendFn send_fn() {
         return [this](const network::Endpoint& to, std::span<const std::byte> bytes) {
@@ -90,6 +100,15 @@ struct FakeIo {
         io.send = send_fn();
         io.retired = &retired;
         io.rtt_clock_us = [this] { return us; };
+        io.random = [this](std::span<std::byte> out) {
+            if (!random_ok) {
+                return false;
+            }
+            for (auto& byte : out) {
+                byte = static_cast<std::byte>(next_random++);
+            }
+            return true;
+        };
         if (with_sink) {
             io.data_sink = [this](std::span<const std::byte> bytes) {
                 sunk.emplace_back(bytes.begin(), bytes.end());

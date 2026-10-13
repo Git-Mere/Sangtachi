@@ -177,6 +177,7 @@ peer::Session* Tunnel::create_session(const NewSession& request) {
     io.retired = &retired_;
     io.rtt_clock_us = deps_.rtt_clock_us;
     io.data_sink = deps_.data_sink;
+    io.random = deps_.random;  // probe nonce (5.1)
     io.on_transition = [this](const peer::Session& session, peer::SessionState from,
                               peer::SessionState to) { on_transition(session, from, to); };
 

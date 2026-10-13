@@ -4,6 +4,7 @@
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/tunnel/tunnel.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -59,8 +60,11 @@ std::string_view to_token(SessionFailure failure) noexcept {
     return "unknown";
 }
 
-Session::Session(SessionConfig config, SessionIo io, Millis /*now*/)
-    : config_(std::move(config)), io_(std::move(io)) {
+Session::Session(SessionConfig config, SessionIo io, Millis now)
+    : config_(std::move(config)),
+      io_(std::move(io)),
+      budget_milli_(protocol::kUnverifiedTxBucket * 1000),  // 처음에는 가득 차 있다 (머리 표)
+      budget_at_(now) {
     // 9.1 IDLE -> PUNCHING. IDLE 은 객체가 없으므로 on_transition 을 부르지 않고 줄만 낸다.
     emit_state(config_.peer_id, kIdleToken, to_token(SessionState::kPunching));
 }
@@ -107,10 +111,71 @@ bool Session::send_packet(PacketType type, std::span<const std::byte> payload,
     return true;
 }
 
-bool Session::send_reply(PacketType type, std::span<const std::byte> payload,
-                         const network::Endpoint& to) {
-    // 9.4 무검증 목적지 공통 예산은 3차 G 가 여기에 건다. 지금은 그대로 보낸다.
-    return send_packet(type, payload, to);
+bool Session::is_verified(const network::Endpoint& endpoint) const noexcept {
+    return is_candidate(endpoint) || peer_endpoint_ == endpoint;
+}
+
+bool Session::spend_for(const network::Endpoint& to, Millis now) {
+    if (is_verified(to)) {
+        return true;  // 9.4: 후보 집합 안이나 peer_endpoint 로 가는 송신은 토큰을 쓰지 않는다
+    }
+    // 1ms 에 1/1000 토큰 5개. 용량을 넘겨 쌓지 않는다. 시계가 뒤로 가면 보충하지 않는다.
+    constexpr std::uint64_t kCost = 1000;
+    constexpr std::uint64_t kCapacity = protocol::kUnverifiedTxBucket * kCost;
+    if (now > budget_at_) {
+        const std::uint64_t room = kCapacity - budget_milli_;
+        // elapsed 를 room 으로 먼저 자르면 곱이 넘치지 않는다.
+        const std::uint64_t elapsed = std::min<std::uint64_t>(now - budget_at_, room);
+        budget_milli_ += std::min(room, elapsed * protocol::kUnverifiedTxRefill);
+        budget_at_ = now;
+    }
+    if (budget_milli_ < kCost) {
+        counters_.increment(Counter::DropUnverifiedTx);
+        return false;
+    }
+    budget_milli_ -= kCost;
+    return true;
+}
+
+void Session::start_path_probe(const network::Endpoint& from, Millis now) {
+    expire_probes(now);
+    for (const auto& p : probes_) {
+        if (p.to == from) {
+            return;  // 경로당 검증 HELLO 1회. 자리는 5초를 채운다 (10.4 (c) 7번)
+        }
+    }
+    // 1. 가득 차 있으면 등록만 건너뛴다. 가장 오래된 것을 밀어내지 않는다.
+    if (probes_.size() >= protocol::kMaxProbePaths) {
+        counters_.increment(Counter::DropProbeFull);
+        return;
+    }
+    const auto nonce = generate_probe_nonce(io_.random);
+    if (!nonce) {
+        return;  // 머리 표: 뽑지 못하면 등록하지 않는다
+    }
+    // 2. 토큰. 없으면 spend_for 가 drop_unverified_tx 를 올렸다. 잠정 경로를 만들지 않는다.
+    if (!spend_for(from, now)) {
+        return;
+    }
+    // 3. 기록한다. peer_endpoint 는 그대로다. 4. 검증 HELLO 1회. 재전송하지 않는다.
+    probes_.push_back(ProbePath{from, to_wire(*nonce), now, false});
+    const auto payload =
+        tunnel::encode_hello(tunnel::HelloPayload{probes_.back().nonce, config_.local_virtual_ip});
+    (void)send_packet(PacketType::kHello, payload, from);
+}
+
+void Session::expire_probes(Millis now) {
+    // 11장 만료 값과 같은 `<=` 다. 6. echo 가 없었으면 path_probe_failed. 7. 결과와 무관하게 비운다.
+    for (auto it = probes_.begin(); it != probes_.end();) {
+        if (it->registered + protocol::kProbeTtlMs <= now) {
+            if (!it->answered) {
+                counters_.increment(Counter::PathProbeFailed);
+            }
+            it = probes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void Session::send_to_peer(PacketType type, std::span<const std::byte> payload) {
@@ -134,11 +199,15 @@ void Session::send_hello_round() {
     }
 }
 
-void Session::send_hello_ack(const tunnel::Nonce& echo, const network::Endpoint& to) {
+void Session::send_hello_ack(const tunnel::Nonce& echo, const network::Endpoint& to, Millis now) {
+    // 9.4: 무검증 목적지인데 토큰이 없으면 보내지 않는다. 보내지 않았으므로 sent_ack 도 없다.
+    if (!spend_for(to, now)) {
+        return;
+    }
     const auto payload =
         tunnel::encode_hello(tunnel::HelloPayload{echo, config_.local_virtual_ip});
     // 9.2: sendto 성공 뒤에만 sent_ack. 실패하면 tx_err_ack (tx_err_send 는 send_packet 이 올렸다).
-    if (send_reply(PacketType::kHelloAck, payload, to)) {
+    if (send_packet(PacketType::kHelloAck, payload, to)) {
         sent_ack_ = true;
     } else {
         counters_.increment(Counter::TxErrAck);
@@ -200,6 +269,13 @@ std::optional<Millis> Session::next_deadline() const noexcept {
             earliest = d;
         }
     }
+    // 잠정 경로 자리의 만료. 표는 등록 순서라 앞이 가장 이르다. 종료 상태에서는 비어 있다.
+    if (!probes_.empty()) {
+        const Millis due = probes_.front().registered + protocol::kProbeTtlMs;
+        if (!earliest || due < *earliest) {
+            earliest = due;
+        }
+    }
     return earliest;
 }
 
@@ -207,6 +283,7 @@ void Session::poll(Millis now) {
     if (!active()) {
         return;
     }
+    expire_probes(now);
     // 마감이 먼저다. 끝난 세션이 같은 바퀴에 한 번 더 쏘지 않는다 (9.6 1번).
     if (punch_deadline_ && *punch_deadline_ <= now) {
         emit_tick("punch", now, punch_since_);
@@ -296,6 +373,7 @@ void Session::settle(SessionState before, Millis now) {
 void Session::enter_terminal(SessionState terminal, Millis now) {
     const SessionState before = state();
     stop_timers();
+    probes_.clear();  // 머리 표: 끝난 세션은 검증할 경로가 없다
     terminal_ = terminal;
     terminal_since_ = now;
     notify(before, terminal);
@@ -363,7 +441,7 @@ void Session::renegotiate(const RxPacket& packet, const tunnel::Nonce& nonce, Mi
     // 4. 새 epoch 고정. 5. 우리 epoch 와 nonce 는 그대로다 (config_ 를 건드리지 않는다)
     pinned_ = packet.header.session_epoch;
     // 6. 그 데이터그램의 출발지로 HELLO_ACK. peer_endpoint 는 바꾸지 않는다
-    send_hello_ack(nonce, packet.from);
+    send_hello_ack(nonce, packet.from, now);
     // 10. KEEPALIVE·PING·유휴를 멈춘다
     keepalive_due_.reset();
     ping_due_.reset();
@@ -387,6 +465,7 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
     const std::uint32_t epoch = packet.header.session_epoch;
     bool renegotiated = false;
     tunnel::HelloPayload hello{};
+    std::optional<std::size_t> probe;  // 8.2 probe nonce echo 행이면 그 잠정 경로
 
     // ---- 8.2 epoch 및 출발지 검사 ----
     if (type == PacketType::kHello || type == PacketType::kHelloAck) {
@@ -415,12 +494,25 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             renegotiated = true;
         }
     } else if (type == PacketType::kHelloAck) {
-        // 3차 G: probe nonce echo 행이 이 앞에 들어온다.
-        if (hello.nonce != to_wire(config_.attempt_nonce)) {
-            return drop(Counter::DropBadNonce);
+        // probe nonce echo 행이 먼저다. nonce 와 출발지가 함께 맞아야 그 행이다. 아니면 아래 행들이다.
+        expire_probes(now);
+        for (std::size_t i = 0; i < probes_.size(); ++i) {
+            if (probes_[i].nonce == hello.nonce && probes_[i].to == packet.from) {
+                probe = i;
+                break;
+            }
         }
-        if (pinned_ && epoch != *pinned_) {
-            return drop(Counter::DropStaleEpoch);  // 이미 끝난 시도의 epoch 아래서 got_ack 를 세우지 않는다
+        if (probe) {
+            if (!pinned_ || epoch != *pinned_) {
+                return drop(Counter::DropStaleEpoch);  // 8.2: probe 는 고정 뒤에만 나가므로 미고정은 없다
+            }
+        } else {
+            if (hello.nonce != to_wire(config_.attempt_nonce)) {
+                return drop(Counter::DropBadNonce);
+            }
+            if (pinned_ && epoch != *pinned_) {
+                return drop(Counter::DropStaleEpoch);  // 이미 끝난 시도의 epoch 아래서 got_ack 를 세우지 않는다
+            }
         }
     } else {
         if (!pinned_) {
@@ -499,38 +591,59 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
     // ---- 부수 효과. 여기부터는 해당 타입의 모든 검증을 통과한 패킷이다 ----
     const SessionState before = state();
     if (renegotiated) {
-        // 재협상이 6번까지 이미 했다. 이 HELLO 로 학습하지 않는다(9.5 6번). 상태는 이제
-        // CONNECTED 가 아니므로 유휴 타이머도 없다.
+        // 재협상이 6번까지 이미 했다. 이 HELLO 로 학습하지 않는다(9.5 6번). 출발지가 검증된 주소가
+        // 아니면 잠정 경로로 올릴 뿐 재전송 대상에 넣지 않는다(9.5 9번). 상태는 이제 CONNECTED 가
+        // 아니므로 유휴 타이머도 없다.
+        if (!is_verified(packet.from)) {
+            start_path_probe(packet.from, now);
+        }
         return RxResult{};
     }
     if (!pinned_) {
         pinned_ = epoch;  // 9.3: 미고정 상태의 유효 HELLO 또는 nonce 일치 HELLO_ACK
     }
-    // 10.4 (a) 통과, (b) 전진, (c) 후보 집합 안. 후보 밖 경로 검증은 3차 G 다.
-    if (decision.advanced() && is_candidate(packet.from)) {
-        learn(packet.from);
+    // 10.4 학습. (a) 통과, (b) 전진, (c) 검증된 주소이거나 이 패킷이 그 주소의 probe echo 다.
+    // (c) 만 못 했으면 잠정 경로로 올린다. 올리는 일은 아래 9.4 동작(회신) 뒤다 (머리 표).
+    bool probe_source = false;
+    if (probe) {
+        probes_[*probe].answered = true;
+        if (decision.advanced()) {
+            learn(packet.from);  // 10.4 (c) 5번
+        }
+    } else if (decision.advanced()) {
+        if (is_verified(packet.from)) {
+            learn(packet.from);
+        } else {
+            probe_source = true;
+        }
     }
     if (before == SessionState::kConnected) {
         arm(idle_deadline_, idle_since_, now, protocol::kIdleTimeoutMs);  // 9.4, 11장 유휴 타이머 갱신
     }
 
+    bool no_sink = false;
     switch (type) {
         case PacketType::kHello:
             // 9.4: 그 데이터그램의 출발지로 응답. CONNECTED 에서도 한다(상대 ACK 유실).
-            send_hello_ack(hello.nonce, packet.from);
+            send_hello_ack(hello.nonce, packet.from, now);
             break;
         case PacketType::kHelloAck:
+            if (probe) {
+                break;  // 9.4 probe 행: 그 잠정 경로만 검증한다. got_ack 와 epoch 는 그대로다
+            }
             if (before == SessionState::kConnected) {
                 counters_.increment(Counter::DupAck);  // 9.4: 플래그는 그대로
             } else {
                 got_ack_ = true;
             }
             break;
-        case PacketType::kPing: {
-            const auto payload = tunnel::encode_ping(ping_id);
-            (void)send_reply(PacketType::kPong, payload, packet.from);
+        case PacketType::kPing:
+            // 9.4: 무검증 목적지로 가는 PONG 은 공통 예산을 쓴다.
+            if (spend_for(packet.from, now)) {
+                const auto payload = tunnel::encode_ping(ping_id);
+                (void)send_packet(PacketType::kPong, payload, packet.from);
+            }
             break;
-        }
         case PacketType::kPong: {
             const auto it = pending_pings_.find(ping_id);
             if (io_.rtt_clock_us) {
@@ -542,6 +655,7 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
         }
         case PacketType::kClose:
             // 5.6: 세션은 CLOSED 로 남긴다. 라우팅 칸은 터널의 종료 처리기가 비운다.
+            // 잠정 경로를 올리지 않는다 (머리 표).
             peer_close_reason_ = close_reason;
             enter_terminal(SessionState::kClosed, now);
             return RxResult{};
@@ -552,13 +666,19 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             if (io_.data_sink) {
                 io_.data_sink(packet.payload);
             } else {
-                return drop(Counter::DropNoSink);  // concurrency.md 3장 제품 빌드
+                no_sink = true;  // concurrency.md 3장 제품 빌드. 판정은 아래에서 돌려준다
             }
             break;
         case PacketType::kKeepalive:
             break;
     }
+    if (probe_source) {
+        start_path_probe(packet.from, now);
+    }
     settle(before, now);
+    if (no_sink) {
+        return drop(Counter::DropNoSink);
+    }
     return RxResult{};
 }
 

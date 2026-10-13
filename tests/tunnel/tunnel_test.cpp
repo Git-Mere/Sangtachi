@@ -445,6 +445,20 @@ TEST_CASE("tunnel: a failing random source creates no session", "[tunnel]") {
     REQUIRE(f.tunnel.session_count() == 0);
 }
 
+TEST_CASE("tunnel: sessions draw probe nonces from the tunnel random source", "[tunnel][probe]") {
+    TunnelFixture f;
+    peer::Session* s = f.create();
+    REQUIRE(s != nullptr);
+    f.random_ok = false;  // 10.4 (c) 의 probe nonce 를 뽑지 못한다
+    f.tunnel.on_datagram(kOutside, hello(kPeerEpoch, 0, kOutside).wire());
+    REQUIRE(f.sent.size() == 1);
+    REQUIRE(f.sent[0].type() == PacketType::kHelloAck);
+    REQUIRE(s->probe_paths() == 0);
+    f.random_ok = true;
+    f.tunnel.on_datagram(kOutside, keepalive(kPeerEpoch, 1, kOutside).wire());
+    REQUIRE(s->probe_paths() == 1);
+}
+
 TEST_CASE("tunnel: the next attempt retires the peer epoch and nonce of a kept terminal session",
           "[tunnel]") {
     TunnelFixture f;
@@ -648,8 +662,10 @@ TEST_CASE("tunnel: rejected sources stop at drop_bad_source through the receive 
         INFO("from=" << from.to_string());
         const auto sent_before = f.sent.size();
         loop.receive_datagram(from, hello(kPeerEpoch, seq++, from).wire());
-        REQUIRE(f.sent.size() == sent_before + 1);
-        REQUIRE(f.sent.back().to == from);
+        // HELLO_ACK 이 그 출발지로 나간다. 후보 밖 출발지면 그 뒤에 검증 HELLO 도 나간다 (10.4 (c)).
+        REQUIRE(f.sent.size() > sent_before);
+        REQUIRE(f.sent[sent_before].type() == PacketType::kHelloAck);
+        REQUIRE(f.sent[sent_before].to == from);
     }
     REQUIRE(tunnel_calls == 3);
     REQUIRE(loop_counters.value(Counter::DropBadSource) == 12);

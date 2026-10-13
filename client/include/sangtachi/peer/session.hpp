@@ -16,7 +16,7 @@
 // | 타이머 시계 | 모든 메서드가 `now` 를 인자로 받는다 | 11장 마감을 시계 주입으로 시험한다 (roadmap.md Phase 4 검증의 keepalive 주기, 종료 상태 보존) |
 // | RTT 시계 | `SessionIo::rtt_clock_us` | concurrency.md 4장. RTT 만 QueryPerformanceCounter 다. 두 시계를 비교하지 않는다 |
 // | 송신 | `SessionIo::send`. 성공이면 참 | 9.2 `sent_ack` 는 `sendto` 성공 뒤에만 선다. 실패면 `tx_err_ack` (6장) |
-// | 난수원 | 세션이 쓰지 않는다. epoch 와 nonce 는 만든 쪽(터널)이 뽑아 `SessionConfig` 로 넘긴다 | 4.3, 5.1. 뽑는 함수는 peer/epoch 다 |
+// | 난수원 | `SessionIo::random`. 세션은 probe nonce 만 뽑는다. epoch 와 시도 nonce 는 만든 쪽(터널)이 뽑아 `SessionConfig` 로 넘긴다 | 4.3, 5.1. 뽑는 함수는 peer/epoch 다 |
 //
 // `send` 의 계약은 EventLoop::send_datagram_uncounted 와 같다. `socket.error` 줄은 그 함수가 내고
 // **`tx_err_send` 는 세션이 자기 표에 올린다** (6장). `HELLO_ACK` 이면 `tx_err_ack` 도 같이 올린다.
@@ -45,9 +45,11 @@
 // 터널이 8.1 공통 검사 1~8 과 9.4.1 종료 상태 폐기를 마친 패킷을 넘긴다. 여기서는 그 뒤를
 // 문서 순서 그대로 한다 (8장 머리, ADR 0021).
 //
-// 1. 8.2 epoch 및 출발지 검사. `HELLO`/`HELLO_ACK` 은 `virtual_ip` 를 epoch 보다 먼저 본다
+// 1. 8.2 epoch 및 출발지 검사. `HELLO`/`HELLO_ACK` 은 `virtual_ip` 를 epoch 보다 먼저 본다.
+//    `HELLO_ACK` 은 probe nonce 행을 시도 nonce 행보다 먼저 본다
 // 2. 9.5 재협상. 8.2 가 다른 epoch 의 `HELLO` 를 보내는 자리다. **8.3 보다 먼저 도는 유일한 부수
-//    효과다** (4.5, 8.3)
+//    효과다** (4.5, 8.3). 1번이 probe 행을 보기 전에 5초가 찬 잠정 경로를 치우는 것은 이 패킷의
+//    부수 효과가 아니라 항목 수명이다. `poll` 이 먼저 돌았어도 같은 결과다
 // 3. 8.3 중복 억제. 창은 하나다. 그 패킷이 실은 epoch 의 창이 곧 이 창이다. 이 자리에 오는
 //    패킷의 epoch 는 고정값이거나(재협상이 방금 새로 고정한 것 포함), 미고정일 때 오는
 //    `HELLO`/`HELLO_ACK` 이고 그때 창은 비어 있다 (8.3)
@@ -68,6 +70,15 @@
 // | 8.4 를 통과했는데 갈 곳이 없는 `DATA` | 유휴 타이머 갱신과 학습은 하고 `drop_no_sink` | 9.4 "모든 검증을 통과한 패킷". `drop_no_sink` 는 검증이 아니라 출구다 (concurrency.md 3장) |
 // | 만료한 `pending_pings` 항목에 온 `PONG` | 조회 전에 만료 항목을 치우므로 `drop_unmatched_pong` | 5.5 "5초를 넘긴 항목은 표본을 버리고 제거한다" |
 // | 재협상과 `next_ping_id` | 되돌리지 않는다 | 5.5 "세션 시도마다 0에서". 재협상은 새 시도가 아니다(9.5 5번) |
+// | 잠정 경로를 올리는 계기 | 위 머리의 학습 조건에서 (c) 만 못 한 패킷, 그리고 재협상을 일으킨 `HELLO`. `CLOSE` 는 세션을 끝내므로 올리지 않는다 | 10.4 (c), 9.5 9번 |
+// | 이미 잠정 경로인 주소 | 다시 올리지 않는다. 토큰도 쓰지 않는다 | 10.4 "경로당 검증 `HELLO` 1회", roadmap.md Phase 4 의 토큰 셈 |
+// | 회신과 등록의 순서 | 9.4 전이표의 동작(회신)이 먼저, 등록이 뒤다. 토큰이 하나 남았으면 `HELLO_ACK` 이 쓴다 | 9.4 `HELLO` 행의 순서 |
+// | probe nonce 를 뽑지 못함 | 등록하지 않고 토큰도 쓰지 않는다. 카운터는 없다 | 5.1. 실패를 고정값으로 대신하지 않는다(peer/epoch) |
+// | 버킷의 보충 | 1ms 마다 토큰 5/1000 개씩 잇달아 채운다. 처음에는 가득 차 있다 | 9.4 "초당 5개, 순간 10패킷". 고정 창으로 세지 않는다 |
+// | 잠정 경로 자리의 만료 | `등록 + 5초 <= now`. 수신 조회 전과 `poll` 에서 치운다. `next_deadline` 에 들지만 `timer.tick` 은 내지 않는다 | 11장 만료 값 표. 타이머가 아니라 항목 수명이다 |
+// | echo 를 받은 경로 | 자리가 빌 때까지 같은 nonce 의 echo 를 다시 받아도 같은 판정이다 | 5.1 "5초간 별도 표에 보관한다" |
+// | 종료 상태 진입 | 잠정 경로 표를 비운다. 아직 echo 가 없던 경로는 `path_probe_failed` 로 세지 않는다 | 10.4 "`path_probe_failed` 는 6번에서만 오른다" |
+// | 재협상과 잠정 경로 표, 예산 | 되돌리지 않는다 | 9.5 3번 목록에 없다 |
 //
 // ## 타이머 이름 (architecture.md 9장 timer.tick)
 //
@@ -85,15 +96,17 @@
 // 11장 "만료 값" 표의 항목 수명(`pending_pings`, 종료 세션 보존 등)은 타이머가 아니라 내지 않는다.
 // 유휴의 기준 시각은 마지막 갱신이다.
 //
-// ## 3차 G 의 자리
+// ## 후보 집합 밖 (10.4 (c) 경로 검증, 9.4 무검증 목적지 공통 예산)
 //
-// 후보 집합 밖 출발지의 경로 검증(probe nonce 표, `MAX_PROBE_PATHS`, 검증 `HELLO`, `path_probe_failed`)과
-// 9.4 무검증 목적지 공통 예산(`drop_unverified_tx`)은 여기 없다. 이음새는 둘이다.
+// **검증된 주소**는 승인된 후보 집합에 있거나 지금의 `peer_endpoint` 인 주소다. 그 밖이 9.4 의 무검증
+// 목적지다. 무검증 목적지로 나가는 송신 셋(`HELLO_ACK`, `PONG`, 검증 `HELLO`)은 세션당 토큰 버킷
+// 하나를 쓴다. 토큰이 없으면 보내지 않고 `drop_unverified_tx` 다. `HELLO_ACK` 을 보내지 않았으면
+// `sent_ack` 도 서지 않고, 송신 실패가 아니므로 `tx_err_ack` 도 아니다.
 //
-// - `send_reply` 한 곳으로 무검증 목적지 회신(`HELLO_ACK`, `PONG`)이 나간다. 예산은 여기에 건다
-// - `HELLO_ACK` 의 nonce 대조가 시도 nonce 하나만 본다. probe nonce 행은 그 앞에 들어온다
-//
-// 그때까지 후보 집합 밖 출발지는 학습하지 않을 뿐이고(10.4 (c)) 회신은 예산 없이 나간다.
+// 10.4 (a)(b) 를 만족했는데 출발지가 검증된 주소가 아니면 학습하지 않고 그 주소를 잠정 경로로
+// 올린다. 10.4 (c) 1~4 번 순서다. 잠정 경로마다 probe nonce 하나를 뽑아 검증 `HELLO` 를 1회 보낸다.
+// 그 nonce 를 같은 주소에서 echo 한 `HELLO_ACK` 은 8.2 의 probe 행이다. (b) 도 만족하면 그 주소로
+// 전환한다. 자리는 등록부터 5초가 지나야 빈다. 그때까지 echo 가 없었으면 `path_probe_failed` 다.
 
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
@@ -165,6 +178,7 @@ struct SessionIo {
     RetiredEpochs* retired = nullptr;    // 9.5 1번의 등록 자리. 널이 아니다
     MicrosFn rtt_clock_us;               // 비면 RTT 표본을 만들지 않는다
     DataSink data_sink;                  // 비면 drop_no_sink (concurrency.md 3장 제품 빌드)
+    RandomFn random;                     // probe nonce (5.1). 비우면 platform::random_bytes (peer/epoch)
     TransitionFn on_transition;          // 상태가 바뀔 때마다. 비어도 된다
 };
 
@@ -223,6 +237,7 @@ public:
     [[nodiscard]] std::uint32_t next_sequence() const noexcept { return next_seq_; }
     [[nodiscard]] std::size_t renegotiations() const noexcept { return renegotiations_; }
     [[nodiscard]] std::size_t pending_pings() const noexcept { return pending_pings_.size(); }
+    [[nodiscard]] std::size_t probe_paths() const noexcept { return probes_.size(); }
     [[nodiscard]] std::uint64_t next_ping_id() const noexcept { return next_ping_id_; }
     [[nodiscard]] std::optional<std::uint64_t> last_rtt_us() const noexcept { return last_rtt_us_; }
     [[nodiscard]] std::size_t rtt_samples() const noexcept { return rtt_samples_; }
@@ -258,14 +273,19 @@ private:
     // 송신 하나. sequence 를 할당하고 1 올린 뒤 보낸다 (4.4). 실패해도 번호는 쓴 것이다.
     bool send_packet(tunnel::PacketType type, std::span<const std::byte> payload,
                      const network::Endpoint& to);
-    // 받은 데이터그램의 출발지로 가는 회신 (9.4 "회신은 받은 데이터그램의 출발지로"). 3차 G 가
-    // 무검증 목적지 공통 예산을 이 자리에 건다.
-    bool send_reply(tunnel::PacketType type, std::span<const std::byte> payload,
-                    const network::Endpoint& to);
+    // 후보 집합에 있거나 지금의 peer_endpoint 인가 (위 머리 "후보 집합 밖").
+    [[nodiscard]] bool is_verified(const network::Endpoint& endpoint) const noexcept;
+    // 9.4 무검증 목적지 공통 예산. 검증된 주소면 쓰지 않고 참. 아니면 토큰 하나를 쓰고 참, 없으면
+    // drop_unverified_tx 를 올리고 거짓이다. 거짓이면 보내지 않는다.
+    bool spend_for(const network::Endpoint& to, Millis now);
+    // 10.4 (c) 1~4번. 이미 잠정 경로인 주소면 아무것도 하지 않는다.
+    void start_path_probe(const network::Endpoint& from, Millis now);
+    // 5초가 찬 잠정 경로를 비운다. echo 가 없던 것은 path_probe_failed (10.4 (c) 6, 7번).
+    void expire_probes(Millis now);
     // `DATA`, `KEEPALIVE`, `PING` 의 목적지 (10.4). 학습했으면 그 하나, 아니면 후보 전체.
     void send_to_peer(tunnel::PacketType type, std::span<const std::byte> payload);
     void send_hello_round();
-    void send_hello_ack(const tunnel::Nonce& echo, const network::Endpoint& to);
+    void send_hello_ack(const tunnel::Nonce& echo, const network::Endpoint& to, Millis now);
     void send_keepalive(Millis now);
     void send_ping(Millis now);
     void renegotiate(const RxPacket& packet, const tunnel::Nonce& nonce, Millis now);
@@ -314,6 +334,17 @@ private:
     std::size_t rtt_samples_ = 0;
 
     std::optional<std::uint32_t> last_generation_;  // 5.7 수신 검증 3번
+
+    struct ProbePath {
+        network::Endpoint to;
+        tunnel::Nonce nonce{};
+        Millis registered = 0;
+        bool answered = false;  // echo 가 왔다. 자리가 빌 때 path_probe_failed 가 아니다
+    };
+    std::vector<ProbePath> probes_;  // 10.4 (c). MAX_PROBE_PATHS 이하. 등록 순서다
+    // 9.4 공통 예산. 단위는 토큰의 1/1000 이다. 보충이 1ms 에 5 라서 정수로 떨어진다.
+    std::uint64_t budget_milli_;
+    Millis budget_at_;  // 마지막으로 보충한 시각
 
     bool punch_started_ = false;
     std::optional<Millis> hello_due_;

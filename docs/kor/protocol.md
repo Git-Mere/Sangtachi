@@ -676,7 +676,7 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 | `HELLO` | `virtual_ip`가 그 세션의 상대 가상 IP와 일치할 것(5.1). epoch 고정 여부와 무관하게 수용. 출발지가 후보 집합에 있을 것을 요구하지 않는다(7장 출발지 위생은 이미 통과했다). 9.3 epoch 규칙 적용 |
 | `HELLO_ACK` (시도 nonce echo, epoch 미고정 또는 고정값과 일치) | `echo_nonce`가 **우리가 이번 시도에서 보낸 nonce**와 일치. 핸드셰이크 증거로 쓰고(`got_ack`), epoch가 미고정이면 이 패킷으로 고정한다 |
 | `HELLO_ACK` (시도 nonce echo, epoch가 고정값과 다름) | 폐기, `drop_stale_epoch` |
-| `HELLO_ACK` (probe nonce echo) | `echo_nonce`가 활성 probe nonce 중 하나와 일치하고 출발지가 그 probe를 보낸 주소와 같을 것. **해당 잠정 경로만 검증한다.** `got_ack`를 세우지 않고 epoch도 고정하지 않는다 |
+| `HELLO_ACK` (probe nonce echo) | `echo_nonce`가 활성 probe nonce 중 하나와 일치하고 출발지가 그 probe를 보낸 주소와 같을 것. epoch 가 고정값과 다르면 폐기, `drop_stale_epoch`(아래). **해당 잠정 경로만 검증한다.** `got_ack`를 세우지 않고 epoch도 고정하지 않는다 |
 | `HELLO_ACK` (그 외) | 폐기, `drop_bad_nonce` |
 | 그 외 전부 | epoch 미고정이면 폐기, `drop_no_epoch`. 고정된 값과 다르면 폐기, `drop_stale_epoch` |
 
@@ -690,6 +690,11 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 > 전부 `drop_stale_epoch`에 걸리는 세션이 `CONNECTED`가 된다. 버리는 쪽은 잃는 것이 없다.
 > 상대가 살아 있다면 그쪽의 새 `HELLO`가 곧 도착해 9.5 재협상이 같은 일을 정상 경로로
 > 처리한다.
+
+**probe nonce echo 도 고정된 epoch 아래서만 받는다.** 같은 이유다. 다른 epoch 의 echo 는 상대가
+새 시도를 시작했다는 뜻이고, 그것으로 이 시도의 `peer_endpoint` 를 바꾸지 않는다. 검증 `HELLO` 는
+epoch 를 고정한 뒤에만 나가므로 미고정인 경우는 없다. 10.4 (c) 의 계기는 8.2 부터 타입별 검사까지
+통과한 패킷이고, 그런 패킷은 epoch 를 이미 고정했거나 그 자리에서 고정한다 (9.3, 9.5 4번).
 
 ### 8.3 중복 억제
 
@@ -1360,7 +1365,9 @@ peer_endpoint = 아래 조건을 모두 만족하는 가장 최근 패킷의 출
 3. 새 주소를 잠정 경로로 기록한다. peer_endpoint 는 그대로 둔다.
 4. 그 주소로 probe nonce 를 담은 HELLO 를 1회 보낸다 (5.1). 재전송하지 않는다.
    앞에서 확보한 토큰을 여기서 쓴다.
-5. 같은 주소에서 그 probe nonce 를 echo 한 HELLO_ACK 이 오면 그때 peer_endpoint 를 전환한다.
+5. 같은 주소에서 그 probe nonce 를 echo 한 HELLO_ACK 이 오고 그 ACK 이 (b)도 만족하면 그때
+   peer_endpoint 를 전환한다. 재정렬로 수용된 ACK 은 전환하지 않는다. 검증을 통과한 것은
+   그 ACK 하나이고 주소를 따로 기억하지 않는다.
    이 ACK 은 핸드셰이크 상태(got_ack, epoch)를 바꾸지 않는다.
 6. 5초 안에 오지 않으면 잠정 경로를 버리고 path_probe_failed 를 올린다.
 7. 표의 자리는 **결과와 무관하게 5초를 채우고 비워진다.** 전환에 성공해도 그 자리를
@@ -1380,6 +1387,9 @@ peer_endpoint = 아래 조건을 모두 만족하는 가장 최근 패킷의 출
 
 > **왜.** 원 패킷을 버리면 유휴 타이머가 갱신되지 않아 살아 있는 세션이 단절로 판정될 수
 > 있다.
+
+**`path_probe_failed` 는 6번에서만 오른다.** 5초 안에 echo 가 온 경로는 (b)를 못 해 전환하지 않았어도
+세지 않는다. 5초를 채우기 전에 세션이 종료 상태에 들어가면 잠정 경로 표를 비우고 세지 않는다.
 
 **표가 가득 찼을 때 밀어내지 않는 이유.** 가장 오래된 것을 밀어내면 위조 출발지를 빠르게 보내는 쪽이
 진짜 새 경로를 표에서 밀어낼 수 있다. 채우는 쪽이 공격자이므로 **먼저 온 것을 지키는 편이

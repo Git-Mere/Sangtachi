@@ -6,8 +6,8 @@
 // 이 파일은 값을 뽑고 목록을 들고 있을 뿐이다. 언제 뽑고 언제 등록하는지는 세션이 정한다
 // (4.3 의 등록 표, 9.5 재협상 1번과 5번, 9.6 실패 전이).
 //
-// probe nonce(10.4 (c)) 와 그 표는 여기에 없다. 5.1 이 두 종류를 같은 표에 섞지 말라고
-// 정했으므로 시도 nonce 의 폐기 목록(RetiredNonces)을 probe 쪽에서 쓰지 않는다.
+// probe nonce(10.4 (c)) 는 뽑는 함수만 여기 있고 그 표는 세션이 갖는다. 5.1 이 두 종류를 같은 표에
+// 섞지 말라고 정했으므로 시도 nonce 의 폐기 목록(RetiredNonces)을 probe 쪽에서 쓰지 않는다.
 
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/timer.hpp"
@@ -125,5 +125,9 @@ private:
 // 같은 이유다.
 [[nodiscard]] std::optional<Nonce> generate_attempt_nonce(const RetiredNonces& retired, Millis now,
                                                           const RandomFn& random = {});
+
+// 잠정 경로 하나의 probe nonce 를 뽑는다 (5.1, 10.4 (c)). 폐기 목록이 없다. 5초 뒤 표와 함께
+// 사라지고 다시 쓰지 않는다는 규칙도 없다. 난수원이 실패하면 nullopt 다.
+[[nodiscard]] std::optional<Nonce> generate_probe_nonce(const RandomFn& random = {});
 
 }  // namespace sangtachi::peer

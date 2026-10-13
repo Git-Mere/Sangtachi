@@ -113,4 +113,12 @@ std::optional<Nonce> generate_attempt_nonce(const RetiredNonces& retired, Millis
     }
 }
 
+std::optional<Nonce> generate_probe_nonce(const RandomFn& random) {
+    Nonce nonce;
+    if (!draw(random, nonce.bytes)) {
+        return std::nullopt;
+    }
+    return nonce;
+}
+
 }  // namespace sangtachi::peer

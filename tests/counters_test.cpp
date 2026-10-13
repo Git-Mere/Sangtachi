@@ -21,7 +21,7 @@ using sangtachi::to_token;
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
     // 이름은 protocol.md 5.7 / 6장 / 7장 / 8장 과 concurrency.md 3장 / 6장 / 8장 이 갖는다.
     // 개수가 바뀌면 이 줄을 먼저 보게 된다.
-    REQUIRE(kCounterCount == 53);
+    REQUIRE(kCounterCount == 54);
 }
 
 TEST_CASE("counters: every token is unique, non-empty and sorted", "[counters]") {

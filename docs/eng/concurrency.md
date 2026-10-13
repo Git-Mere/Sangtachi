@@ -290,7 +290,7 @@ next step that section points to with "just before Wintun injection" is empty.
 | Build | `DATA` that passed 8.4 |
 |------|------------------|
 | Adapter present (Phase 6 onward) | the injection path above |
-| No adapter, test build | handed to the **payload hook**. The hook is a single function that takes the extracted payload bytes and length as they are, and the M-5 byte-for-byte comparison and the echo responder of [`roadmap.md`](roadmap.md) Phase 4 attach at that point |
+| No adapter, test build | handed to the **payload hook**. The hook is a single function that takes the extracted payload bytes and length as they are, and the `data.rx` used by the M-5 comparison and the echo responder of [`roadmap.md`](roadmap.md) Phase 4 attach at that point |
 | No adapter, product build | dropped, and `drop_no_sink` is incremented |
 
 **The hook is not written as a test-only path.** It has to hang at the same point after 8.1~8.4
@@ -298,6 +298,11 @@ validation so that the test exercises the real receive path. This is the same re
 `protocol.md` chapter 7 Receive Classification pins the receive entry point to one place with
 the source hygiene test, and this is the symmetric exit. `drop_no_sink` is a diagnosis in
 itself, because a non-zero value in a product build means the design has drifted.
+
+**The hook slot lives in core and the product build leaves it empty.** The code that attaches to the slot,
+that is the `data.rx` line of the M-5 comparison and the echo responder, is compiled only under the
+test-build CMake option. The product binary has no code to attach to the slot. The slot itself is not
+split by test build because in Phase 6 the same place leads to the injection path above.
 
 **Splitting "ring full" into a separate counter is done after confirmation.** Which call reports
 the failure and in what form (return value, `GetLastError`, or whether it is reported at all) is

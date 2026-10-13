@@ -472,7 +472,7 @@ Without `CLOSE`, graceful shutdown and a crash cannot be distinguished, and the 
 
 ```text
  Offset  Size  Field        Description
-   0      4   generation   uint32. The host increments it each time the roster changes
+   0      4   generation   uint32. 0 when the room is set up. The host increments it each time the roster changes
    4      1   count        member count. At least 1, at most MAX_PEERS (5)
    5    var   members      n members. The layout below, repeated back to back with no gaps
 
@@ -530,6 +530,18 @@ between players. In a star with no relay, players do not establish tunnels with 
 | After that | Send the same content 2 more times at 5-second intervals |
 | No change | Keep sending at 15-second intervals |
 
+**There is one `generation` per host.** It is not kept per session. It is 0 when the room is set up, and
+the roster then holds only the host. Even if the first value a late-joining player receives is not 0,
+receive check 3 accepts it (it is the first value).
+
+**A roster change is a change in the content to carry.** If any of the members, names, or bit 0 differs
+from the previous roster, it changed. A `host_report` response with the same content is not a change.
+Leaving `CONNECTED` through renegotiation (9.5), which turns bit 0 to 0, is also a change.
+
+**A session entering `CONNECTED` is itself a roster change** (bit 0). The "once immediately on entry" of
+the Chapter 11 `ROSTER` period and the immediate send in the first row of the table above are the same
+single send. That session does not get it twice.
+
 > **Why periodic sending.** The tunnel is UDP, so if one copy is lost that player's screen stays
 > wrong. Adding acknowledgement and retransmission puts a reliability layer on the tunnel and
 > grows the retransmission state per session. A period writes the bound as a single value and adds
@@ -559,7 +571,8 @@ The structure check of check 2:
 > screen would break the line rules of standard output and the log.
 
 **The roster is for display only.** The received value changes neither receive validation nor
-routing. The same goes for names.
+routing. The same goes for names. A player emits one `roster` log line per accepted roster
+([`architecture.md`](architecture.md) Chapter 9 Log Output).
 
 - The comparison set of check 7 in 8.1 Common Checks is **decided by the session.** Even a packet
   that arrives with a `peer_id` from the roster is `drop_unknown_peer` if there is no session with
@@ -1650,7 +1663,7 @@ validation.
 | `HELLO` retransmission | 200ms interval | Punch start, **9.5 renegotiation (step 10)**. For renegotiation before the punch start, at the punch start (9.5) | Each send | `CONNECTED` reached, 9.6 failure transition |
 | Punch deadline | 10s | **Actual local punch start** | 9.5 renegotiation. Not reset by renegotiation before the punch start (9.5) | `CONNECTED` reached |
 | `KEEPALIVE` | 15s interval | `CONNECTED` entry, **after sending once immediately** | Each send | Session end |
-| `ROSTER` period | 15s interval. **Host only** | `CONNECTED` entry, after sending once immediately | Each send | Session end |
+| `ROSTER` period | 15s interval. **Host only** | `CONNECTED` entry, after sending once immediately. That one send is the same send as the immediate send of a 5.7 roster change | Each send | Session end |
 | `ROSTER` change resend | 5s interval, 2 times | After the immediate send on a roster change | Ends once the 2 sends are done | Session end, next roster change |
 | Idle timeout | 50s | `CONNECTED` entry | Packet received that passed every validation for its type (9.4) | Session end |
 | `PING` | 5s interval. **Nothing is sent on entry. The first send is 5s after entry** | `CONNECTED` entry | Each send | Session end |

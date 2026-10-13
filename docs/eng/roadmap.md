@@ -610,9 +610,9 @@ Contracts of the tools the verification procedures use. These are equipment, not
     that read counters take their snapshot with this command
   - `raw <byte count>` is the raw send of Phases 1-2, and its contract is in `architecture.md` 3.5
     Startup Inputs
-  - `send <n> [size]` sends `n` synthetic inner IPv4 packets as `DATA`
+  - `send <n> [size] [to]` sends `n` synthetic inner IPv4 packets as `DATA`
 
-  The contract of `send <n> [size]`.
+  The contract of `send <n> [size] [to]`.
 
   - `n` is an integer from 1 to 1000 inclusive
   - `size` defaults to the 100 bytes below; if given, it is an integer from 20 to `MAX_INNER` (1452)
@@ -621,9 +621,12 @@ Contracts of the tools the verification procedures use. These are equipment, not
   - If the chosen session is not `CONNECTED`, nothing is sent and one `WARN` line is left. The
     `tx_drop_not_connected` check of 8.5 blocks it anyway, but filtering at the command stage keeps
     the test's subject clear
-  - **How the destination is chosen is decided together with the routing table.** With several
-    sessions, nothing decides which session it goes to without a destination
-    (`protocol.md` 8.5 Transmit-Side Validation)
+  - `to` is the destination virtual IP (dotted decimal). It goes into the inner packet's destination
+    field as is, and the 8.5 routing table picks the session with it (`protocol.md` 8.5 Transmit-Side
+    Validation)
+  - `to` may be omitted only when there is exactly one `CONNECTED` session. Then it is that session's
+    peer virtual IP. If there are two or more and it is omitted, nothing is sent and one `WARN` line is
+    left. This makes the command show where the host sends among several peers
   - Transmission is not crammed into one round; it is split the same way as the `MAX_DRAIN` budget
   - If `sendto` fails midway, stop there and record the count sent
   - **Pin the bytes that go out.** The table below is that layout
@@ -651,7 +654,7 @@ Contracts of the tools the verification procedures use. These are equipment, not
 | `40` | 1 | **Direction marker.** `0xA5` is a request, `0x5A` is an echo reply |
 | `41..100` | 59 | `0xA5` repeated |
 
-> **Why.** The byte values must be fixed so that the M-5 byte-for-byte comparison below and the RTT
+> **Why.** The byte values must be fixed so that the M-5 match comparison below and the RTT
 > baseline echo use the same input.
 
 Nothing other than the checksum and the send time may be derived. **Therefore, for a single
@@ -882,17 +885,26 @@ process table line. Do not pick by name alone.
 
 - Round-trip a synthetic inner IPv4 packet as `DATA` in both directions and the bytes match (M-5).
   **Pin the comparison point**
-  - Compare, byte for byte including length, the payload byte string the sender held just before
-    encapsulation with the payload byte string the payload hook received after passing 8.4 validation
+  - Compare the payload byte string the sender held just before encapsulation with the payload byte
+    string the payload hook received after passing 8.4 validation. The values compared are the length
+    and the `sha256` of the whole byte string. When both match, the byte strings are taken as equal
   - That hook is where a `DATA` that passed 8.4 goes in a build without an adapter, and its
     contract is in `concurrency.md` chapter 3 One Loop Iteration. The echo
     responder attaches at the same place
   - Do not compare log strings or a reconstructed header
-  - In the product build, also confirm that such a `DATA` is dropped as `drop_no_sink`. The hook must
-    not remain in the product build
+  - The byte strings are taken out through the test-build log. The sender emits `data.tx` just before
+    encapsulation and the receiver's hook emits `data.rx`, both carrying `len` and `sha256`
+    (`architecture.md` chapter 9 Log Output). A script matches the two processes' lines in order. The
+    hash is computed from the actual byte string at that point
+  - In the product build, also confirm that such a `DATA` is dropped as `drop_no_sink`. Test-only code,
+    that is the sender's `data.tx` and the hook attachments `data.rx` and echo responder, is compiled only
+    under the test-build CMake option. The
+    hook slot itself stays in core and the product build leaves it empty (`concurrency.md` chapter 3 One
+    Loop Iteration)
 
   > **Why.** Comparing log strings or a reconstructed header passes even when the header is rewritten
-  > or padding is added.
+  > or padding is added. `sha256` is computed over the whole byte string at the comparison point, so if
+  > that happens the value differs.
 - `DATA` with a wrong inner source/destination virtual IP is discarded as `drop_inner_src` / `drop_inner_dst`
 
 **Display names.**
@@ -1052,7 +1064,7 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
   payload hook).
 
   **How the size is given, and the note on 20 bytes.** The Phase 4 console command is used as
-  `send <n> [size]`. Omitting `size` gives the 100-byte layout pinned in Phase 4; giving it builds an
+  `send <n> [size] [to]`. Omitting `size` gives the 100-byte layout pinned in Phase 4; giving it builds an
   inner IPv4/UDP packet of that size.
 
   - 20 bytes is an IPv4 header only, so neither the UDP header nor the direction marker (offset 40)

@@ -1065,8 +1065,11 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `timer.tick` | `name`, `elapsed_ms` (milliseconds actually elapsed since the previous expiry) | Phase 1 drain budget, Phase 3 `[loop]` survival while the control plane is dead |
 | `rx.raw` | `from`, `len`, `sha256` | Phase 1 raw send/receive comparison (3.5) |
 | `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
+| `data.tx` | `to` (destination virtual IP), `len`, `sha256` (the inner packet just before encapsulation). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
+| `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
+| `roster` | `generation`, `members` (per member `<peer_id>/<virtual IP>/<bit 0>/<name>`, joined with commas) | Phase 4 `ROSTER` receive check ([`protocol.md`](protocol.md) 5.7) |
 
-Events not listed here may be added freely. **Only these eleven keys and their field names do not
+Events not listed here may be added freely. **Only these fourteen keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
 **`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From

@@ -386,16 +386,21 @@ pktmon filter remove
 
 **판정.**
 
+**캡처는 A 한쪽이면 된다.** B 가 AWS 를 거쳐 보낸다면 A 에 도착한 터널 패킷의 출발지가 Elastic IP 다. 그래서 A 에서 받은
+패킷의 출발지가 B 의 공인 주소이고 보낸 패킷의 목적지도 그 주소이면 두 방향 모두 직접이다.
+
 | 확인 | 통과 조건 |
 |------|-----------|
-| AWS 미경유 | 각 PC 의 캡처에서 `udp && ip.addr == <Elastic IP>` 가 0개. 제어 서버와는 TCP 만 오간다 |
+| AWS 미경유 | A 의 캡처에서 `udp && ip.addr == <Elastic IP>` 가 0개. 제어 서버와는 TCP 만 오간다 |
 | 상대와 직접 | `udp.port == P && udp[8:4] == 53:41:4e:47` 의 상대 주소가 모두 상대의 후보 가운데 하나다. 후보는 자기 로그의 `control.peers candidates=` 다 |
-| 양방향 | 두 PC 모두 상대에게서 온 `KEEPALIVE`, `DATA`, `PONG` 이 있다 |
+| 양방향 | A 의 캡처에 B 가 보낸 `KEEPALIVE`, `DATA`, `PONG` 이 있다. B 가 받은 것은 B 의 로그로 본다. `session.rtt` 가 있고(그 `PONG` 이 A 에게서 왔다), 세션이 끝날 때의 `counter name=drop_no_sink` 가 A 가 보낸 `DATA` 수다(제품 빌드) |
 
 ### D2. 배포 환경의 출발지 포트
 
-C2 를 두 PC 에서 다시 본다. STUN 질의는 공개 서버로, 터널은 상대 공인 주소로 나간다. 판정은 C2 와 같다. 각 PC 의
-`stun.result mapped=` 두 줄이 같은지도 적는다.
+D1 의 A 캡처로 A 한 쪽만 본다. STUN 질의는 공개 서버로, 터널은 B 의 공인 주소로 나간다. **판정은 A 의 것만이다.** 실행 중
+A 의 클라이언트가 가진 UDP 포트가 `P_A` 하나이고(`Get-NetUDPEndpoint -OwningProcess <PID>`), 그 포트에서 나간 STUN 과 터널의
+출발지 포트 집합이 둘 다 `{P_A}` 이며, STUN 응답이 `P_A` 로 돌아온다. B 는 같은 코드라 따로 보지 않는다. 같은 클라이언트의
+두 프로세스는 C2 가 이미 봤다. 두 PC 의 `stun.result mapped=` 두 줄이 각각 같은지는 로그로 적는다.
 
 ### D3. 같은 LAN 의 두 PC
 
@@ -404,7 +409,7 @@ C2 를 두 PC 에서 다시 본다. STUN 질의는 공개 서버로, 터널은 �
 
 학습한 주소는 로그 `session.endpoint peer_id=<상대> endpoint=<IPv4:port>` 가 싣는다(`architecture.md` 9장). 그 주소가
 상대의 로컬 후보이면 기대대로이고, 상대의 공인 후보이면 헤어핀으로 적는다. 도달 판정은 로그의 `session.state ... to=CONNECTED`
-다. 캡처에서는 `CONNECTED` 뒤 각 PC 가 보낸 `KEEPALIVE` 의 목적지가 그 주소와 같은지 대조한다.
+다. 캡처가 있으면 `CONNECTED` 뒤 각 PC 가 보낸 `KEEPALIVE` 의 목적지가 그 주소와 같은지도 대조한다. 판정은 로그만으로 한다.
 
 ## 기록 양식
 

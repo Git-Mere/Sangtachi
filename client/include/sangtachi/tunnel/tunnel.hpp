@@ -50,6 +50,7 @@
 #include "sangtachi/peer/session.hpp"
 #include "sangtachi/timer.hpp"
 #include "sangtachi/tunnel/packet.hpp"
+#include "sangtachi/tunnel/roster_publisher.hpp"
 #include "sangtachi/tunnel/router.hpp"
 
 #include <cstddef>
@@ -152,10 +153,10 @@ public:
     [[nodiscard]] std::vector<std::uint32_t> connected_peers() const;
     [[nodiscard]] std::optional<std::uint32_t> local_virtual_ip() const noexcept { return local_vip_; }
 
-    // 세션 타이머와 종료 세션 보존 마감 가운데 가장 이른 것 (concurrency.md 4장).
+    // 세션 타이머, 종료 세션 보존 마감, `ROSTER` 타이머 가운데 가장 이른 것 (concurrency.md 4장).
     [[nodiscard]] std::optional<Millis> earliest_deadline() const noexcept;
 
-    // 마감이 지난 세션 타이머를 돌리고, 2분이 지난 종료 세션을 지운다 (5.6).
+    // 마감이 지난 세션 타이머를 돌리고, `ROSTER` 를 보내고, 2분이 지난 종료 세션을 지운다 (5.6).
     void run_timers(Millis now);
 
     // 활성 세션을 전부 사용자 종료로 닫는다 (5.6, quit). 세션은 남는다.
@@ -173,6 +174,12 @@ public:
     void emit_session_counters() const;
     [[nodiscard]] peer::RetiredEpochs& retired_epochs() noexcept { return retired_; }
     [[nodiscard]] const peer::RetiredNonces& retired_nonces() const noexcept { return retired_nonces_; }
+
+    // 호스트의 `ROSTER` (5.7, tunnel/roster_publisher). 방을 세울 때 자신의 항목으로 켜고, `host_report`
+    // 응답마다 `peers` 를 넘긴다(4차 J 가 잇는다). 플레이어는 켜지 않는다. 방을 떠나면 꺼진다.
+    void start_roster(const RosterPeer& self) { roster_.start(self); }
+    void set_roster_peers(std::vector<RosterPeer> peers) { roster_.set_peers(std::move(peers)); }
+    [[nodiscard]] const RosterPublisher& roster() const noexcept { return roster_; }
 
     // 8.5 를 통과해 캡슐화하기 직전의 내부 패킷마다 (시험 빌드의 `data.tx`). 제품 빌드는 비워 둔다.
     void set_tx_observer(std::function<void(std::span<const std::byte>)> observer) {
@@ -204,6 +211,7 @@ private:
     peer::RetiredNonces retired_nonces_;       // 5.1
     std::vector<peer::Nonce> ended_nonces_;    // 지워진 세션의 nonce. 다음 create_session 때 등록한다
     Router routes_;                            // 8.5 (tunnel/router)
+    RosterPublisher roster_;                   // 5.7. 호스트일 때만 켜진다
     std::optional<std::uint32_t> local_vip_;   // 8.5 검사 4번 (위 머리 표)
     std::function<void(const peer::Session&)> on_terminal_;
     std::function<void(std::span<const std::byte>)> on_tx_;

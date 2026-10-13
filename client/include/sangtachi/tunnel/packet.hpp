@@ -85,6 +85,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace sangtachi::tunnel {
@@ -315,5 +316,9 @@ struct RosterDecode {
 // 쓴 바이트 수를 돌려준다. count 가 1~MAX_PEERS 밖이거나, 이름이 `is_valid_name` 에
 // 어긋나거나, `out` 이 모자라면 아무것도 쓰지 않고 0 이다. flags 는 비트 0 만 쓴다.
 [[nodiscard]] std::size_t encode_roster(const Roster& roster, std::span<std::byte> out) noexcept;
+
+// architecture.md 9장 `roster` 줄의 `members` 값. 멤버마다 `<peer_id>/<가상 IP>/<비트 0>/<이름>` 을 쉼표로
+// 잇는다. 이름은 5.7 수신 검증 5번을 지난 값이라 공백이 없다.
+[[nodiscard]] std::string format_roster_members(const Roster& roster);
 
 }  // namespace sangtachi::tunnel

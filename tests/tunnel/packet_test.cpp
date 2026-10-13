@@ -983,3 +983,20 @@ TEST_CASE("packet: counter_name gives the counter each section names", "[packet]
         CHECK(counter_name(r.error) == r.name);
     }
 }
+
+TEST_CASE("roster: the log value lists members as id/vip/bit/name joined by commas",
+          "[tunnel][roster]") {
+    sangtachi::tunnel::Roster r;
+    r.count = 2;
+    r.members[0].peer_id = 7;
+    r.members[0].virtual_ip = 0x0A640001u;
+    r.members[0].connected = true;
+    r.members[0].name = {'H', 'o', 's', 't'};
+    r.members[0].name_len = 4;
+    r.members[1].peer_id = 4294967295u;
+    r.members[1].virtual_ip = 0x0A640005u;
+    r.members[1].connected = false;
+    r.members[1].name = {'b'};
+    r.members[1].name_len = 1;
+    REQUIRE(sangtachi::tunnel::format_roster_members(r) == "7/10.100.0.1/1/Host,4294967295/10.100.0.5/0/b");
+}

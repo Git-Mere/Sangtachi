@@ -550,7 +550,7 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
     // ---- 타입별 검사 (ADR 0021). 여기서 버려도 창에는 기록됐다 (8.3) ----
     std::uint64_t ping_id = 0;
     std::optional<tunnel::CloseReason> close_reason;
-    std::optional<std::uint32_t> generation;
+    std::optional<tunnel::Roster> roster;
     switch (type) {
         case PacketType::kData: {
             if (state() != SessionState::kConnected) {
@@ -593,7 +593,7 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             if (!decoded.ok()) {
                 return drop(tunnel::to_counter(decoded.error).value_or(Counter::DropTypeLength));
             }
-            generation = decoded.value.generation;
+            roster = decoded.value;
             break;
         }
         case PacketType::kHello:
@@ -673,9 +673,18 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             peer_close_reason_ = close_reason;
             enter_terminal(SessionState::kClosed, now);
             return RxResult{};
-        case PacketType::kRoster:
-            last_generation_ = generation;  // 명부 내용을 쓰는 일은 3차 I 다
+        case PacketType::kRoster: {
+            last_generation_ = roster->generation;
+            // 5.7: 받아들인 명부마다 roster 줄 하나 (architecture.md 9장).
+            const std::string members = tunnel::format_roster_members(*roster);
+            const LogField fields[] = {
+                field("peer_id", static_cast<std::uint64_t>(config_.peer_id)),
+                field("generation", static_cast<std::uint64_t>(roster->generation)),
+                field("members", members),
+            };
+            emit(LogLevel::Info, "roster", fields);
             break;
+        }
         case PacketType::kData:
             if (io_.data_sink) {
                 io_.data_sink(packet.payload);

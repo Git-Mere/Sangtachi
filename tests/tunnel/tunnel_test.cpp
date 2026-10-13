@@ -1147,6 +1147,315 @@ TEST_CASE("router: assign refuses a taken slot and release empties only its own"
     REQUIRE(r.lookup(0x0A640005u) == b);
 }
 
+// ---------------------------------------------------------------- 5.7 호스트의 ROSTER 송신 (3차 I)
+
+namespace {
+
+const tunnel::RosterPeer kMe{kLocalPeerId, kLocalVip, "Me"};
+
+std::vector<SentPacket> rosters(const TunnelFixture& f) {
+    std::vector<SentPacket> out;
+    for (const auto& p : f.sent) {
+        if (p.type() == PacketType::kRoster) {
+            out.push_back(p);
+        }
+    }
+    return out;
+}
+
+tunnel::Roster decoded(const SentPacket& p) {
+    const auto d = tunnel::decode_roster(p.payload, tunnel::RosterContext{true, std::nullopt});
+    REQUIRE(d.ok());
+    return d.value;
+}
+
+// 방을 세우고(0 번), 상대 하나를 명부에 올린다(1 번). 아직 CONNECTED 세션이 없어 아무것도 안 나간다.
+void host_with_alice(TunnelFixture& f) {
+    f.tunnel.start_roster(kMe);
+    f.tunnel.run_timers(f.now);
+    REQUIRE(f.tunnel.roster().generation() == 0);
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alice"}});
+    f.tunnel.run_timers(f.now);
+    REQUIRE(f.tunnel.roster().generation() == 1);
+    REQUIRE(rosters(f).empty());
+}
+
+}  // namespace
+
+TEST_CASE("roster: entering CONNECTED is one change and one send", "[tunnel][roster]") {
+    TunnelFixture f;
+    host_with_alice(f);
+    f.connect();
+    // 상태 전이는 표시만 한다. 루프가 같은 바퀴에 돌도록 마감이 지금이다
+    REQUIRE(f.tunnel.earliest_deadline() <= f.now);
+    REQUIRE(rosters(f).empty());
+    f.tunnel.run_timers(f.now);
+    const auto sent = rosters(f);
+    REQUIRE(sent.size() == 1);  // 11장의 진입 1회와 5.7 의 변경 1회가 같은 한 번이다
+    REQUIRE(sent[0].to == kCandA);  // 10.4: 학습한 peer_endpoint
+    const auto r = decoded(sent[0]);
+    REQUIRE(r.generation == 2);
+    REQUIRE(r.count == 2);
+    REQUIRE(r.members[0].peer_id == kLocalPeerId);
+    REQUIRE(r.members[0].connected);
+    REQUIRE(r.members[0].name_view() == "Me");
+    REQUIRE(r.members[1].peer_id == kPeerId);
+    REQUIRE(r.members[1].virtual_ip == kPeerVip);
+    REQUIRE(r.members[1].connected);
+    REQUIRE(r.members[1].name_view() == "Alice");
+}
+
+TEST_CASE("roster: a change is resent twice 5s apart, then every 15s", "[tunnel][roster]") {
+    TunnelFixture f;
+    host_with_alice(f);
+    f.connect();
+    const Millis t = f.now;
+    f.tunnel.run_timers(t);
+    sangtachi::testing::LogCapture logs;
+    auto count_at = [&](Millis now) {
+        f.now = now;
+        f.tunnel.run_timers(now);
+        return rosters(f).size();
+    };
+    REQUIRE(count_at(t + 4999) == 1);
+    REQUIRE(count_at(t + 5000) == 2);
+    REQUIRE(count_at(t + 9999) == 2);
+    REQUIRE(count_at(t + 10000) == 3);
+    REQUIRE(count_at(t + 24999) == 3);   // 주기는 마지막 송신(재송)부터 15초다
+    REQUIRE(count_at(t + 25000) == 4);
+    REQUIRE(count_at(t + 40000) == 5);
+    for (const auto& p : rosters(f)) {
+        REQUIRE(decoded(p).generation == 2);  // 같은 내용이다
+    }
+    const auto ticks = logs.with_event("timer.tick");
+    std::size_t resend = 0;
+    std::size_t period = 0;
+    for (const auto& line : ticks) {
+        resend += line.find(" name=roster.resend." + std::to_string(kPeerId) + " ") != std::string::npos;
+        period += line.find(" name=roster.period." + std::to_string(kPeerId) + " ") != std::string::npos;
+    }
+    REQUIRE(resend == 2);
+    REQUIRE(period == 2);
+}
+
+TEST_CASE("roster: the same content does not count as a change", "[tunnel][roster]") {
+    TunnelFixture f;
+    host_with_alice(f);
+    f.connect();
+    f.tunnel.run_timers(f.now);
+    f.sent.clear();
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alice"}});
+    f.tunnel.run_timers(f.now + 1);
+    REQUIRE(rosters(f).empty());
+    REQUIRE(f.tunnel.roster().generation() == 2);
+    // 비트 0 과 무관한 전이(PUNCHING -> HANDSHAKING)는 변화가 아니다
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alice"},
+                               tunnel::RosterPeer{kOtherPeer, TunnelFixture::vip_of(kOtherPeer), "Bob"}});
+    f.tunnel.run_timers(f.now + 1);
+    REQUIRE(f.tunnel.roster().generation() == 3);  // Bob 이 명부에 들었다
+    f.sent.clear();
+    peer::Session* bob = f.create(kOtherPeer);
+    bob->start_punch(f.now);
+    f.feed(with_peer(hello(kPeerEpoch, 0, kCandA, TunnelFixture::vip_of(kOtherPeer)), kOtherPeer));
+    REQUIRE(bob->state() == SessionState::kHandshaking);
+    f.tunnel.run_timers(f.now + 2);
+    REQUIRE(f.tunnel.roster().generation() == 3);
+    REQUIRE(rosters(f).empty());
+    // 이름이 바뀌면 바뀐 것이다
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alicia"},
+                               tunnel::RosterPeer{kOtherPeer, TunnelFixture::vip_of(kOtherPeer), "Bob"}});
+    f.tunnel.run_timers(f.now + 3);
+    REQUIRE(rosters(f).size() == 1);
+    REQUIRE(decoded(rosters(f)[0]).generation == 4);
+    REQUIRE(decoded(rosters(f)[0]).members[1].name_view() == "Alicia");
+}
+
+TEST_CASE("roster: a CONNECTED session outside the member list gets one on entry",
+          "[tunnel][roster]") {
+    TunnelFixture f;
+    f.tunnel.start_roster(kMe);
+    f.tunnel.run_timers(f.now);
+    f.connect();  // 명부에 없다. 내용은 그대로 호스트 혼자다
+    f.tunnel.run_timers(f.now);
+    REQUIRE(rosters(f).size() == 1);
+    REQUIRE(decoded(rosters(f)[0]).generation == 0);
+    REQUIRE(decoded(rosters(f)[0]).count == 1);
+    f.tunnel.run_timers(f.now + 14999);
+    REQUIRE(rosters(f).size() == 1);  // 변경이 아니므로 재송이 없다
+    f.tunnel.run_timers(f.now + 15000);
+    REQUIRE(rosters(f).size() == 2);
+    // 재협상으로 CONNECTED 를 떠났다가 돌아오면 다시 진입이다. 같은 바퀴 안이어도 한 번
+    f.now += 20000;
+    f.feed(hello(kPeerEpoch2, 0));
+    REQUIRE(f.tunnel.find(kPeerId)->state() != SessionState::kConnected);
+    f.feed(hello_ack(kPeerEpoch2, 1, kCandA, kPeerVip, f.tunnel.find(kPeerId)->attempt_nonce()));
+    REQUIRE(f.tunnel.find(kPeerId)->state() == SessionState::kConnected);
+    f.tunnel.run_timers(f.now);
+    REQUIRE(rosters(f).size() == 3);
+}
+
+TEST_CASE("roster: a session leaving CONNECTED stops its timers and the others hear of it",
+          "[tunnel][roster]") {
+    TunnelFixture f;
+    f.tunnel.start_roster(kMe);
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alice"},
+                               tunnel::RosterPeer{kOtherPeer, TunnelFixture::vip_of(kOtherPeer), "Bob"}});
+    f.tunnel.run_timers(f.now);
+    peer::Session* alice = f.connect();
+    peer::Session* bob = f.connect(kOtherPeer);
+    f.tunnel.run_timers(f.now);
+    const std::uint32_t before = f.tunnel.roster().generation();
+    f.sent.clear();
+    alice->close_by_user(f.now);
+    f.tunnel.run_timers(f.now);
+    auto sent = rosters(f);
+    REQUIRE(sent.size() == 1);  // bob 에게만
+    REQUIRE(sent[0].header.session_epoch == bob->local_epoch());
+    const auto r = decoded(sent[0]);
+    REQUIRE(r.generation == before + 1);
+    REQUIRE_FALSE(r.members[1].connected);  // alice
+    REQUIRE(r.members[2].connected);        // bob
+    // 끝난 세션에는 그 뒤로도 보내지 않는다
+    f.sent.clear();
+    f.tunnel.run_timers(f.now + 60000);
+    for (const auto& p : rosters(f)) {
+        REQUIRE(p.header.session_epoch == bob->local_epoch());
+    }
+}
+
+TEST_CASE("roster: a player sends none and leaving the room stops the host", "[tunnel][roster]") {
+    SECTION("player") {
+        TunnelFixture f;
+        f.connect();
+        for (Millis dt = 0; dt <= 60000; dt += 5000) {
+            f.tunnel.run_timers(f.now + dt);
+        }
+        REQUIRE(rosters(f).empty());
+        REQUIRE_FALSE(f.tunnel.roster().active());
+    }
+    SECTION("host leaves") {
+        TunnelFixture f;
+        host_with_alice(f);
+        f.tunnel.leave_room(f.now);
+        REQUIRE_FALSE(f.tunnel.roster().active());
+        REQUIRE_FALSE(f.tunnel.earliest_deadline().has_value());
+    }
+}
+
+TEST_CASE("roster: more members than MAX_PEERS are not sent", "[tunnel][roster]") {
+    TunnelFixture f;
+    f.tunnel.start_roster(kMe);
+    std::vector<tunnel::RosterPeer> peers{{kPeerId, kPeerVip, "Alice"}};
+    for (std::uint32_t i = 0; i < 4; ++i) {
+        peers.push_back({0x50000000u + i, 0x0A640003u, "P" + std::to_string(i)});
+    }
+    f.tunnel.set_roster_peers(peers);  // 호스트까지 여섯
+    f.tunnel.run_timers(f.now);
+    f.connect();
+    f.tunnel.run_timers(f.now);
+    REQUIRE(rosters(f).empty());
+}
+
+TEST_CASE("roster: peers set before the first run are already a change", "[tunnel][roster]") {
+    TunnelFixture f;
+    f.tunnel.start_roster(kMe);
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alice"}});
+    f.tunnel.run_timers(f.now);
+    REQUIRE(f.tunnel.roster().generation() == 1);  // 0 번은 호스트 혼자였다
+}
+
+TEST_CASE("roster: a member leaving and coming back in one round is still a change",
+          "[tunnel][roster]") {
+    TunnelFixture f;
+    host_with_alice(f);
+    f.connect();
+    f.tunnel.run_timers(f.now);
+    const auto before = f.tunnel.roster().generation();
+    f.sent.clear();
+    f.now += 2000;
+    // 재협상과 그 ACK 이 같은 바퀴에 온다. run_timers 사이에 CONNECTED 를 떠났다 돌아온다
+    f.feed(hello(kPeerEpoch2, 0));
+    f.feed(hello_ack(kPeerEpoch2, 1, kCandA, kPeerVip, f.tunnel.find(kPeerId)->attempt_nonce()));
+    REQUIRE(f.tunnel.find(kPeerId)->state() == SessionState::kConnected);
+    f.tunnel.run_timers(f.now);
+    REQUIRE(f.tunnel.roster().generation() == before + 1);
+    REQUIRE(rosters(f).size() == 1);
+    REQUIRE(f.tunnel.roster().earliest() == f.now + 5000);  // 새 재송이 걸렸다
+}
+
+TEST_CASE("roster: a new change replaces the pending resends, for every CONNECTED session",
+          "[tunnel][roster]") {
+    TunnelFixture f;
+    f.tunnel.start_roster(kMe);
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alice"},
+                               tunnel::RosterPeer{kOtherPeer, TunnelFixture::vip_of(kOtherPeer), "Bob"}});
+    f.tunnel.run_timers(f.now);
+    f.connect();
+    f.connect(kOtherPeer);
+    const Millis t0 = f.now;
+    f.tunnel.run_timers(t0);
+    f.tunnel.run_timers(t0 + 5000);  // 첫 변경의 재송 하나
+    f.sent.clear();
+    // 둘째 변경. 이름을 바꾼다
+    f.tunnel.set_roster_peers({tunnel::RosterPeer{kPeerId, kPeerVip, "Alicia"},
+                               tunnel::RosterPeer{kOtherPeer, TunnelFixture::vip_of(kOtherPeer), "Bob"}});
+    const Millis t1 = t0 + 6000;
+    f.tunnel.run_timers(t1);
+    REQUIRE(rosters(f).size() == 2);  // 두 세션에 즉시 하나씩
+    for (const auto& p : rosters(f)) {
+        REQUIRE(decoded(p).members[1].name_view() == "Alicia");
+    }
+    REQUIRE(f.tunnel.roster().earliest() == t1 + 5000);
+    f.tunnel.run_timers(t0 + 10000);  // 옛 재송의 둘째 자리. 지워졌다
+    REQUIRE(rosters(f).size() == 2);
+    f.tunnel.run_timers(t1 + 5000);
+    f.tunnel.run_timers(t1 + 10000);
+    REQUIRE(rosters(f).size() == 6);  // 세션마다 즉시 1 + 재송 2
+    f.tunnel.run_timers(t1 + 24999);
+    REQUIRE(rosters(f).size() == 6);
+}
+
+TEST_CASE("roster: timer.tick carries the elapsed time of each roster timer", "[tunnel][roster]") {
+    TunnelFixture f;
+    host_with_alice(f);
+    f.connect();
+    const Millis t = f.now;
+    f.tunnel.run_timers(t);
+    sangtachi::testing::LogCapture logs;
+    f.tunnel.run_timers(t + 5003);   // 늦게 돈 재송
+    f.tunnel.run_timers(t + 10003);
+    f.tunnel.run_timers(t + 25010);  // 주기. 마지막 송신(t + 10003)부터
+    const auto ticks = logs.with_event("timer.tick");
+    std::vector<std::string> roster_ticks;
+    for (const auto& line : ticks) {
+        if (line.find(" name=roster.") != std::string::npos) {
+            roster_ticks.push_back(line);
+        }
+    }
+    REQUIRE(roster_ticks.size() == 3);
+    REQUIRE(roster_ticks[0].find("roster.resend.") != std::string::npos);
+    REQUIRE(roster_ticks[0].find(" elapsed_ms=5003") != std::string::npos);
+    REQUIRE(roster_ticks[1].find(" elapsed_ms=5000") != std::string::npos);
+    REQUIRE(roster_ticks[2].find("roster.period.") != std::string::npos);
+    REQUIRE(roster_ticks[2].find(" elapsed_ms=15007") != std::string::npos);
+}
+
+TEST_CASE("roster: a new room starts from zero with nothing left over", "[tunnel][roster]") {
+    TunnelFixture f;
+    host_with_alice(f);
+    f.connect();
+    f.tunnel.run_timers(f.now);
+    REQUIRE(f.tunnel.roster().generation() == 2);
+    f.tunnel.leave_room(f.now);
+    REQUIRE_FALSE(f.tunnel.roster().earliest().has_value());
+    f.tunnel.start_roster(kMe);
+    f.tunnel.run_timers(f.now);
+    REQUIRE(f.tunnel.roster().generation() == 0);
+    f.sent.clear();
+    f.tunnel.run_timers(f.now + 60000);
+    REQUIRE(rosters(f).empty());
+}
+
 // ---------------------------------------------------------------- 폐기 목록은 프로세스에 하나 (4.3)
 
 TEST_CASE("tunnel: renegotiations of different sessions share one retired list and its cap",

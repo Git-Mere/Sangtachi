@@ -26,6 +26,7 @@ target_sources(sangtachi_core PRIVATE
     tunnel/data_sender.cpp
     tunnel/packet.cpp
     tunnel/replay.cpp
+    tunnel/roster_publisher.cpp
     tunnel/router.cpp
     tunnel/tunnel.cpp
 )

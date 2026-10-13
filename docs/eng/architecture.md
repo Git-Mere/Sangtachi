@@ -84,6 +84,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `tunnel/replay` | `sequence` comparison and the acceptance window (`protocol.md` 4.4, 4.5). Used by `tunnel/tunnel` | None |
 | `tunnel/tunnel` | Dispatch by packet type, encapsulation/decapsulation, sequence management | None |
 | `tunnel/router` | Virtual IP -> peer session mapping, destination decision | None |
+| `tunnel/roster_publisher` | The host's `ROSTER` roster, `generation`, and the three send times ([`protocol.md`](protocol.md) 5.7, Chapter 11) | None |
 | `tunnel/data_sender` | The console `send`, synthetic inner packets, sending split across rounds ([`roadmap.md`](roadmap.md) Phase 4 console commands) | None |
 | `testbuild/instrument` | Test-build instrumentation. `data.tx`, `data.rx`, echo responder. The executable compiles it only in the test build ([ADR 0023](decisions/0023-decisions-before-round-3-h-and-i.md)) | None |
 | `adapter/wintun_adapter` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper) | **Wintun (approved)**, IP Helper |
@@ -1163,7 +1164,7 @@ Sangtachi/
 |   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
-|   |   +-- tunnel/      packet, tunnel, router, replay, data_sender
+|   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (test build only)
 |   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry

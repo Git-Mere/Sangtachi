@@ -196,8 +196,12 @@ peer::Session* Tunnel::create_session(const NewSession& request) {
     return raw;
 }
 
-void Tunnel::on_transition(const peer::Session& session, peer::SessionState /*from*/,
+void Tunnel::on_transition(const peer::Session& session, peer::SessionState from,
                            peer::SessionState to) {
+    // 5.7: 비트 0 은 CONNECTED 여부다. 같은 바퀴의 run_timers 가 보낸다.
+    if ((from == peer::SessionState::kConnected) != (to == peer::SessionState::kConnected)) {
+        roster_.on_connected_change(session.peer_id(), to == peer::SessionState::kConnected);
+    }
     if (!peer::is_terminal(to)) {
         return;
     }
@@ -284,6 +288,7 @@ std::optional<Millis> Tunnel::earliest_deadline() const noexcept {
             consider(*since + protocol::kTerminalSessionTtlMs);
         }
     }
+    consider(roster_.earliest());
     return earliest;
 }
 
@@ -291,6 +296,13 @@ void Tunnel::run_timers(Millis now) {
     for (auto& [id, entry] : sessions_) {
         entry.session->poll(now);
     }
+    RosterPublisher::Connected connected;
+    for (auto& [id, entry] : sessions_) {
+        if (entry.session->state() == peer::SessionState::kConnected) {
+            connected.push_back(entry.session.get());
+        }
+    }
+    roster_.run(now, connected);
     // 5.6: 종료 상태 세션은 2분 남긴 뒤 지운다. 비교는 11장 마감과 같은 `<=` 다.
     for (auto it = sessions_.begin(); it != sessions_.end();) {
         const auto since = it->second.session->terminal_since();
@@ -328,6 +340,7 @@ void Tunnel::leave_room(Millis now) {
         erase(sessions_.begin());
     }
     local_vip_.reset();
+    roster_.stop();
 }
 
 peer::Session* Tunnel::route(std::uint32_t virtual_ip) const noexcept {

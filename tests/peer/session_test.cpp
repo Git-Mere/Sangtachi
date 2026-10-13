@@ -816,12 +816,55 @@ TEST_CASE("session: ROSTER records the generation and rejects stale ones", "[pee
     roster.members[0].virtual_ip = kPeerVip;
     roster.members[0].name_len = 4;
     roster.members[0].name = {'h', 'o', 's', 't'};
+    roster.members[0].connected = true;
     std::vector<std::byte> buf(200);
     buf.resize(tunnel::encode_roster(roster, buf));
+    sangtachi::testing::LogCapture logs;
     REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 2), kT0).accepted());
     REQUIRE(f.session.last_roster_generation() == 5u);
     REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 3), kT0).dropped ==
             Counter::DropRosterStale);
+    // 받아들인 명부마다 roster 줄 하나 (5.7, architecture.md 9장). 버린 것은 내지 않는다
+    auto lines = logs.with_event("roster");
+    REQUIRE(lines.size() == 1);
+    REQUIRE(lines[0].find(" generation=5 ") != std::string::npos);
+    REQUIRE(lines[0].find(" members=" + std::to_string(kPeerId) + "/10.100.0.1/1/host") !=
+            std::string::npos);
+    // 더 큰 값은 다시 받아들이고 다시 낸다. 이름이 어긋난 것은 버리고 내지 않는다
+    roster.generation = 6;
+    buf.assign(200, std::byte{0});
+    buf.resize(tunnel::encode_roster(roster, buf));
+    REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 4), kT0).accepted());
+    auto bad = buf;
+    bad[3] = std::byte{7};    // generation 7
+    bad[5 + 10] = std::byte{' '};  // 이름 첫 바이트를 공백으로
+    REQUIRE(f.rx(make_rx(PacketType::kRoster, bad, kPeerEpoch, 5), kT0).dropped ==
+            Counter::DropRosterName);
+    lines = logs.with_event("roster");
+    REQUIRE(lines.size() == 2);
+    REQUIRE(lines[1].find(" generation=6 ") != std::string::npos);
+}
+
+TEST_CASE("session: ROSTER goes to every candidate before learning", "[peer][session]") {
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 0, kOutside), kT0).accepted());
+    REQUIRE(f.rx(hello_ack(kPeerEpoch, 1, kOutside), kT0).accepted());
+    REQUIRE_FALSE(f.session.peer_endpoint().has_value());
+    f.io.sent.clear();
+    tunnel::Roster roster;
+    roster.count = 1;
+    roster.members[0].name_len = 1;
+    roster.members[0].name = {'h'};
+    std::vector<std::byte> payload(200);
+    payload.resize(tunnel::encode_roster(roster, payload));
+    f.session.send_roster(payload);
+    REQUIRE(f.io.sent.size() == 2);
+    REQUIRE(f.io.sent[0].to == kCandA);
+    REQUIRE(f.io.sent[1].to == kCandB);
+    REQUIRE(f.io.sent[0].type() == PacketType::kRoster);
+    REQUIRE(f.io.sent[0].payload == payload);
+    REQUIRE(f.io.sent[0].header.sequence != f.io.sent[1].header.sequence);
 }
 
 TEST_CASE("session: ROSTER from a non-host peer is drop_roster_direction", "[peer][session]") {

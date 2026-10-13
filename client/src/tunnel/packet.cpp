@@ -1,5 +1,6 @@
 #include "sangtachi/tunnel/packet.hpp"
 
+#include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
 #include <array>
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace sangtachi::tunnel {
@@ -401,6 +403,19 @@ std::size_t encode_roster(const Roster& roster, std::span<std::byte> out) noexce
         pos += kRosterMemberFixedSize + m.name_len;
     }
     return total;
+}
+
+std::string format_roster_members(const Roster& roster) {
+    std::string out;
+    for (std::size_t i = 0; i < roster.count && i < roster.members.size(); ++i) {
+        const auto& m = roster.members[i];
+        if (i > 0) {
+            out += ',';
+        }
+        out += std::to_string(m.peer_id) + "/" + network::format_ipv4(m.virtual_ip) + "/" +
+               (m.connected ? "1" : "0") + "/" + std::string(m.name_view());
+    }
+    return out;
 }
 
 }  // namespace sangtachi::tunnel

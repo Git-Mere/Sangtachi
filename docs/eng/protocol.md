@@ -1436,7 +1436,7 @@ peer_endpoint = source endpoint of the most recent packet satisfying all of the 
   (c) the source is in the approved candidate set, or passed path validation (below)
 ```
 
-**What this section decides is the destination of the `DATA`, `KEEPALIVE`, and `PING` we send first.** Those three
+**What this section decides is the destination of the `DATA`, `KEEPALIVE`, `PING`, and `ROSTER` we send first.** Those four
 go to the learned `peer_endpoint`, or to the whole candidate set if not yet learned.
 
 **Replies are not decided by this section.** Replies go to the source of the received datagram and are
@@ -1445,7 +1445,7 @@ exceptions to this rule.
 
 | Transmission | Destination | Decided by |
 |------|--------|-----------|
-| `DATA`, `KEEPALIVE`, `PING` | `peer_endpoint`. The whole candidate set before learning | This section |
+| `DATA`, `KEEPALIVE`, `PING`, `ROSTER` | `peer_endpoint`. The whole candidate set before learning | This section |
 | `PONG` (reply) | Not decided by this section | 9.4 |
 | `HELLO` retransmission (punch) | **The whole candidate set.** Continues until `CONNECTED` is reached. Independent of learning | 10.3 |
 | `HELLO` retransmission (after renegotiation) | The whole candidate set | 9.5 step 9 |

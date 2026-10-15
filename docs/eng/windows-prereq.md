@@ -336,8 +336,12 @@ no write permission.
 
 ### Wintun DLL and signature
 
-**Reason it is unverified.** Wintun has not been brought in yet. That is Phase 6 work. The commands
-below can be run after `wintun.dll` is placed in the distribution.
+**Reason it is unverified.** Wintun has not been placed in the distribution yet. That is Phase 6
+work. The commands below can be run after `wintun.dll` is placed in the distribution.
+
+**The expected values live in [`cmake/Wintun.cmake`](../../cmake/Wintun.cmake).** They are the
+version, the download URL, the zip hash, the DLL hash, and the `Subject`. This document does not copy
+the values.
 
 Wintun ships as a single DLL with the driver embedded in it. **The architecture must match**
 (`bin/amd64/wintun.dll` for the x64 client).
@@ -356,14 +360,27 @@ Get-FileHash .\wintun.dll -Algorithm SHA256 | Select-Object -ExpandProperty Hash
 1. `Status` is `Valid`. `NotSigned` or `HashMismatch` means the distribution is corrupted or the
    file is wrong
 2. `Subject` must be the **expected publisher**. `Valid` means "someone trusted signed it", so
-   swapping in a different signed DLL also passes. Record the publisher string of the official
-   Wintun release at packaging time and compare against it
-3. The hash must equal the **published hash of the downloaded release**
+   swapping in a different signed DLL also passes. Compare the whole string against the expected
+   value
+3. The DLL hash must equal the expected value
+
+**The published hash is the zip's.** The official site publishes only the SHA-256 of the release
+zip. Comparing the DLL hash against that value means criterion 3 can never hold. So the expected DLL
+hash is computed from `bin/amd64/wintun.dll` extracted from a zip whose hash matches the published
+one. Upgrading the version follows the same order.
+
+**The certificate validity period is not judged.** The 0.14.1 signing certificate has already
+expired, but the signature carries a timestamp, so `Status` is `Valid`. Treating expiry as a failure
+would reject a correct distribution.
 
 Shape check. Running it against this machine's `kernel32.dll` gave `Status: Valid`,
 `Subject: CN=Microsoft Windows, O=Microsoft Corporation, ...`, and with the expected publisher set
 to `CN=WireGuard LLC` the comparison gave `False`. **That means a check that looks only at
 `Status` would pass here.**
+
+We downloaded the 0.14.1 release zip and ran the three criteria; all matched the expected values.
+PowerShell 7's `Get-AuthenticodeSignature` and Windows PowerShell 5.1's
+`X509Certificate.CreateFromSignedFile` produced the same `Subject` string.
 
 **This confirms the origin of the DLL; it does not guarantee that the driver loads.** The
 Authenticode signature is on the DLL file; the kernel driver must separately pass catalog signing
@@ -576,7 +593,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Test-SubnetO
 
 **Pass condition. The last line is `VERDICT: proceed` and the exit code is 0.**
 
-- `pick another range` (code 1) means change the range
+- `pick another range` (code 1) is a block. For the action see "When blocked" below
 - **`unknown` (code 2) is not a pass.** It means a query or a parse failed. Remove the cause and
   run again. If a definite block is present as well, `pick another range` wins
 - Changing the target range with `-Target` moves the decision with it. Addresses are also turned
@@ -629,14 +646,18 @@ table. A second copy of the table in the document gets fixed on one side only an
 previous version had actually drifted that way.
 
 **When blocked, v1 stops.** It writes the overlapping route on one `ERROR` line and ends. The
-user brings that interface down or changes the range and starts again.
+user brings that interface down or changes that network's range and starts again.
 
-**There is no alternative range yet.** When the range changes both sides must use the same value,
-so it must be a value the control plane hands out, but the operations of
-[`control_plane.md`](control_plane.md) 4 Operations have no such field and the virtual IP pool
-(2.5) pins the range as a constant. **If the client decides alone, the two sides use different
-ranges.** That is why "pick an alternative range" is not written as a measure. Whether and when to
-add it belongs to the pre-start items of [`roadmap.md`](roadmap.md) Phase 6.
+**There is no alternative range. Stopping is the final v1 behaviour.** When the range changes both
+sides must use the same value, so it must be a value the control plane hands out, but the
+operations of [`control_plane.md`](control_plane.md) 4 Operations have no such field and 2.5
+Virtual IP pool pins the range as a constant. If the client decides alone, the two sides use
+different ranges. That is why "pick an alternative range" is not written as a measure. Why the
+control plane does not carry the range, and the rejected alternatives, belong to
+[ADR 0026](decisions/0026-decisions-before-phase-6.md).
+
+**Limit.** If the overlapping side is an interface the user cannot bring down, such as a corporate
+VPN, v1 cannot be used on that machine.
 
 ## 8. Duplicate on-link route creation
 

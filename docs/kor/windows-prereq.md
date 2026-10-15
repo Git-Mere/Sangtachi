@@ -312,8 +312,11 @@ function Invoke-NetQuerySafe([scriptblock]$Query) {
 
 ### Wintun DLL 과 서명
 
-**미검증 사유.** Wintun 을 아직 도입하지 않았다. Phase 6 작업이다. 아래 명령은 `wintun.dll`
+**미검증 사유.** Wintun 을 아직 배포물에 넣지 않았다. Phase 6 작업이다. 아래 명령은 `wintun.dll`
 을 배포물에 넣은 뒤에 돌릴 수 있다.
+
+**기대값은 [`cmake/Wintun.cmake`](../../cmake/Wintun.cmake) 가 갖는다.** 버전, 내려받을 주소, zip
+해시, DLL 해시, `Subject` 다. 이 문서에 값을 옮겨 적지 않는다.
 
 Wintun 은 DLL 하나로 배포되고 그 안에 드라이버가 들어 있다. **아키텍처가 맞아야 한다**
 (x64 클라이언트에는 `bin/amd64/wintun.dll`).
@@ -331,14 +334,24 @@ Get-FileHash .\wintun.dll -Algorithm SHA256 | Select-Object -ExpandProperty Hash
 
 1. `Status` 가 `Valid`. `NotSigned` 나 `HashMismatch` 면 배포물이 손상됐거나 잘못된 파일이다
 2. `Subject` 가 **기대한 발행자**여야 한다. `Valid` 는 "신뢰된 누군가가 서명했다" 는 뜻이므로,
-   서명된 다른 DLL 을 끼워 넣어도 통과한다. Wintun 공식 배포물의 발행자 문자열을 배포 시점에
-   적어 두고 그것과 비교한다
-3. 해시가 **받아온 릴리스의 공개 해시**와 같아야 한다
+   서명된 다른 DLL 을 끼워 넣어도 통과한다. 문자열 전체를 기대값과 비교한다
+3. DLL 해시가 기대값과 같아야 한다
+
+**공개 해시는 zip 의 것이다.** 공식 사이트는 배포 zip 의 SHA-256 만 공개한다. DLL 해시를 그
+값과 비교하면 판정 3번은 절대 맞지 않는다. 그래서 DLL 해시의 기대값은 공개 해시가 맞는 zip 에서
+꺼낸 `bin/amd64/wintun.dll` 로 계산해 적는다. 버전을 올릴 때도 이 순서를 밟는다.
+
+**인증서 유효 기간은 판정하지 않는다.** 0.14.1 의 서명 인증서는 이미 만료됐지만 서명에
+타임스탬프가 있어 `Status` 가 `Valid` 다. 만료를 실패로 보면 정상 배포물이 걸린다.
 
 형태 확인이다. 이 기기의 `kernel32.dll` 로 돌려 `Status: Valid`,
 `Subject: CN=Microsoft Windows, O=Microsoft Corporation, ...` 를 얻었고, 기대 발행자를
 `CN=WireGuard LLC` 로 두면 `False` 가 나오는 것까지 봤다. **`Status` 만 보면 이 검사가
 통과한다는 뜻이다.**
+
+0.14.1 배포 zip 을 받아 세 판정을 돌렸고 모두 기대값과 맞았다. `Subject` 문자열은 PowerShell 7
+의 `Get-AuthenticodeSignature` 와 Windows PowerShell 5.1 의
+`X509Certificate.CreateFromSignedFile` 이 같은 값을 냈다.
 
 **이것은 DLL 의 출처 확인이지 드라이버가 올라간다는 보장이 아니다.** Authenticode 서명은
 DLL 파일에 대한 것이고, 커널 드라이버는 catalog 서명과 드라이버 서명 정책을 따로 통과해야
@@ -546,7 +559,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Test-SubnetO
 
 **통과 조건. 마지막 줄이 `VERDICT: proceed` 이고 종료 코드가 0이다.**
 
-- `pick another range` (코드 1) 는 대역을 바꾼다
+- `pick another range` (코드 1) 는 차단이다. 조치는 아래 "막혔을 때" 를 본다
 - **`unknown` (코드 2) 은 통과가 아니다.** 조회나 해석이 실패했다는 뜻이다. 원인을 없애고 다시
   돌린다. 확실한 차단이 함께 있으면 `pick another range` 가 이긴다
 - 대상 대역을 `-Target` 으로 바꿔도 판정이 따라간다. 주소도 `/32` 로 만들어 같은 겹침 검사에
@@ -594,13 +607,16 @@ VERDICT: proceed
 이전 판이 그렇게 어긋나 있었다.
 
 **막혔을 때. v1 은 중단한다.** `ERROR` 한 줄에 겹친 라우트를 적고 끝낸다. 사용자는 그
-인터페이스를 내리거나 대역을 바꾼 뒤 다시 시작한다.
+인터페이스를 내리거나 그 네트워크의 대역을 바꾼 뒤 다시 시작한다.
 
-**대체 대역은 아직 없다.** 대역이 바뀌면 양쪽이 같은 값을 써야 하므로 제어 평면이 알려주는
-값이어야 하는데, [`control_plane.md`](control_plane.md) 4장의 연산에 그 필드가 없고
-가상 IP 풀(2.5)이 대역을 상수로 고정한다. **클라이언트가 혼자 정하면 두 쪽이 다른 대역을
-쓴다.** 그래서 "대체 대역을 고른다" 를 조치로 적지 않는다. 넣을지와 언제 넣을지는
-[`roadmap.md`](roadmap.md) Phase 6 의 착수 전 항목이 갖는다.
+**대체 대역은 없다. 중단이 v1 의 최종 동작이다.** 대역이 바뀌면 양쪽이 같은 값을 써야 하므로
+제어 평면이 알려주는 값이어야 하는데, [`control_plane.md`](control_plane.md) 4장 연산에 그
+필드가 없고 2.5 가상 IP 풀이 대역을 상수로 고정한다. 클라이언트가 혼자 정하면 두 쪽이 다른
+대역을 쓴다. 그래서 "대체 대역을 고른다" 를 조치로 적지 않는다. 제어 평면에 대역을 싣지 않은
+이유와 버린 대안은 [ADR 0026](decisions/0026-phase-6-착수-전-결정.md) 이 갖는다.
+
+**한계.** 겹치는 쪽이 사내 VPN 처럼 사용자가 내릴 수 없는 인터페이스면 그 기기에서는 v1 을
+쓸 수 없다.
 
 ## 8. on-link 라우트 중복 생성
 

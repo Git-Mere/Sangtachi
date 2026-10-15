@@ -1116,26 +1116,10 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
 
 ### Tasks
 
-- **Before starting, fix where the expected publisher string and published hash of the Wintun
-  distribution are recorded.** [`windows-prereq.md`](windows-prereq.md) 4 says to compare the
-  distribution's `Subject` and hash against expected values, but does not say where those expected
-  values are kept. Decide the location, then fix that document
-
-  > **Why.** Without a place for them, verdicts 2 and 3 of that section cannot run and the check
-  > collapses to looking at `Status` only.
-- **Before starting, decide whether to add an alternate range.** `windows-prereq.md` 7 currently only
-  aborts on the conflict condition
-  - Changing the range means both sides must use the same value, which means the control plane has to
-    tell them, but the operations in [`control_plane.md`](control_plane.md) 4 have no such field and
-    2.5 Virtual IP Pool fixes the range as a constant
-  - If it is added, both documents are fixed together
-  - If it is not added, aborting is the final v1 behavior and that limit stays in section 7
-- **Before starting, confirm how Wintun injection failure is reported.** Check in the header used and
-  its documentation which call fails and in what form, and record in
-  [`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration whether "ring full" gets its own
-  counter
-  - The behavioral contract (discard, `drop_inject_error`, no retry, non-blocking loop) is already
-    fixed, so the only thing this item blocks is counter granularity
+- The build downloads the Wintun distribution from the URL in
+  [`cmake/Wintun.cmake`](../../cmake/Wintun.cmake) and compares it against the expected values in the
+  same file. The pass criteria belong to [`windows-prereq.md`](windows-prereq.md) 4 Distribution
+  packaging
 - Wintun dependency **approved.** Documentation of what it provides is kept as is
 - The sources that call Wintun and IP Helper live in `client/src/platform/win32/`
   ([ADR 0010](decisions/0010-platform-porting-seams.md) seam 3). `tools/platformgate/` judges it
@@ -1148,7 +1132,7 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
 - Create and open the virtual adapter
 - Assign the virtual IP address
 - Read packets from the adapter
-- Inject packets into the adapter
+- Inject packets into the adapter. Failure handling and counters belong to [`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration
 - Set up the required Windows routes and clean them up on exit
 - Verify traffic with basic IP tools, without a game
 
@@ -1166,6 +1150,9 @@ On a single host, packets can be read from the virtual adapter and injected back
 
 ### Verification
 
+- If the Wintun distribution the build downloaded fails any of the three criteria in `windows-prereq.md` 4,
+  the build fails. Change the zip hash, the DLL hash and the `Subject` in `cmake/Wintun.cmake` one at a
+  time and check that each fails
 - `ipconfig` shows the virtual adapter and the assigned virtual IP
 - `route print` shows the `10.100.0.0/24` route pointing at the adapter
 - On the same machine, `ping` to an **unassigned** virtual IP (for example `10.100.0.9`) increments
@@ -1218,7 +1205,7 @@ Two Windows machines communicate using virtual IPs only.
 - Maximum-size packets are delivered without fragmentation (MTU value fixed by measurement)
 - Packets sent to a virtual IP with no routing target are discarded and the counter increments
 - Injection failure handling ([`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration).
-  When the send ring is made full, that packet is discarded as `drop_inject_error` and **the
+  When the send ring is made full, that packet is discarded as `drop_inject_ring_full` and **the
   loop does not wait there**
   - The verdict does not look at the counter alone. Also check that the keepalive send interval is
     maintained during the interval where injection fails

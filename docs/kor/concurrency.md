@@ -250,7 +250,35 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
 **주입 실패는 폐기한다.** `DATA`가 [`protocol.md`](protocol.md) 8.4 `DATA` 내부 검증을
 통과하면 `WintunAllocateSendPacket`으로 송신 링의 자리를 잡고 `WintunSendPacket`으로 넣는다.
 송신 링에 자리가 없어 할당이 실패하는 것은 고장이 아니라 부하가 높을 때 정상적으로 일어나는
-일이다. 그 패킷을 버리고 `drop_inject_error`를 올린다.
+일이다. 그 패킷을 버리고 `drop_inject_ring_full`을 올린다. 그 밖의 할당 실패도 버리고
+`drop_inject_error`를 올린다.
+
+```text
+inject(p, n):                                      # p 는 8.4 를 통과한 내부 IPv4 패킷
+    buf = WintunAllocateSendPacket(session, n)
+    if buf == NULL:
+        e = GetLastError()
+        ERROR_BUFFER_OVERFLOW -> drop_inject_ring_full++   # 링이 찼다
+        그 외                  -> drop_inject_error++       # ERROR_HANDLE_EOF 를 포함한다
+        return                                     # 버린다. 재시도하지 않는다
+    memcpy(buf, p, n)
+    WintunSendPacket(session, buf)                 # 반환값이 없다
+```
+
+**실패는 할당에서만 나온다.** Wintun 0.14.1 의 `wintun.h` 와 그 구현(`api/session.c`)을
+확인한 결과다.
+
+- `WintunAllocateSendPacket` 은 실패하면 `NULL` 을 돌려주고 원인은 `GetLastError` 로 읽는다.
+  헤더가 적은 원인은 `ERROR_BUFFER_OVERFLOW`(링이 찼다)와 `ERROR_HANDLE_EOF`(어댑터가 종료
+  중이다) 둘이고 구현도 이 둘만 낸다. 헤더가 "Possible errors include" 라고만 적으므로 그 밖의
+  값은 `drop_inject_error` 로 받는다
+- `WintunSendPacket` 은 반환값이 없다. 여기서는 실패를 알 수 없다
+- 구현은 `PacketSize` 가 `WINTUN_MAX_IP_PACKET_SIZE` 이하인지 검사하지 않는다. 호출하는 쪽의
+  의무다. `n` 은 `MAX_DATAGRAM` 안에 든 내부 패킷이라 이 상한보다 작다
+
+**주입 쪽의 `ERROR_HANDLE_EOF` 는 종료를 신호하지 않는다.** 그 패킷을 버리고
+`drop_inject_error` 를 올릴 뿐이다. 어댑터 종료의 처리는 `drain_wintun` 의 `ERROR_HANDLE_EOF`
+분기 한 곳이 갖는다. 수신 쪽이 같은 바퀴에 그 값을 보는지는 확인하지 않았다.
 
 **재시도하지 않는다.**
 
@@ -263,9 +291,8 @@ TCP면 재전송이 메우므로 지연이고([`architecture.md`](architecture.m
 Minecraft 경로가 그렇다), UDP 같은 비신뢰 프로토콜이면 그 패킷은 그대로 잃는다. 터널은 내부를
 구분하지 않으므로(NFR-2) 이것을 "항상 지연일 뿐"이라고 적지 않는다.
 
-**지금 확정하는 것은 카운터 하나와 동작 계약 넷이다.** 카운터는 `drop_inject_error` 하나다.
-동작은 **주입이 실패하면 그 패킷을 버리고, 카운터를 올리고, 재시도하지 않고, 루프를 멈추지
-않는다.** 이 넷은 어떤 API 모양에서도 성립한다.
+**주입 실패의 동작 계약은 넷이다.** 주입이 실패하면 그 패킷을 버리고, 원인에 맞는 카운터를
+올리고, 재시도하지 않고, 루프를 멈추지 않는다. 넷 다 실패 원인과 무관하다.
 
 **어댑터가 없는 빌드(Phase 4~5)에서 8.4 `DATA` 내부 검증을 통과한 `DATA`가 갈 곳도 여기서
 정한다.** 그 구간에는 주입할 어댑터가 없으므로 그 절이 가리키는 "Wintun 주입 직전" 이
@@ -285,13 +312,6 @@ Minecraft 경로가 그렇다), UDP 같은 비신뢰 프로토콜이면 그 패�
 **훅 칸은 core 에 있고 제품 빌드는 그 칸을 비워 둔다.** 칸에 붙는 코드, 즉 M-5 비교의 `data.rx` 줄과 에코
 응답기는 시험 빌드 CMake 옵션 안에만 컴파일한다. 제품 바이너리에는 칸에 걸 코드가 없다. 칸 자체를 시험
 빌드로 가르지 않는 이유는 Phase 6 에서 같은 자리가 위의 주입 경로로 이어지기 때문이다.
-
-**"링이 찬 것"을 별도 카운터로 나누는 것은 확인한 뒤에 한다.** 실패가 어느 호출에서 어떤
-형태로(반환값인지 `GetLastError`인지, 애초에 보고되는지) 나오는지는 쓰는 Wintun 헤더와 그
-문서가 정한다. 이 레포에는 그 헤더가 없고 확인하지 않았다. 확인한 뒤에 이 절에 세부 카운터를
-추가한다. 언제 확인하는지는 `roadmap.md`가 갖는다.
-
-> **왜.** 확인하지 않은 API 모양을 여기 적으면 구현이 그것을 그대로 믿는다.
 
 `drain_console`은 `[console]`이 큐에 넣은 명령 줄을 비운다. 이벤트가 자동 리셋이라 별도 리셋
 호출이 필요 없다. Phase 6 이후에는 이 핸들도 스레드도 사라진다.
@@ -318,10 +338,10 @@ Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀�
 
 **어댑터 읽기는 `adapter_rx`로 센다.** `WintunReceivePacket`이 패킷 하나를 돌려줄 때마다
 오른다. Phase 6 검증이 "어댑터 read 카운터" 로 읽는 값이 이것이다(`roadmap.md`). 주입 쪽은
-성공을 세지 않는다. 실패만 `drop_inject_error`로 센다.
+성공을 세지 않는다. 실패만 `drop_inject_ring_full`과 `drop_inject_error`로 센다.
 
 **이 절의 카운터는 `protocol.md`의 카운터와 계층이 다르다.** `drop_oversize_datagram`,
-`drop_inject_error`, `drop_no_sink`, `adapter_rx`는 소켓과 어댑터 API가 낸 결과를 세는 것이라
+`drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`는 소켓과 어댑터 API가 낸 결과를 세는 것이라
 이 문서가 정의한다. `protocol.md` 7장 수신 분류와 8장 수신 검증 파이프라인의 `drop_*`는 와이어
 분류와 검증 파이프라인의 카운터다. 목록을 만들 때 두 출처를 섞지 않는다.
 

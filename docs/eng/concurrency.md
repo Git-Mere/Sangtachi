@@ -263,7 +263,37 @@ stays `CONNECTED` and keepalives keep going out, but not one game packet flows.
 **Inject failure is a drop.** Once `DATA` passes [`protocol.md`](protocol.md) 8.4 DATA Inner
 Validation, `WintunAllocateSendPacket` reserves a slot in the send ring and `WintunSendPacket`
 places it. Allocation failing because the send ring has no room is not a fault; it happens
-normally under high load. Drop that packet and increment `drop_inject_error`.
+normally under high load. Drop that packet and increment `drop_inject_ring_full`. Any other
+allocation failure is also dropped and increments `drop_inject_error`.
+
+```text
+inject(p, n):                                      # p is the inner IPv4 packet that passed 8.4
+    buf = WintunAllocateSendPacket(session, n)
+    if buf == NULL:
+        e = GetLastError()
+        ERROR_BUFFER_OVERFLOW -> drop_inject_ring_full++   # the ring is full
+        otherwise             -> drop_inject_error++       # includes ERROR_HANDLE_EOF
+        return                                     # drop. Do not retry
+    memcpy(buf, p, n)
+    WintunSendPacket(session, buf)                 # no return value
+```
+
+**Failure comes only from allocation.** This is what Wintun 0.14.1's `wintun.h` and its
+implementation (`api/session.c`) show.
+
+- `WintunAllocateSendPacket` returns `NULL` on failure and the cause is read with `GetLastError`.
+  The header lists two causes, `ERROR_BUFFER_OVERFLOW` (the ring is full) and `ERROR_HANDLE_EOF`
+  (the adapter is terminating), and the implementation produces only those two. The header only
+  says "Possible errors include", so any other value is taken as `drop_inject_error`
+- `WintunSendPacket` has no return value. A failure cannot be seen there
+- The implementation does not check that `PacketSize` is at most `WINTUN_MAX_IP_PACKET_SIZE`. That
+  is the caller's duty. `n` is an inner packet that fit inside `MAX_DATAGRAM`, so it is below this
+  limit
+
+**`ERROR_HANDLE_EOF` on the inject side does not signal shutdown.** It only drops the packet and
+increments `drop_inject_error`. Handling adapter termination belongs to one place, the
+`ERROR_HANDLE_EOF` branch of `drain_wintun`. Whether the receive side sees that value in the same
+iteration has not been checked.
 
 **Do not retry.**
 
@@ -278,10 +308,9 @@ Minecraft path in [`architecture.md`](architecture.md) chapter 4 Data Plane Path
 if it is an unreliable protocol like UDP, that packet is lost for good. The tunnel does not
 distinguish the inner protocol (NFR-2), so this is not written as "always just a delay".
 
-**What is fixed now is one counter and four behavior contracts.** The counter is
-`drop_inject_error`, one only. The behavior is: **when inject fails, drop that packet,
-increment the counter, do not retry, and do not stop the loop.** These four hold under any API
-shape.
+**Inject failure has four behavior contracts.** When inject fails, drop that packet, increment
+the counter for its cause, do not retry, and do not stop the loop. All four are independent of the
+cause.
 
 **Where a `DATA` that passed 8.4 DATA Inner Validation goes in a build without the adapter
 (Phase 4~5) is also decided here.** In that range there is no adapter to inject into, so the
@@ -303,14 +332,6 @@ itself, because a non-zero value in a product build means the design has drifted
 that is the `data.rx` line of the M-5 comparison and the echo responder, is compiled only under the
 test-build CMake option. The product binary has no code to attach to the slot. The slot itself is not
 split by test build because in Phase 6 the same place leads to the injection path above.
-
-**Splitting "ring full" into a separate counter is done after confirmation.** Which call reports
-the failure and in what form (return value, `GetLastError`, or whether it is reported at all) is
-decided by the Wintun header in use and its documentation. This repo does not have that header
-and it has not been checked. Detailed counters are added to this section after confirmation.
-When that confirmation happens is owned by `roadmap.md`.
-
-> **Why.** Writing an unconfirmed API shape here makes the implementation trust it as is.
 
 `drain_console` drains the command lines that `[console]` pushed to the queue. The event is auto
 reset, so no separate reset call is needed. From Phase 6 onward both this handle and the thread
@@ -342,10 +363,11 @@ bottleneck, revisit it then.
 **Adapter reads are counted by `adapter_rx`.** It goes up every time `WintunReceivePacket`
 returns one packet. This is the value that the Phase 6 verification reads as the "adapter read
 counter" (`roadmap.md`). The injection side does not count successes. Only failures are counted,
-by `drop_inject_error`.
+by `drop_inject_ring_full` and `drop_inject_error`.
 
 **The counters in this section are at a different layer from the counters in `protocol.md`.**
-`drop_oversize_datagram`, `drop_inject_error`, `drop_no_sink`, and `adapter_rx` count results
+`drop_oversize_datagram`, `drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, and
+`adapter_rx` count results
 returned by the socket and adapter APIs, so this document defines them. The `drop_*` counters in
 `protocol.md` chapter 7 Receive Classification and chapter 8 Receive Validation Pipeline belong
 to wire classification and the validation pipeline. Do not mix the two sources when making a

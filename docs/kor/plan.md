@@ -19,7 +19,8 @@ Phase 6 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 6 이 갖�
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | Phase 6 작업의 착수 전 항목 셋. Wintun 배포물 기대값을 적을 자리, 대체 대역을 넣을지, Wintun 주입 실패의 표현 | roadmap 이 착수 전에 정하라고 적었다. 정한 뒤 그 문서를 고친다 |
+| 1 | 빌드가 Wintun 배포물을 받아 `cmake/Wintun.cmake` 의 기대값과 비교하는 단계 | 착수 전 셋은 [ADR 0026](decisions/0026-phase-6-착수-전-결정.md) 으로 닫혔다. 어댑터 코드가 링크할 DLL 과 헤더가 여기서 나온다 |
+| 2 | 어댑터 생성부터 roadmap Phase 6 작업 순서대로 | roadmap 이 범위와 검증을 갖는다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.
@@ -50,6 +51,7 @@ Phase 1 의 두 머신 실측은 따로 기다리지 않는다. `roadmap.md` Pha
 | `tests/mutate.py` 의 시간 초과 | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
 | 자기 Wintun 식별자 | 후보 수집이 `protocol.md` 10.1 제외 단계의 자기 Wintun 식별자를 비워 넘긴다(`client/src/control/runner.cpp`). 판정 함수와 시험은 있다. 어댑터가 생기면 그 값을 잇는다 | Phase 6 어댑터 생성 |
 | `pending_pings` 상한 | 상한 분기(`protocol.md` 5.5 의 "그래도 가득 차면 새 `PING`을 보내지 않는다")를 밟는 시험이 없다. PING 간격과 항목 수명이 둘 다 5초라 지금 구성으로는 표가 둘 이상 차지 않는다 | 11장 PING 간격이나 5.5 항목 수명을 바꿀 때 |
+| 서브넷 검사의 `-AllowShadow` | [`windows-prereq.md`](windows-prereq.md) 7절은 대역이 실제로 비어 있다는 것을 사람이 알 때 쓰라고 이 우회를 둔다. 클라이언트가 그 검사를 부를 때 이 우회를 사용자에게 열지는 정하지 않았다 | Phase 6 에서 서브넷 검사를 클라이언트에 이을 때 |
 | `is_valid_name` 의 자리 | `control_plane.md` 2.7 검사가 `tunnel/packet.hpp` 에 있어 기동 인자와 제어 평면 코드가 터널 패킷 모듈을 포함한다. 중립 헤더로 옮기고 `packet.hpp` 가 그것을 쓰는 편이 의존 방향이 맞다 | 다음에 그 헤더를 고칠 때 |
 
 ## 문서 부채

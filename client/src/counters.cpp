@@ -30,6 +30,7 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::DropDataEarly: return "drop_data_early";
         case Counter::DropDuplicate: return "drop_duplicate";
         case Counter::DropInjectError: return "drop_inject_error";
+        case Counter::DropInjectRingFull: return "drop_inject_ring_full";
         case Counter::DropInnerChecksum: return "drop_inner_checksum";
         case Counter::DropInnerDst: return "drop_inner_dst";
         case Counter::DropInnerIhl: return "drop_inner_ihl";

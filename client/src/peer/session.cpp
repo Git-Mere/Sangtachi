@@ -83,6 +83,15 @@ SessionState Session::state() const noexcept {
     return SessionState::kPunching;
 }
 
+LossStats Session::loss() const noexcept {
+    LossStats stats = loss_totals_;
+    if (loss_baseline_) {
+        stats.expected += window_.position() - *loss_baseline_;
+        stats.accepted += loss_accepted_;
+    }
+    return stats;
+}
+
 bool Session::is_candidate(const network::Endpoint& endpoint) const noexcept {
     for (const auto& c : config_.candidates) {
         if (c == endpoint) {
@@ -360,7 +369,10 @@ void Session::enter_connected(Millis now) {
     hello_due_.reset();
     punch_deadline_.reset();
     // KEEPALIVE 는 진입 즉시 1회 보낸 뒤 15초 간격, 유휴 타임아웃은 진입에 시작, PING 은 첫
-    // 송신이 진입 5초 뒤다. 4.5 손실 집계 초기화는 Phase 5 다 (roadmap.md Phase 5).
+    // 송신이 진입 5초 뒤다. 4.5 손실 집계는 전이시킨 패킷을 처리한 직후의 위치를 baseline 으로 잡는다.
+    // 그 패킷은 이미 8.3 을 지났다.
+    loss_baseline_ = window_.position();
+    loss_accepted_ = 0;
     arm(idle_deadline_, idle_since_, now, protocol::kIdleTimeoutMs);
     arm(ping_due_, ping_since_, now, protocol::kPingIntervalMs);
     send_keepalive(now);
@@ -456,7 +468,13 @@ void Session::renegotiate(const RxPacket& packet, const tunnel::Nonce& nonce, Mi
     // 2. 증거를 지운다
     got_ack_ = false;
     sent_ack_ = false;
-    // 3. 중복 억제 상태, pending_pings 를 초기화한다. 손실 집계는 Phase 5 다
+    // 3. 중복 억제 상태, pending_pings, 손실 집계를 초기화한다. 집계 구간 안이면 그 값을 세션
+    // 합계에 먼저 더한다 (4.5). 창을 지우기 전에 해야 position 을 읽는다.
+    if (loss_baseline_) {
+        loss_totals_ = loss();
+        loss_baseline_.reset();
+        loss_accepted_ = 0;
+    }
     window_.reset();
     pending_pings_.clear();
     // 4. 새 epoch 고정. 5. 우리 epoch 와 nonce 는 그대로다 (config_ 를 건드리지 않는다)
@@ -552,6 +570,10 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
     }
     if (decision.verdict == tunnel::ReplayVerdict::kTooOld) {
         return drop(Counter::DropTooOld);
+    }
+    // 4.5 손실 집계. baseline 이하의 재정렬 패킷은 세지 않는다.
+    if (loss_baseline_ && decision.pkt_pos > *loss_baseline_) {
+        ++loss_accepted_;
     }
 
     // ---- 타입별 검사 (ADR 0021). 여기서 버려도 창에는 기록됐다 (8.3) ----

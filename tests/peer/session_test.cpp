@@ -292,6 +292,168 @@ TEST_CASE("session: a packet failing a type check after 8.3 is still recorded in
     REQUIRE(f.session.state() == SessionState::kConnected);
 }
 
+// ---------------------------------------------------------------- 4.5 손실 집계
+
+TEST_CASE("session: loss is zero until CONNECTED", "[peer][session][loss]") {
+    // 4.5 "손실 집계는 CONNECTED 진입 시점에 초기화한다". 펀치 구간의 간격은 손실이 아니다.
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 3), kT0).accepted());
+    REQUIRE(f.rx(hello(kPeerEpoch, 9), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{0, 0});
+}
+
+TEST_CASE("session: loss counts sequence gaps after CONNECTED", "[peer][session][loss]") {
+    Fixture f;
+    f.connect();  // 상대 seq 0, 1. baseline 은 1 을 처리한 뒤의 위치다
+    REQUIRE(f.session.loss() == peer::LossStats{0, 0});
+    for (const std::uint32_t seq : {2u, 3u, 6u}) {  // 4, 5 가 빠졌다
+        REQUIRE(f.rx(keepalive(kPeerEpoch, seq), kT0).accepted());
+    }
+    REQUIRE(f.session.loss() == peer::LossStats{5, 3});
+    REQUIRE(f.session.loss().lost() == 2);
+}
+
+TEST_CASE("session: punch-phase gaps before the transition packet are not loss",
+          "[peer][session][loss]") {
+    // 여러 후보로 보낸 HELLO 가 번호를 쓰지만 도달하는 경로는 하나다 (4.5).
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 5), kT0).accepted());
+    REQUIRE(f.rx(hello_ack(kPeerEpoch, 9), kT0).accepted());
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE(f.session.loss() == peer::LossStats{0, 0});
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 10), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{1, 1});
+}
+
+TEST_CASE("session: a reordered packet fills its gap and is not loss", "[peer][session][loss]") {
+    // roadmap.md Phase 5 "패킷 순서를 뒤바꿔 주입해도 손실로 집계되지 않음".
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 4), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{3, 1});
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2), kT0).accepted());
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 3), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{3, 3});
+    REQUIRE(f.session.loss().lost() == 0);
+}
+
+TEST_CASE("session: a number older than the first packet is not counted after CONNECTED",
+          "[peer][session][loss]") {
+    // roadmap.md Phase 5. 4.5 의 position 이 0 에서 시작하면 seq 3 의 pkt_pos 가 64비트에서 감싸 돌아
+    // baseline 보다 뒤로 보이고 accepted 가 expected 를 넘는다. 그러면 lost 가 감싸 돈다.
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 5), kT0).accepted());
+    REQUIRE(f.rx(hello_ack(kPeerEpoch, 6), kT0).accepted());
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 3), kT0).accepted());  // 창 안의 앞선 번호. 수용은 된다
+    REQUIRE(f.session.loss() == peer::LossStats{0, 0});
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 7), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{1, 1});
+    REQUIRE(f.session.loss().lost() == 0);
+}
+
+TEST_CASE("session: a too-old packet stays lost", "[peer][session][loss]") {
+    // 4.5 "drop_too_old 로 버린 패킷은 이미 손실로 확정된 것이므로 되돌리지 않는다".
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 100), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{99, 1});
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2), kT0).dropped == Counter::DropTooOld);  // back 98
+    REQUIRE(f.session.loss() == peer::LossStats{99, 1});
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 50), kT0).accepted());  // back 50, 창 안
+    REQUIRE(f.session.loss() == peer::LossStats{99, 2});
+}
+
+TEST_CASE("session: a packet dropped by a type check after 8.3 still counts as received",
+          "[peer][session][loss]") {
+    // 4.5 의 accepted 는 창이 수용한 고유 패킷 수다. 뒤의 타입별 검사에서 버려도 도착은 했다 (8.3).
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(close_rx(kPeerEpoch, 2, 0x04), kT0).dropped == Counter::DropBadReason);
+    REQUIRE(f.session.loss() == peer::LossStats{1, 1});
+}
+
+TEST_CASE("session: renegotiation folds the segment into the session totals",
+          "[peer][session][loss]") {
+    // 4.5 집계 구간, 9.5 재협상 3번. 구간 밖(재협상 뒤 다음 CONNECTED 전)의 값은 0 이다.
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 2), kT0).accepted());
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 4), kT0).accepted());  // 3 이 빠졌다
+    REQUIRE(f.session.loss() == peer::LossStats{3, 2});
+
+    REQUIRE(f.rx(hello(kPeerEpoch2, 0), kT0 + 2000).accepted());
+    REQUIRE(f.session.renegotiations() == 1);
+    REQUIRE(f.session.state() == SessionState::kHandshaking);
+    REQUIRE(f.session.loss() == peer::LossStats{3, 2});
+    REQUIRE(f.rx(hello(kPeerEpoch2, 5), kT0 + 2001).accepted());  // 구간 밖의 간격
+    REQUIRE(f.session.loss() == peer::LossStats{3, 2});
+
+    REQUIRE(f.rx(hello_ack(kPeerEpoch2, 6), kT0 + 2002).accepted());
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE(f.session.loss() == peer::LossStats{3, 2});
+    REQUIRE(f.rx(keepalive(kPeerEpoch2, 8), kT0 + 2003).accepted());  // 7 이 빠졌다
+    REQUIRE(f.session.loss() == peer::LossStats{5, 3});
+    REQUIRE(f.session.loss().lost() == 2);
+}
+
+TEST_CASE("session: a reordered transition packet leaves the baseline at the highest position",
+          "[peer][session][loss]") {
+    // 4.5 "baseline = position". 전이시킨 패킷이 재정렬이면 그 pkt_pos 가 아니라 창의 위치다.
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 5), kT0).accepted());
+    REQUIRE(f.rx(hello_ack(kPeerEpoch, 3), kT0).accepted());  // back 2 의 재정렬이 전이시킨다
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE(f.session.loss() == peer::LossStats{0, 0});
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 6), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{1, 1});
+}
+
+TEST_CASE("session: every finished segment stays in the session totals", "[peer][session][loss]") {
+    // 재협상이 두 번이면 앞의 두 구간이 모두 합계에 남는다. 마지막 구간으로 덮어쓰면 여기서 걸린다.
+    constexpr std::uint32_t kPeerEpoch3 = 0xBBBB0003u;
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 3), kT0).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{2, 1});
+
+    REQUIRE(f.rx(hello(kPeerEpoch2, 0), kT0 + 2000).accepted());
+    REQUIRE(f.rx(hello_ack(kPeerEpoch2, 1), kT0 + 2000).accepted());
+    REQUIRE(f.rx(keepalive(kPeerEpoch2, 3), kT0 + 2000).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{4, 2});
+
+    REQUIRE(f.rx(hello(kPeerEpoch3, 0), kT0 + 4000).accepted());
+    REQUIRE(f.session.renegotiations() == 2);
+    REQUIRE(f.rx(hello_ack(kPeerEpoch3, 1), kT0 + 4000).accepted());
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE(f.rx(keepalive(kPeerEpoch3, 4), kT0 + 4000).accepted());
+    REQUIRE(f.session.loss() == peer::LossStats{7, 3});
+}
+
+TEST_CASE("session: renegotiation before CONNECTED adds nothing", "[peer][session][loss]") {
+    Fixture f;
+    f.session.start_punch(kT0);
+    REQUIRE(f.rx(hello(kPeerEpoch, 0), kT0).accepted());
+    REQUIRE(f.rx(hello(kPeerEpoch2, 0), kT0 + 2000).accepted());
+    REQUIRE(f.session.renegotiations() == 1);
+    REQUIRE(f.rx(hello_ack(kPeerEpoch2, 1), kT0 + 2001).accepted());
+    REQUIRE(f.session.state() == SessionState::kConnected);
+    REQUIRE(f.session.loss() == peer::LossStats{0, 0});
+}
+
+TEST_CASE("session: loss stays after the session ends", "[peer][session][loss]") {
+    Fixture f;
+    f.connect();
+    REQUIRE(f.rx(keepalive(kPeerEpoch, 3), kT0).accepted());
+    f.session.close_by_user(kT0);
+    REQUIRE(f.session.state() == SessionState::kClosed);
+    REQUIRE(f.session.loss() == peer::LossStats{2, 1});
+}
+
 // ---------------------------------------------------------------- 8.4 DATA
 
 TEST_CASE("session: DATA before CONNECTED is drop_data_early", "[peer][session]") {

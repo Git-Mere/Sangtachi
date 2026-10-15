@@ -14,6 +14,20 @@
 namespace sangtachi::tunnel {
 namespace {
 
+// architecture.md 9장: 세션 표 전량과, 같은 때에 그 세션의 session.loss 한 줄.
+void emit_session_table(const peer::Session& session) {
+    const CounterPeer peer = session.counter_peer();
+    emit_all(session.counters(), &peer);
+    const peer::LossStats loss = session.loss();
+    const LogField fields[] = {
+        field("peer_id", static_cast<std::uint64_t>(session.peer_id())),
+        field("expected", loss.expected),
+        field("accepted", loss.accepted),
+        field("lost", loss.lost()),
+    };
+    emit(LogLevel::Info, "session.loss", fields);
+}
+
 constexpr std::uint8_t at(std::span<const std::byte> bytes, std::size_t offset) noexcept {
     return std::to_integer<std::uint8_t>(bytes[offset]);
 }
@@ -214,8 +228,7 @@ void Tunnel::on_transition(const peer::Session& session, peer::SessionState from
         on_transition_(session, from, to);
     }
     // architecture.md 9장: 세션이 종료 상태에 닿을 때 그 세션의 표 전량.
-    const CounterPeer peer = session.counter_peer();
-    emit_all(session.counters(), &peer);
+    emit_session_table(session);
     // 여기서 세션을 지우지 않는다. 이 콜백은 그 세션의 메서드 안에서 불린다.
 }
 
@@ -322,8 +335,7 @@ void Tunnel::run_timers(Millis now) {
 
 void Tunnel::emit_session_counters() const {
     for (const auto& [id, entry] : sessions_) {
-        const CounterPeer peer = entry.session->counter_peer();
-        emit_all(entry.session->counters(), &peer);
+        emit_session_table(*entry.session);
     }
 }
 

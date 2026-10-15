@@ -80,6 +80,7 @@
 // | echo 를 받은 경로 | 자리가 빌 때까지 같은 nonce 의 echo 를 다시 받아도 같은 판정이다 | 5.1 "5초간 별도 표에 보관한다" |
 // | 종료 상태 진입 | 잠정 경로 표를 비운다. 아직 echo 가 없던 경로는 `path_probe_failed` 로 세지 않는다 | 10.4 "`path_probe_failed` 는 6번에서만 오른다" |
 // | 재협상과 잠정 경로 표, 예산 | 되돌리지 않는다 | 9.5 3번 목록에 없다 |
+// | 손실 집계의 `accepted` 가 세는 수용 | 8.3 창의 수용이다. 그 뒤 타입별 검사에서 버려도 센다 | 4.5 "이후 수용될 때마다" 는 창의 판정이다. 받은 패킷이지 잃은 패킷이 아니다 (8.3) |
 //
 // ## 타이머 이름 (architecture.md 9장 timer.tick)
 //
@@ -190,6 +191,17 @@ struct RxPacket {
     network::Endpoint from;
 };
 
+// 4.5 손실 집계의 세션 값. 재협상으로 끝난 구간의 합계에 지금 구간의 값을 더한 것이다.
+struct LossStats {
+    std::uint64_t expected = 0;
+    std::uint64_t accepted = 0;
+
+    // 4.5 의 손실. accepted 는 baseline 뒤의 고유 위치만 세므로 expected 를 넘지 않는다.
+    [[nodiscard]] constexpr std::uint64_t lost() const noexcept { return expected - accepted; }
+
+    friend constexpr bool operator==(const LossStats&, const LossStats&) = default;
+};
+
 // 수신 판정. 폐기면 올린 카운터다. 카운터는 세션이 이미 올렸다.
 struct RxResult {
     std::optional<Counter> dropped;
@@ -260,6 +272,8 @@ public:
     [[nodiscard]] std::optional<Millis> terminal_since() const noexcept { return terminal_since_; }
     [[nodiscard]] bool punch_started() const noexcept { return punch_started_; }
     [[nodiscard]] bool window_initialized() const noexcept { return window_.initialized(); }
+    // 4.5 손실 집계. 세션이 끝난 뒤에는 마지막 값이 그대로 남는다.
+    [[nodiscard]] LossStats loss() const noexcept;
 
     // 이 세션의 카운터 표. 터널이 검사 8 과 9.4.1 의 판정을 여기에 올린다.
     [[nodiscard]] Counters& counters() noexcept { return counters_; }
@@ -327,6 +341,10 @@ private:
 
     std::optional<std::uint32_t> pinned_;      // 고정한 상대 epoch (4.3, 9.3)
     tunnel::ReplayWindow window_;              // 고정한 epoch 의 창 (4.5, 8.3)
+    // 4.5 손실 집계. baseline 이 있으면 집계 구간 안이다. 구간 밖이면 지금 구간의 값이 0 이다.
+    std::optional<std::uint64_t> loss_baseline_;
+    std::uint64_t loss_accepted_ = 0;          // 지금 구간에서 baseline 뒤로 수용한 고유 패킷 수
+    LossStats loss_totals_;                    // 재협상으로 끝난 구간의 합계
     std::uint32_t next_seq_ = 0;               // 4.4. 그 시도의 첫 송신이 0 이다
     std::optional<network::Endpoint> peer_endpoint_;  // 10.4
 

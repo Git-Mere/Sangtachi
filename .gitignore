@@ -49,5 +49,6 @@ tools/nat-probe/results/**
 tools/nat-lifetime/results/**
 field-test/**
 !field-test/README.md
+!field-test/required-test.md
 !field-test/TEMPLATE.md
 .commitmsg

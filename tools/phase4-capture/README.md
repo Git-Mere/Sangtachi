@@ -421,7 +421,7 @@ roadmap 원문은 "**여기서 재는 것은 우리 송신 주기이고 NAT 매�
 
 ## 두 번째 기기 (D절)
 
-`docs/kor/plan.md` "대기 중인 것" 의 두 번째 기기 묶음과 같이 돈다. 배포한 제어 서버와 공개 STUN 서버를 쓴다.
+`field-test/required-test.md` 의 두 번째 기기 묶음과 같이 돈다. 배포한 제어 서버와 공개 STUN 서버를 쓴다.
 Elastic IP 와 `CONTROL_PORT` 는 `deploy/aws.local.md` 에 있다. **그 값을 이 문서나 기록에 옮겨 적지 않는다.**
 
 캡처는 두 PC 각자의 실제 NIC 에서 잡는다. 기기 사이 트래픽은 NIC 를 지나므로 Wireshark 대신 Windows 에 들어 있는

@@ -1,14 +1,15 @@
 # field-test
 
 사람이 직접 하는 실측을 모두 여기서 한다. 시험 절차, 날짜별 보고서, 원본 데이터가 한 폴더에 있다.
-같은 기기에서 되는 것은 이미 돈다(`scripts/test.ps1`, `scripts/soak-check.ps1`, 캡처 C0~C9). 무엇이 남았는지는
-[`docs/kor/plan.md`](../docs/kor/plan.md) 가 갖는다.
+같은 기기에서 되는 것은 이미 돈다(`scripts/test.ps1`, `scripts/soak-check.ps1`, 캡처 C0~C9). 무엇을 아직 재야 하는지는
+[`required-test.md`](required-test.md) 가 갖는다.
 
 ## 기록하는 법
 
 ```text
 field-test/
   README.md                  이 파일. 준비와 시험 절차
+  required-test.md           아직 재야 할 것과 순서. plan.md 처럼 늘 지금 상태로 고친다
   TEMPLATE.md                보고서 양식
   nat-probe-index.md         9월 nat-probe 실측의 라벨 표
   YYYY-MM-DD/                실측한 날 (현지 날짜)
@@ -18,9 +19,10 @@ field-test/
 
 1. 실측하기 전에 날짜 폴더를 만들고 보고서의 요약 표와 "방법" 을 먼저 채운다
 2. 실측한 뒤 원본을 `<측정 이름>/` 에 모으고 "결과" 와 "다음" 을 채운다
-3. 남은 일이 생기면 `plan.md` 에 옮긴다
+3. `required-test.md` 를 고친다. 끝난 항목을 지우고, 새로 생긴 실측을 더한다. 실측 결과로 문서를 고칠 일이 생기면
+   그것은 `docs/kor/plan.md` 에 옮긴다
 
-**이 README 와 `TEMPLATE.md` 만 커밋한다** (`.gitignore`). 보고서와 원본에는 실측 시각과 기록이 있고 원본에는 두 집의
+**이 README, `required-test.md`, `TEMPLATE.md` 만 커밋한다** (`.gitignore`). 보고서와 원본에는 실측 시각과 기록이 있고 원본에는 두 집의
 공인 IP 가 있다. 공개 레포다. 보고서를 밖에 낼 때의 규칙은 [ADR 0001](../docs/kor/decisions/0001-직접-연결-대비책-미도입.md)
 "따라야 할 조치" 2번이다.
 
@@ -38,11 +40,17 @@ field-test/
 
 **키트.** 친구에게 폴더 하나를 준다. 실행 파일은 C 런타임을 정적으로 넣은 Release 빌드라 Visual Studio 없이 돈다.
 
+키트는 태그 `field-kit-p5`(Phase 5 끝)로 만든다. 남은 실측은 모두 Phase 4~5 의 것이다. 그 뒤 Phase 의 코드(Wintun 등)가
+섞이면 친구 PC 의 준비가 달라질 수 있고, 실패했을 때 원인을 가르기 어렵다. 키트를 바꿀 때는 [`required-test.md`](required-test.md)
+의 "키트" 를 먼저 고친다.
+
 ```powershell
+git worktree add C:\me\field-kit-src field-kit-p5      # 한 번. 태그의 원본을 작업 트리 밖에 꺼낸다
 . scripts\vsdevshell.ps1
-cmake -S . -B C:\me\build-field -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DSANGTACHI_BUILD_TESTS=OFF
+cmake -S C:\me\field-kit-src -B C:\me\build-field -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DSANGTACHI_BUILD_TESTS=OFF
 cmake --build C:\me\build-field --target sangtachi_client
-# 키트 = C:\me\build-field\client\sangtachi_client.exe + tools\nat-probe\natprobe.py (시험 3 상대에게는 tools\nat-lifetime\natlife.py)
+# 키트 = C:\me\build-field\client\sangtachi_client.exe + C:\me\field-kit-src\tools\nat-probe\natprobe.py
+#        (시험 3 상대에게는 C:\me\field-kit-src\tools\nat-lifetime\natlife.py)
 ```
 
 **두 PC 모두.**

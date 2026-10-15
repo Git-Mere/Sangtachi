@@ -1230,6 +1230,103 @@ TEST_CASE("tunnel: 8.5 checks run in order and count in the right table", "[tunn
     REQUIRE(f.scount(Counter::TxErrSend) == 1);
 }
 
+TEST_CASE("tunnel: the Phase 5 boundary sizes", "[tunnel][route]") {
+    // roadmap.md Phase 5 경계 크기 표. 19 는 수신 쪽 drop_type_length, 20·576·1452 는 페이로드 훅에 바이트 그대로,
+    // 1453 은 송신 쪽 tx_drop_oversize 다. 왕복은 session-check 의 sizes 장면이 프로세스 둘로 본다.
+    TunnelFixture f(true);
+    peer::Session* s = f.connect();
+    std::uint32_t seq = 2;
+    {
+        const auto before = f.count(Counter::DropTypeLength);
+        f.feed(data_rx(kPeerEpoch, seq++, std::vector<std::byte>(19, std::byte{0x45})));
+        REQUIRE(f.count(Counter::DropTypeLength) == before + 1);  // 8.1 6번이라 프로세스 표다
+        REQUIRE(f.sunk.empty());
+    }
+    for (const std::size_t size : {std::size_t{20}, std::size_t{576}, protocol::kMaxInner}) {
+        INFO("size " << size);
+        const auto inner = tunnel::make_synthetic(size, kPeerVip, kLocalVip, 0, 0);
+        f.feed(data_rx(kPeerEpoch, seq++, inner));
+        REQUIRE(f.sunk.size() >= 1);
+        REQUIRE(f.sunk.back() == inner);
+    }
+    REQUIRE(f.sunk.size() == 3);
+    auto oversize = tunnel::make_synthetic(protocol::kMaxInner, kLocalVip, kPeerVip, 0, 0);
+    oversize.push_back(std::byte{0xA5});
+    f.sent.clear();
+    REQUIRE(f.tunnel.send_data(oversize) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.count(Counter::TxDropOversize) == 1);
+    REQUIRE(f.sent.empty());
+    REQUIRE(s->state() == SessionState::kConnected);
+}
+
+// ---------------------------------------------------------------- 15장 대조에서 시험이 비었던 자리 (plan.md)
+
+TEST_CASE("tunnel: a FAILED session drops everything as drop_terminal_state", "[tunnel]") {
+    // 9.4.1 은 종료 상태 둘(FAILED, CLOSED)에 같다. CLOSED 쪽은 위 시험들이 본다.
+    TunnelFixture f;
+    peer::Session* s = f.create();
+    s->start_punch(f.now);
+    f.now += 10000;
+    f.tunnel.run_timers(f.now);
+    REQUIRE(s->state() == SessionState::kFailed);
+    f.sent.clear();
+    f.feed(keepalive(kPeerEpoch, 0));
+    f.feed(hello(kPeerEpoch, 1));
+    REQUIRE(f.scount(Counter::DropTerminalState) == 2);
+    REQUIRE(f.sent.empty());
+}
+
+TEST_CASE("tunnel: a received CLOSE empties the routing slot", "[tunnel][route]") {
+    // 5.6: 받은 쪽도 라우팅 칸만 비운다. 보낸 쪽은 "a terminal session empties its slot before the terminal handler" 가 본다.
+    TunnelFixture f;
+    peer::Session* s = f.connect();
+    REQUIRE(f.tunnel.route(kPeerVip) == s);
+    f.feed(close_rx(kPeerEpoch, 2, 0x00));
+    REQUIRE(s->state() == SessionState::kClosed);
+    REQUIRE(f.tunnel.route(kPeerVip) == nullptr);
+    REQUIRE(f.tunnel.find(kPeerId) == s);  // 세션 객체는 2분 남는다
+}
+
+TEST_CASE("tunnel: every new attempt draws its own session epoch", "[tunnel]") {
+    // 4.3: session_epoch 는 세션 시도 단위다. 같은 상대의 다음 시도가 앞 시도의 값을 다시 쓰지 않는다.
+    TunnelFixture f;
+    peer::Session* first = f.connect();
+    const std::uint32_t old_epoch = first->local_epoch();
+    first->close_by_user(f.now);
+    peer::Session* second = f.create();
+    REQUIRE(second != nullptr);
+    REQUIRE(second->local_epoch() != 0);
+    REQUIRE(second->local_epoch() != old_epoch);
+}
+
+TEST_CASE("tunnel: a player has no route to another player even after a ROSTER names it", "[tunnel][route]") {
+    // 8.5 케이스 표 4행. ROSTER 는 표시용이고 라우팅 칸을 채우지 않는다 (5.7). 플레이어의 칸은 호스트 하나다.
+    TunnelFixture f;
+    f.connect();  // 상대는 호스트다 (TunnelFixture 의 peer_is_host)
+    tunnel::Roster roster;
+    roster.generation = 1;
+    roster.count = 2;
+    roster.members[0].peer_id = kPeerId;
+    roster.members[0].virtual_ip = kPeerVip;
+    roster.members[0].name_len = 1;
+    roster.members[0].name = {'H'};
+    roster.members[0].connected = true;
+    roster.members[1].peer_id = 0x60000001u;
+    roster.members[1].virtual_ip = 0x0A640003u;
+    roster.members[1].name_len = 1;
+    roster.members[1].name = {'P'};
+    roster.members[1].connected = true;
+    std::vector<std::byte> buf(200);
+    buf.resize(tunnel::encode_roster(roster, buf));
+    REQUIRE_FALSE(buf.empty());
+    f.feed(make_rx(PacketType::kRoster, buf, kPeerEpoch, 2));
+    REQUIRE(f.tunnel.find(kPeerId)->last_roster_generation() == 1u);
+    f.sent.clear();
+    REQUIRE(f.tunnel.send_data(inner_to(0x0A640003u)) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.count(Counter::TxDropNoRoute) == 1);
+    REQUIRE(f.sent.empty());
+}
+
 // ---------------------------------------------------------------- 콘솔 send (roadmap.md Phase 4)
 
 namespace {

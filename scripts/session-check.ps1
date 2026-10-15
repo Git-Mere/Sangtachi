@@ -1,4 +1,4 @@
-﻿# Phase 4 의 같은 기기 확인 (roadmap.md Phase 4 검증 가운데 프로세스 여럿과 제어 서버가 있어야 하는 것).
+﻿# Phase 4~5 의 같은 기기 확인 (roadmap.md Phase 4·5 검증 가운데 프로세스 여럿과 제어 서버가 있어야 하는 짧은 것).
 # 진짜 클라이언트 여럿을 진짜 제어 서버(control-server/tests/harness/cp_harness.py) 위에서 띄워 방을 만들고 펀치해
 # CONNECTED 까지 가게 한 뒤, 표준 출력(FAIL 줄), 표준 오류(로그), 하네스 로그, 로컬 기록 파일로 판정한다.
 # 같은 기기의 프로세스들은 서로의 로컬 후보(LAN 주소)로 연결된다. 하네스의 STUN 응답기가 적는 반사 주소는
@@ -38,7 +38,7 @@ if (-not (Test-Path -LiteralPath $py -PathType Leaf)) {
     throw "control-server venv not found: $py. See control-server/README.md (Tests) to create it."
 }
 
-$scenarioNames = @('connect', 'data', 'host-stays', 'room-ended', 'departed-now', 'departed-retry', 'punch-fail',
+$scenarioNames = @('connect', 'data', 'sizes', 'host-stays', 'room-ended', 'departed-now', 'departed-retry', 'punch-fail',
     'handshake-fail', 'peer-close', 'records')
 $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($n in $Only) {
@@ -226,6 +226,44 @@ function Scenario-Data {
     # 에코 중앙값이 0 이면 상대차가 뜻이 없다. 절대차 하나로만 본다.
     $within = ($abs -le 10) -or ($me -gt 0 -and $abs / $me -le 0.3)
     Check ("data: RTT baseline: PING median {0:N3} ms vs DATA echo median {1:N3} ms within 10 ms or 30%" -f $mp, $me) ($ping.Count -eq $need -and $echo.Count -eq $need -and $within)
+}
+
+function Get-DataLinesSince($c, [int]$mark, [string]$event, [string]$key, [string]$vip) {
+    $pattern = "$([regex]::Escape($event)) $key=$([regex]::Escape($vip)) len=(\d+) sha256=(\S+)"
+    return @([regex]::Matches((Get-Since $c.err $mark), $pattern) | ForEach-Object { "$($_.Groups[1].Value)/$($_.Groups[2].Value)" })
+}
+
+function Scenario-Sizes {
+    # roadmap.md Phase 5 경계 크기 표의 프로세스 판. 20 은 편도다(방향 표시가 없어 에코하지 않는다). 576 과 1452 는
+    # 왕복이다. 일치는 Phase 4 와 같은 비교 지점(data.tx, data.rx 의 len 과 sha256)으로 본다. 19 와 1453 은 send 가
+    # 만들 수 없는 크기라 단위 시험(tests/tunnel/tunnel_test.cpp "the Phase 5 boundary sizes")이 본다.
+    if ($null -eq $script:testExe) {
+        NotRun 'sizes: the Phase 5 boundary sizes' 'no test build (-SkipTestBuild)'
+        return
+    }
+    $r = New-Room 'sz' 1 $script:testExe
+    $h = $r.host; $p = $r.players[0]
+    $hostVip = [regex]::Match((Read-Log $p.err), 'control\.peers peer_id=\d+ virtual_ip=(\S+)').Groups[1].Value
+    $playerVip = [regex]::Match((Read-Log $h.err), 'control\.peers peer_id=\d+ virtual_ip=(\S+)').Groups[1].Value
+    foreach ($size in @(20, 576, 1452)) {
+        $pm = Get-Mark $p.err
+        $hm = Get-Mark $h.err
+        Send-Line $p "send 1 $size"
+        Check "sizes: the player sent one of $size bytes" (Wait-Count $p.err $pm 'console\.send sent=1 requested=1' 1 5000)
+        Check "sizes: the host hook got $size bytes" (Wait-Count $h.err $hm "data\.rx from=$([regex]::Escape($playerVip)) len=$size " 1 5000)
+        if ($size -eq 20) {
+            Start-Sleep -Milliseconds 1000
+            Check 'sizes: 20 bytes is one way, no echo comes back' ((Get-Count $p.err $pm 'data\.echo ') -eq 0)
+        } else {
+            Check "sizes: the echo of $size bytes came back" (Wait-Count $p.err $pm 'data\.echo rtt_ms=\d+' 1 5000)
+            $back = Get-DataLinesSince $h $hm 'data.tx' 'to' $playerVip
+            $got = Get-DataLinesSince $p $pm 'data.rx' 'from' $hostVip
+            Check "sizes: the echo of $size bytes arrived byte for byte" ($back.Count -eq 1 -and ($back -join ',') -eq ($got -join ','))
+        }
+        $sent = Get-DataLinesSince $p $pm 'data.tx' 'to' $hostVip
+        $recv = Get-DataLinesSince $h $hm 'data.rx' 'from' $playerVip
+        Check "sizes: $size bytes arrived byte for byte" ($sent.Count -eq 1 -and ($sent -join ',') -eq ($recv -join ','))
+    }
 }
 
 function Scenario-HostStays {
@@ -468,7 +506,8 @@ try {
     }
     if (Start-Harness $Ddb) {
         $plan = [ordered]@{
-            'connect' = { Scenario-Connect }; 'data' = { Scenario-Data }; 'host-stays' = { Scenario-HostStays }
+            'connect' = { Scenario-Connect }; 'data' = { Scenario-Data }; 'sizes' = { Scenario-Sizes }
+            'host-stays' = { Scenario-HostStays }
             'room-ended' = { Scenario-RoomEnded }; 'departed-now' = { Scenario-DepartedNow }
             'departed-retry' = { Scenario-DepartedRetry }; 'punch-fail' = { Scenario-PunchFail }
             'handshake-fail' = { Scenario-HandshakeFail }; 'peer-close' = { Scenario-PeerClose }; 'records' = { Scenario-Records }

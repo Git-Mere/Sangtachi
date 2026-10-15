@@ -1080,7 +1080,7 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
 - Control plane outage test: after reaching `CONNECTED`, taking the control server down keeps `DATA` transfer and session state for 10 minutes (NFR-3)
   - Run it with two processes on the same machine and the control server harness. The harness takes the control server down
   - This test and the 1-hour test below do not fit in the ctest per-case limit, so they run as a separate
-    script outside `scripts/test.ps1`
+    script outside `scripts/test.ps1` (`scripts/soak-check.ps1`)
 - Deliberately dropping packets yields a loss rate computed from `sequence` gaps. Read it from the
   `expected`, `accepted`, and `lost` of `session.loss`
 - Injecting packets out of order is not counted as loss (the 64-slot acceptance window of
@@ -1103,7 +1103,7 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
 - Session state stays `CONNECTED` during a long (1 hour or more) connection
   - The verdict is made with two processes on the same machine
   - It is also run once between two different homes and recorded as an observation. The same machine
-    has no NAT, so it cannot see keepalive interacting with the mapping lifetime. The procedure is added to
+    has no NAT, so it cannot see keepalive interacting with the mapping lifetime. The procedure is test 5 of
     [`field-test`](../../field-test/README.md)
 
 ---

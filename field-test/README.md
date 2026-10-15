@@ -1,7 +1,7 @@
 # field-test
 
 사람이 직접 하는 실측을 모두 여기서 한다. 시험 절차, 날짜별 보고서, 원본 데이터가 한 폴더에 있다.
-같은 기기에서 되는 것은 이미 자동으로 돈다(`scripts/test.ps1`, 캡처 C0~C5). 무엇이 남았는지는
+같은 기기에서 되는 것은 이미 돈다(`scripts/test.ps1`, `scripts/soak-check.ps1`, 캡처 C0~C9). 무엇이 남았는지는
 [`docs/kor/plan.md`](../docs/kor/plan.md) 가 갖는다.
 
 ## 기록하는 법
@@ -32,8 +32,7 @@ field-test/
 | 2 | 같은 공유기 아래 두 PC (함께 있을 때) | 약 5분 | Phase 4 "같은 LAN 두 PC", 캡처 D3 |
 | 3 (선택) | 시연 상대의 집 | 약 10분 | 시연 상대 망의 매핑 수명. 상대가 이미 잰 두 집이 아닐 때만 |
 | 4 (선택) | 시험 1 과 같이 | 약 20분 | 방화벽 인바운드 실측. ADR 0002 를 다시 열 때만 |
-
-캡처 C6~C9 는 새 가짜 피어 모드가 있어야 해서 여기 없다(`plan.md` 의 대기).
+| 5 | 서로 다른 두 집 (시험 1 뒤에 이어서 해도 된다) | 약 70분 | Phase 5 "장시간(1시간 이상) 연결 유지" 의 두 집 관측. 판정은 같은 기기의 `scripts/soak-check.ps1` 장면 `hour` 가 하고 이것은 관측값이다 |
 
 ## 준비 (한 번)
 
@@ -122,6 +121,26 @@ A:  powershell -ExecutionPolicy Bypass -File tools\nat-probe\unsolicited-firewal
 B:  python natprobe.py punch --unsolicited --label home-b      (A 의 시행마다 한 번)
 ```
 
+## 시험 5. 1시간 유지
+
+A = 나(호스트), B = 친구. 같은 기기에는 NAT 가 없어 keepalive 와 매핑 수명이 맞물리는 것을 보지 못한다. 그것을 두 집 사이에서 한 번
+관측한다(`docs/kor/roadmap.md` Phase 5). 판정이 아니라 관측값이다.
+
+```text
+A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t5.pcapng
+A:  sangtachi_client.exe host --name A --server <서버> 2> a5.log
+B:  sangtachi_client.exe player --room <코드> --name B --server <서버> 2> b5.log
+```
+
+로그 줄에는 시각이 없다. 시각은 A 의 캡처가 갖는다.
+
+1. 양쪽 로그에 `to=CONNECTED` 가 나오면 시각을 적는다
+2. 그대로 60분 이상 둔다. 10분마다 양쪽에서 `send 5` 를 친다. 제품 빌드라 받은 쪽은 `drop_no_sink` 로 센다
+3. 60분이 지나면 양쪽에서 `counters`, 그 뒤 `quit`
+
+**적을 것:** 그 동안 `FAIL` 줄과 `to=FAILED`·`to=CLOSED` 가 있었는지, 양쪽 마지막 `session.loss` 줄의 `expected`, `accepted`,
+`lost`, 상대 쪽 `drop_no_sink` 가 보낸 수와 같은지. `TUNNEL_DROPPED` 가 났으면 `FAIL` 줄을 본 대략의 시각을 적는다. 마지막으로 오간 `KEEPALIVE` 의 시각은 받은 `t5.pcapng` 로 본다.
+
 ## 모으기
 
 공인 IP 가 들어 있으니 커밋하지 않는다. 시험마다 아래를 `YYYY-MM-DD/<측정 이름>/A`, `B` 에 모은다.
@@ -132,6 +151,7 @@ B:  python natprobe.py punch --unsolicited --label home-b      (A 의 시행마�
 | 2 | `a2.log`, `b2.log`, 양쪽 `records\*.log` |
 | 3 | 상대의 `results\*.json` |
 | 4 | A·B 의 `results\*.json` |
+| 5 | `a5.log`, `b5.log`, 양쪽 `records\*.log`, A 의 `t5.pcapng` |
 
 A 쪽 파일은 흩어져 생긴다. nat-probe JSON 은 `tools\nat-probe\results\` 에, `t1.pcapng` 와 `a-ports.txt` 는 그 명령을 친
 폴더에 생긴다.

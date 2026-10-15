@@ -9,12 +9,11 @@
 
 ## 이 체크리스트가 덮는 roadmap 항목
 
-`roadmap.md` Phase 4 검증의 항목을 위에서부터 차례로 적는다. 왼쪽 칸은 그 항목의 원문 첫 구절이다. 판정 자리는 넷 가운데 하나다.
+`roadmap.md` Phase 4 검증의 항목을 위에서부터 차례로 적는다. 왼쪽 칸은 그 항목의 원문 첫 구절이다. 판정 자리는 셋 가운데 하나다.
 
 - **C절, D절.** 이 문서의 절이다. C 는 한 기기로 된다. D 는 두 번째 기기가 필요하다
 - **스크립트(session-check).** 같은 기기에서 로그, 기록 파일, 하네스 로그로 판정한다. 이 칸은 이 문서가 읽은 대로 적은 것이고 그 스크립트의 실제 범위는 그 스크립트가 정한다
 - **단위 시험.** `tests/` 의 파일이다. 이름이 맞는 `TEST_CASE` 가 있는 파일만 적었다
-- **보류.** 캡처가 필요한데 지금 개시 수단이 없다. 그 절에 무엇이 있어야 돌릴 수 있는지 적었다
 
 | roadmap 항목 (원문 첫 구절) | 판정 자리 |
 |------|------|
@@ -31,15 +30,15 @@
 | "응답 없는 후보로 계속 송신해도 `WSAECONNRESET`로 수신 루프가 죽지 않음" | 단위 시험(`tests/network/udp_socket_test.cpp`). C3 에서도 응답 없는 후보로 10초 쏜다 |
 | "로컬 후보 판정, 등록 목록, 수신 후보 위생의 자기 서브넷 행" | 단위 시험(`tests/peer/candidates_test.cpp`, `tests/control/ops_test.cpp`) |
 | "출발지 위생(`protocol.md` 7장)을 두 층에서 본다" | 단위 시험(`tests/loop_test.cpp` 가 (a), `tests/tunnel/tunnel_test.cpp` 가 (b)) |
-| "종료 상태 수신(9.4.1)." | 카운터는 단위 시험(`tests/tunnel/tunnel_test.cpp`). "캡처로 무응답을 확인한다" 는 C6, **보류** |
+| "종료 상태 수신(9.4.1)." | 카운터는 단위 시험(`tests/tunnel/tunnel_test.cpp`). "캡처로 무응답을 확인한다" 는 C6 |
 | "종료 상태 세션의 보존(`protocol.md` 5.6 `CLOSE`)." | 단위 시험(`tests/tunnel/tunnel_test.cpp`) |
 | "`IDLE` 에는 세션이 없다(`protocol.md` 9.1 상태)." | 단위 시험(`tests/tunnel/tunnel_test.cpp`) |
 | "폐기 목록 상한(`protocol.md` 4.3 `session_epoch`)." | 단위 시험(`tests/peer/epoch_test.cpp`, `tests/tunnel/tunnel_test.cpp`) |
 | "`session_epoch` 난수원(4.3)." | 단위 시험(`tests/peer/epoch_test.cpp`)과 코드 확인(`client/src/platform/win32/random.cpp`) |
-| "재협상 뒤 타이머(`protocol.md` 9.5 재협상 10번)." | 셋째(유휴 정지)와 둘째는 단위 시험(`tests/peer/session_test.cpp`). 첫째 "(캡처)" 는 C7, **보류** |
+| "재협상 뒤 타이머(`protocol.md` 9.5 재협상 10번)." | 셋째(유휴 정지)와 둘째는 단위 시험(`tests/peer/session_test.cpp`). 첫째 "(캡처)" 는 C7 이고, C7 은 둘째도 와이어에서 본다 |
 | "재협상 상한(`protocol.md` 9.5)" | 단위 시험(`tests/peer/session_test.cpp`) |
-| "잠정 경로 상한(`protocol.md` 10.4)" | 단위 시험(`tests/peer/session_test.cpp`). "(캡처로 확인)" 은 C8, **보류** |
-| "무검증 목적지 공통 예산(`protocol.md` 9.4 전이표)." | 단위 시험(`tests/peer/session_test.cpp`). 나가는 송신 수를 와이어에서 세는 것은 C9, **보류** |
+| "잠정 경로 상한(`protocol.md` 10.4)" | 단위 시험(`tests/peer/session_test.cpp`). "(캡처로 확인)" 은 C8 |
+| "무검증 목적지 공통 예산(`protocol.md` 9.4 전이표)." | 단위 시험(`tests/peer/session_test.cpp`)이 (a)~(e) 를 본다. (a) 의 나가는 송신 수를 와이어에서 세는 것은 C9 |
 | "`CLOSE` 송신 조건(`protocol.md` 5.6 `CLOSE`, 9.6 실패 전이)" | C4 |
 | "한쪽만 `HELLO`를 받은 상태에서는 `CONNECTED`로 전이하지 않음" | 단위 시험(`tests/peer/session_test.cpp`), 스크립트(session-check) |
 | "호스트는 마지막 플레이어의 세션이 끝나도 방에 남는다" | 스크립트(session-check) |
@@ -118,13 +117,15 @@ DynamoDB local 이 떠 있어야 한다. 띄우는 명령은 `control-server/REA
    `ROOM <코드>` 줄이다
 
 **가짜 피어.** C3 과 C4 의 실패 장면은 하네스의 가짜 피어 `fake_host`, `fake_player` 를 쓴다. 모드는 `silent`,
-`ack_only`, `hello_only`, `close01`, `close03` 이다. 거는 방법은 `cp_harness.py` 머리가 갖는다. **이 문서는 모드
-이름에서 아래 거동을 기대한다.** 판정 전에 캡처로 그렇게 하는지 먼저 본다. 다르면 이 문서를 고친다.
+`ack_only`, `hello_only`, `close01`, `close03` 이다. C6~C9 는 장면 모드 `close_then_keepalive`, `renegotiate`,
+`probe5`, `flood` 를 쓴다. 거는 방법과 모드의 뜻은 `cp_harness.py` 머리가 갖는다. **이 문서는 모드 이름에서 아래
+거동을 기대한다.** 판정 전에 캡처로 그렇게 하는지 먼저 본다. 다르면 이 문서를 고친다.
 
 | 모드 | 이 문서가 기대하는 것 | 캡처에서 먼저 볼 것 |
 |------|----------------------|--------------------|
 | `silent` | 후보는 등록하고 UDP 는 하나도 보내지 않는다 | 가짜 피어 쪽에서 `P` 로 오는 터널 패킷이 0개 |
 | `hello_only` | 자기 후보 주소에서 `HELLO` 만 보내고 `HELLO_ACK` 은 보내지 않는다 | 가짜 피어 → `P` 의 타입이 `0x01` 뿐이고, 우리 로그에 `session.state ... to=HANDSHAKING` 이 있다 |
+| 장면 모드 넷 | 먼저 `HELLO` 와 `HELLO_ACK` 을 주고받아 A 를 `CONNECTED` 까지 데려간다. 그 뒤 2초에 장면을 열고, 연 뒤에는 A 에게 답하지 않는다 | A 의 로그에 그 피어와의 `session.state ... to=CONNECTED` 가 있고, 하네스 로그의 `HARNESS fake.scene` 이 그 뒤에 있다 |
 
 ### 캡처 도구
 
@@ -198,6 +199,7 @@ tshark -r run.pcapng -Y "udp.srcport == P && udp[8:4] == 53:41:4e:47 && udp[13:1
 | R2 | A 하나와 `fake_player` `silent` | A `host` → 가짜 피어 참가 → A 의 `session.state ... to=PUNCHING` → `FAIL HOLE_PUNCH_TIMEOUT` 을 기다린다 → 그 뒤 15초 → 같은 방에 가짜 피어를 다시 붙이고 `to=PUNCHING` 이 나오면 10초가 지나기 전에 A `quit` | C3, C4-1, C4-5 |
 | R3 | A 하나와 `fake_player` `hello_only` | A `host` → 가짜 피어 참가 → A 의 `to=HANDSHAKING` → `FAIL PEER_HANDSHAKE_FAILED` 를 기다린다 → 그 뒤 15초 → 가짜 피어를 다시 붙이고 `to=HANDSHAKING` 이 나오면 10초가 지나기 전에 A `quit` | C4-3, C4-4 |
 | R4 | R1 과 같되 두 클라이언트에 `--stun` 을 주지 않는다. 기본 목록의 공개 STUN 서버를 쓴다. 제어 서버는 하네스 그대로다 | R1 과 같다. `CONNECTED` 뒤 바로 A `quit` 해도 된다 | C2 |
+| R5 | A 하나와 장면 모드 `fake_player` 넷 | A `host` → `fake_player` `close_then_keepalive` 참가, `HARNESS fake.scene` 뒤 20초 → `renegotiate` 참가, 장면 뒤 15초 → `probe5` 참가, 장면 뒤 15초 → `flood` 참가, 장면 뒤 15초 → A `counters` → A `quit`. 앞 피어의 장면이 끝난 뒤 다음 피어를 붙인다 | C6, C7, C8, C9 |
 
 R2, R3 에서 A 는 호스트이므로 쌍이 실패해도 방에 남는다(`concurrency.md` 7장 로비). 그래서 같은 방에 가짜 피어를
 다시 붙일 수 있다. 역할을 바꿔 A 를 플레이어로, 가짜 피어를 `fake_host` 로 해도 판정은 같다. 그때 A 는 실패 뒤
@@ -342,18 +344,80 @@ roadmap 원문은 "**여기서 재는 것은 우리 송신 주기이고 NAT 매�
 
 **걸리는 구현.** 진입 때 보내지 않는 것, 간격을 다른 송신으로 초기화하는 것, 학습 뒤에도 후보 전체로 보내는 것.
 
-## 보류된 절
+## C6. 종료 상태의 무응답
 
-아래 넷은 캡처로 볼 것이 roadmap 에 적혀 있지만 지금 한 기기에서 그 상황을 만들 수단이 없다. 클라이언트에는 수신 경로
-주입 콘솔 명령이 없다. 위 가짜 피어 모드 다섯도 이 상황을 만든다고 이 문서는 가정하지 않는다. **논리는 단위 시험이
-보고 있다.** 남은 것은 그 논리가 와이어에 낸 것이다. 이 장면을 만드는 하네스 모드는 `docs/kor/roadmap.md` Phase 5 작업이다.
+**roadmap 원문.** "`CLOSE`를 주고받아 `CLOSED`에 도달한 뒤 같은 상대가 보낸 `KEEPALIVE`가 `drop_terminal_state`로만
+오르고 어떤 응답도 나가지 않는다. 캡처로 무응답을 확인한다"
 
-| 절 | roadmap 원문 | 있어야 하는 것 | 생기면 볼 것 | 지금 논리를 보는 시험 |
-|----|--------------|----------------|--------------|----------------------|
-| C6 | "`CLOSE`를 주고받아 `CLOSED`에 도달한 뒤 같은 상대가 보낸 `KEEPALIVE`가 `drop_terminal_state`로만 오르고 어떤 응답도 나가지 않는다. 캡처로 무응답을 확인한다" | `CONNECTED` 뒤 `CLOSE` 를 보내고도 같은 세션 값으로 `KEEPALIVE` 를 계속 보내는 가짜 플레이어. A 는 호스트여야 한다. 플레이어는 세션이 `CLOSED` 로 끝나면 로비로 가며 보존 세션을 지우므로(`concurrency.md` 7장 로비, `protocol.md` 5.6) 그 뒤 수신은 `drop_unknown_peer` 가 된다 | 그 피어의 `CLOSE` 뒤 10초 동안 `P_A` 에서 그 피어로 가는 터널 패킷이 0개 | `tests/tunnel/tunnel_test.cpp` "after CLOSE a KEEPALIVE only raises drop_terminal_state and gets no reply" |
-| C7 | "`HELLO` 재전송이 200ms 간격으로 다시 나간다 (캡처)" | `CONNECTED` 세션에 다른 epoch 의 `HELLO` 를 같은 주소에서 보내는 주입기 | 주입 뒤 `P_A` 의 `HELLO` 가 상대 후보마다 150~400ms 간격으로 다시 나가고, 같은 구간에 `KEEPALIVE`(03)와 `PING`(05)이 0개 | `tests/peer/session_test.cpp` "renegotiation from CONNECTED follows the ten steps" |
-| C8 | "검증 `HELLO`는 경로마다 1회만 나간다(캡처로 확인)." | 후보 집합 밖의 서로 다른 출발지 포트 다섯 곳에서 검증을 통과하고 `sequence` 를 전진시키는 패킷을 보내는 주입기 | 앞의 넷 각각으로 `HELLO` 가 정확히 1개, 다섯째로 0개 | `tests/peer/session_test.cpp` "four probe paths at most, the fifth packet is still processed" |
-| C9 | "나가는 송신 수가 초기 10개 + 초당 5개 보충을 넘지 않고" | 후보 집합 밖 출발지에서 `HELLO` 를 초당 20회 보내는 주입기 | 그 출발지로 나간 `HELLO_ACK`, `PONG`, 검증 `HELLO` 의 합을 초 단위로 센다. roadmap 의 (a)~(e) 다 | `tests/peer/session_test.cpp` "the unverified budget counts tokens as the roadmap does" |
+- **구성.** 한 기기, 제품 빌드, R5 의 `close_then_keepalive`. A 는 호스트여야 한다. 플레이어는 세션이 `CLOSED` 로
+  끝나면 로비로 가며 보존 세션을 지우므로(`concurrency.md` 7장 로비, `protocol.md` 5.6) 그 뒤 수신은 `drop_unknown_peer` 가 된다
+- **캡처.** C0 이 LAN 주소 행을 찾은 인터페이스
+- **필터.** 가짜 피어의 포트를 `F` 라 한다(하네스 로그 `fake.started ... port=F`). `udp.srcport == P_A && udp.dstport == F && udp[8:4] == 53:41:4e:47`
+
+| 확인 | 통과 조건 |
+|------|-----------|
+| 장면이 섰다 | 가짜 피어 → `P_A` 에 `CLOSE`(`07`, `reason` `00`) 하나, 그 뒤 같은 epoch 의 `KEEPALIVE`(`03`)가 10초 안에 9개 이상 |
+| 무응답 | 그 `CLOSE` 뒤 10초 동안 `P_A` 에서 `F` 로 간 터널 패킷이 0개 |
+| 카운터 | A 의 `counters` 에서 그 피어 세션 표의 `drop_terminal_state` 가 받은 `KEEPALIVE` 수와 같다 |
+
+**걸리는 구현.** `CLOSED` 세션이 `KEEPALIVE` 에 다시 답하는 것, 종료 상태에서 받은 것으로 세션을 되살리는 것.
+
+## C7. 재협상 뒤의 `HELLO` 재전송
+
+**roadmap 원문.** "`HELLO` 재전송이 200ms 간격으로 다시 나간다 (캡처)", "`KEEPALIVE` 와 `PING` 이 그 구간에 나가지 않는다"
+
+- **구성.** 한 기기, 제품 빌드, R5 의 `renegotiate`. 가짜 피어는 같은 주소에서 다른 epoch 의 `HELLO` 를 하나 보내고 그 뒤로
+  답하지 않는다. 그래서 A 는 `sent_ack` 만 선 `HANDSHAKING` 으로 10초를 보내고 `PEER_HANDSHAKE_FAILED` 로 끝난다(9.5 7번, 9.6)
+- **캡처.** C0 이 LAN 주소 행을 찾은 인터페이스
+- **필터.** `udp.srcport == P_A && udp.dstport == F && udp[8:4] == 53:41:4e:47`. 구간은 가짜 피어의 새 epoch `HELLO` 부터 A 의
+  `CLOSE`(`reason` `03`)까지다
+
+| 확인 | 통과 조건 |
+|------|-----------|
+| 재전송 | 구간 안 `P_A` → `F` 의 `HELLO` 가 45개 이상이고 이웃한 간격이 모두 150~400ms. 구간 시작에서 첫 `HELLO` 까지, 마지막 `HELLO` 에서 `CLOSE` 까지가 각각 400ms 이하 |
+| 구간 길이 | 9800~10400ms. 재협상이 펀치 마감 10초를 다시 잡는다(9.5 7번) |
+| 주기 송신의 정지 | 구간 안 `P_A` → `F` 의 `KEEPALIVE`(`03`)와 `PING`(`05`)이 0개 |
+| 끝 | A 에 `FAIL PEER_HANDSHAKE_FAILED <그 피어의 이름>` 이 있다 |
+
+**걸리는 구현.** 재협상 뒤 재전송을 다시 걸지 않는 것, 몇 번 보내고 멈추는 것, `KEEPALIVE` 나 `PING` 을 멈추지 않는 것, 펀치 마감을 다시 잡지 않는 것.
+
+## C8. 잠정 경로마다 검증 `HELLO` 1회
+
+**roadmap 원문.** "검증 `HELLO`는 경로마다 1회만 나간다(캡처로 확인)."
+
+- **구성.** 한 기기, 제품 빌드, R5 의 `probe5`. 가짜 피어가 후보 밖 출발지 다섯 곳에서 `KEEPALIVE` 하나씩을 보내고, 1초 뒤
+  같은 다섯 곳에서 한 바퀴 더 보낸다. 둘째 바퀴는 잠정 경로의 수명 5초 안이다. 다섯 포트는 하네스 로그의
+  `fake.source ... via=<1~5> src_port=<포트>` 다. 보낸 순서가 `via` 순서다
+- **캡처.** C0 이 LAN 주소 행을 찾은 인터페이스
+- **필터.** `udp.srcport == P_A && udp[8:4] == 53:41:4e:47 && udp[13:1] == 01` 를 목적지 포트별로 센다. 구간은 장면부터 10초다
+
+| 확인 | 통과 조건 |
+|------|-----------|
+| 장면이 섰다 | 다섯 출발지에서 `P_A` 로 `KEEPALIVE` 가 두 바퀴, 모두 `sequence` 가 오르는 순서로 왔다 |
+| 경로마다 1회 | 두 바퀴를 받은 뒤에도 `via` 1~4 의 포트로 간 `HELLO` 가 각각 정확히 1개 |
+| 다섯째 | `via` 5 의 포트로 간 터널 패킷이 0개. A 의 `counters` 에서 그 피어 세션 표의 `drop_probe_full` 이 2 |
+
+**걸리는 구현.** 같은 경로에서 패킷이 올 때마다 검증 `HELLO` 를 보내는 것, 상한 없이 다섯째도 올리는 것, 가장 오래된 경로를 밀어내는 것.
+
+## C9. 무검증 목적지 공통 예산 (a)
+
+**roadmap 원문.** "후보 집합 밖 출발지에서 `HELLO`를 초당 20회로 10초간 보내면 나가는 송신 수가 초기 10개 + 초당 5개
+보충을 넘지 않고 초과분이 `drop_unverified_tx`로 오른다"
+
+- **구성.** 한 기기, 제품 빌드, R5 의 `flood`. 그 출발지는 `fake.source ... via=1` 의 포트 `X` 이고 받은 것에 답하지 않는다.
+  (b)~(e) 는 단위 시험(`tests/peer/session_test.cpp` "the unverified budget counts tokens as the roadmap does")이 본다
+- **캡처.** C0 이 LAN 주소 행을 찾은 인터페이스
+- **필터.** `udp.srcport == P_A && udp.dstport == X && udp[8:4] == 53:41:4e:47`. `t0` 은 `X` 에서 `P_A` 로 온 첫 `HELLO` 다
+
+| 확인 | 통과 조건 |
+|------|-----------|
+| 장면이 섰다 | `X` 에서 `P_A` 로 `HELLO` 가 10초 동안 190개 이상 |
+| 상한 | `P_A` 에서 `X` 로 간 패킷(`HELLO_ACK`, `PONG`, 검증 `HELLO` 를 합친 것)마다, 그 패킷까지의 누적 수가 `11 + 5t` 이하. `t` 는 `t0` 부터 그 패킷까지의 초다. 1 은 캡처 시각과 송신 시각의 차이를 위한 여유다 |
+| 보충 | `[t0 + 2초, t0 + 10초)` 에 `P_A` 에서 `X` 로 간 패킷이 30개 이상. 초기 10개를 다 쓴 뒤에도 초당 5개 꼴로 이어진다 |
+| 초과분 | A 의 `counters` 에서 그 피어 세션 표의 `drop_unverified_tx` 가 0 보다 크다 |
+
+**걸리는 구현.** 예산 없이 모두 답하는 것, 묶음으로 몰아 보내는 것, 보충하지 않는 것. 경로마다 따로 세는 구현은 출발지가 하나인
+이 장면으로 가르지 못한다. 그것은 단위 시험의 (d) 가 본다.
 
 ## 두 번째 기기 (D절)
 
@@ -438,7 +502,10 @@ P_A, P_B:
 | C4-4 | R3 | | `CLOSE` 수, `reason`, 목적지, 정지 뒤 10초의 `HELLO` 수 | | 목적지는 관측값. 수립 중 "그 주소로" 판정은 보류 |
 | C4-5 | R2 | | `CLOSE` 수 | | |
 | C5 | R1 | | A/B 각각 첫 `KEEPALIVE` − 마지막 `HELLO`, 간격 최소/최대, 개수, 목적지 | | |
-| C6~C9 | - | - | - | 보류 | |
+| C6 | R5 | | 가짜 피어의 `CLOSE` 와 `KEEPALIVE` 수, 그 뒤 10초의 `P_A` → `F` 수, `drop_terminal_state` | | |
+| C7 | R5 | | 구간 길이, 구간 안 `HELLO` 수와 간격 최소/최대, 처음과 끝의 틈, `KEEPALIVE`·`PING` 수, `FAIL` 줄 | | |
+| C8 | R5 | | `via` 1~5 포트별 `HELLO` 수, `drop_probe_full` | | |
+| C9 | R5 | | `X` 에서 온 `HELLO` 수, 누적 송신과 `11 + 5t` 의 가장 작은 여유, 2~10초 송신 수, `drop_unverified_tx` | | |
 | D1 | 두 기기 | | Elastic IP 행 UDP 수, 상대 주소 목록, 방향별 타입 | | |
 | D2 | 두 기기 | | C2 와 같다 | | |
 | D3 | 두 기기 | | 각 PC 의 `KEEPALIVE` 목적지, 로컬/공인 | | |

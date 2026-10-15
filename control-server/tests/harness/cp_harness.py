@@ -26,6 +26,17 @@ COMMANDS 다. STUN 응답기도 같은 프로세스가 연다 (protocol.md 13장
 | hello_only | 상대의 첫 HELLO 의 출발지로 HELLO 를 200ms 마다. HELLO_ACK 은 보내지 않는다. 상대의 CLOSE 에 멈춘다 | sent_ack 만. PEER_HANDSHAKE_FAILED |
 | close01, close03 | 상대의 첫 HELLO 의 출발지로 HELLO 한 번(상대가 epoch 를 고정한다), 곧이어 CLOSE 0x01 또는 0x03. HELLO_ACK 은 보내지 않는다 | 수립 중 상대의 CLOSE 로 CLOSED. 기록 줄 ABORTED 또는 PEER_FAILED |
 
+장면 모드 넷은 먼저 상대를 CONNECTED 까지 데려간다. 받은 HELLO 마다 HELLO_ACK 을 그 출발지로 답하고 처음 한 번
+우리 HELLO 를 보낸다. 상대가 우리 nonce 를 echo 하면 SCENE_DELAY_S 뒤에 장면을 연다. 연 뒤에는 상대에게 답하지
+않는다. 장면은 tools/phase4-capture 의 C6~C9 가 캡처로 볼 상황이다.
+
+| 모드 | 장면 | 절 |
+|------|------|----|
+| close_then_keepalive | CLOSE 0x00, 그 뒤 같은 세션 값으로 KEEPALIVE 를 1초마다 12개 | C6 |
+| renegotiate | 같은 주소에서 새 epoch, 새 nonce, sequence 0 의 HELLO 하나 | C7 |
+| probe5 | 후보 밖 출발지 다섯 곳에서 고정된 epoch 로 sequence 를 전진시키는 KEEPALIVE 하나씩. 1초 뒤 한 바퀴 더 | C8 |
+| flood | 후보 밖 출발지 하나에서 고정된 epoch 의 HELLO 를 초당 20회로 10초. 그 출발지는 받은 것에 답하지 않는다 | C9 |
+
 이 코드가 정한 것. 문서가 정하지 않은 자리다.
 
 | 무엇 | 값 | 근거 |
@@ -41,7 +52,9 @@ COMMANDS 다. STUN 응답기도 같은 프로세스가 연다 (protocol.md 13장
 | 제어 서버 호출의 시간 제한 | 연결과 응답 각각 CP_CALL_TIMEOUT_S(10초) | 시험 장치다. burn 의 응답 대기와 같은 값 |
 | 개수 | 동시에 MAX_FAKES(8)개까지 | 다른 주입처럼 상한을 둔다 |
 | clear | 가짜 피어도 모두 멈춘다 | lobby-check 가 장면마다 clear 로 비운다. 앞 장면의 피어가 다음 장면에 남지 않게 한다 |
-| 소켓 | 스레드 하나가 recvfrom 을 짧게 기다리며 돈다 | 이유는 FakeEndpoint 의 설명에 있다 |
+| 소켓 | 스레드 하나가 select 로 소켓들을 짧게 기다리며 돈다 | 이유는 FakeEndpoint 의 설명에 있다 |
+| 장면을 여는 때 | 상대의 HELLO_ACK 이 우리 nonce 를 echo 한 뒤 SCENE_DELAY_S(2초) | 상대는 그 HELLO_ACK 을 보낸 순간 CONNECTED 다(9.2). 2초는 상대의 진입 송신(KEEPALIVE, ROSTER)이 장면 앞에 끝나게 한다 |
+| 후보 밖 출발지 | 처음 쓸 때 0.0.0.0:0 에 하나씩 연다. 받은 것은 줄만 내고 답하지 않는다 | probe5 와 flood 의 출발지는 등록한 후보가 아니어야 한다(10.4 (c)). flood 는 roadmap 의 (a) 처럼 답하지 않는 주입기다 |
 
 로그. 서버의 줄(control_plane.md 7.5)은 그대로 표준 오류에 나간다. 하네스의 줄은 `HARNESS <이벤트> 이름=값`
 이고 같은 표준 오류에 나간다. **하네스 줄에도 room_id, peer_token, client_nonce 를 싣지 않는다.** 같은 흐름에서
@@ -65,6 +78,7 @@ import json
 import os
 import re
 import secrets
+import select
 import shutil
 import socket
 import struct
@@ -375,15 +389,24 @@ TUNNEL_MAGIC = 0x53414E47
 TUNNEL_VERSION = 0x01
 HEADER_SIZE = 20
 _HEADER = struct.Struct(">IBBHIII")  # magic, version, type, payload_length, peer_id, session_epoch, sequence
-HELLO, HELLO_ACK, CLOSE = 0x01, 0x02, 0x07
+HELLO, HELLO_ACK, KEEPALIVE, CLOSE = 0x01, 0x02, 0x03, 0x07
 TYPE_NAMES = {0x01: "HELLO", 0x02: "HELLO_ACK", 0x03: "KEEPALIVE", 0x04: "DATA", 0x05: "PING", 0x06: "PONG",
               0x07: "CLOSE", 0x08: "ROSTER"}
 # 8.1 검사 6번의 타입별 페이로드 길이 (하한, 상한).
 _TYPE_LEN = {0x01: (20, 20), 0x02: (20, 20), 0x03: (0, 0), 0x04: (20, 1452), 0x05: (8, 8), 0x06: (8, 8),
              0x07: (1, 1), 0x08: (16, 135)}
-FAKE_MODES = ("silent", "ack_only", "hello_only", "close01", "close03")
+# 뒤의 넷은 장면 모드다. 상대를 CONNECTED 까지 데려간 뒤 장면 하나를 연다 (tools/phase4-capture 의 C6~C9).
+SCENE_MODES = ("close_then_keepalive", "renegotiate", "probe5", "flood")
+FAKE_MODES = ("silent", "ack_only", "hello_only", "close01", "close03") + SCENE_MODES
 _CLOSE_REASON = {"close01": 0x01, "close03": 0x03}
 HELLO_RESEND_S = 0.2  # protocol.md 11장 HELLO 재전송 간격
+SCENE_DELAY_S = 2.0         # 상대가 CONNECTED 에 든 뒤 장면을 열기까지
+SCENE_KEEPALIVES = 12       # close_then_keepalive 가 CLOSE 뒤에 1초마다 보내는 KEEPALIVE 수
+SCENE_KEEPALIVE_S = 1.0
+PROBE_SOURCES = 5           # probe5 의 후보 밖 출발지 수 (roadmap.md Phase 4 잠정 경로 상한의 "다섯 곳")
+PROBE_AGAIN_S = 1.0         # probe5 의 둘째 바퀴. 잠정 경로의 수명 5초(protocol.md 11장) 안이다
+FLOOD_INTERVAL_S = 0.05     # flood 는 초당 20회 (roadmap.md Phase 4 무검증 목적지 공통 예산 (a))
+FLOOD_DURATION_S = 10.0
 MAX_FAKES = 8
 FAKE_RECV_POLL_S = 0.02
 CP_CALL_TIMEOUT_S = 10
@@ -451,10 +474,19 @@ class FakeSession:
         self.nonce = token_bytes(16)        # 5.1. 시도에 하나, 재전송에서 같은 값
         self.seq = 0                        # 4.4. 첫 송신이 0
         self.resend_at: float | None = None  # hello_only 의 다음 HELLO 시각. None 이면 보내지 않는다
+        # 장면 모드
+        self.scene_at: float | None = None   # 상대의 HELLO_ACK 이 우리 nonce 를 echo 한 뒤 SCENE_DELAY_S
+        self.scene_open = False              # 연 뒤에는 상대에게 답하지 않는다
+        self.keepalives_left = 0
+        self.keepalive_at: float | None = None
+        self.flood_at: float | None = None
+        self.flood_end = 0.0
+        self.probe_again_at: float | None = None
 
 
 class FakePeer:
-    """모드별 반응. 소켓을 모른다. receive 와 due 가 보낼 것 (타입 이름, 데이터그램, 목적지) 의 목록을 돌려준다.
+    """모드별 반응. 소켓을 모른다. receive 와 due 가 보낼 것 (타입 이름, 데이터그램, 목적지, 출발지) 의 목록을
+    돌려준다. 출발지 0 은 후보로 등록한 소켓이고 1 부터는 후보 밖의 소켓이다 (FakeEndpoint 가 연다).
 
     한 스레드(FakeEndpoint)만 부른다."""
 
@@ -469,10 +501,11 @@ class FakePeer:
         self.sessions: dict[int, FakeSession] = {}
         self._randbits, self._token_bytes = randbits, token_bytes
 
-    def _packet(self, sess: FakeSession, ptype: int, payload: bytes) -> tuple[str, bytes, tuple[str, int]]:
+    def _packet(self, sess: FakeSession, ptype: int, payload: bytes,
+                via: int = 0) -> tuple[str, bytes, tuple[str, int], int]:
         data = encode_packet(ptype, self.peer_id, sess.epoch, sess.seq, payload)
         sess.seq = (sess.seq + 1) & 0xFFFFFFFF
-        return TYPE_NAMES[ptype], data, sess.addr
+        return TYPE_NAMES[ptype], data, sess.addr, via
 
     def _hello(self, sess: FakeSession):
         return self._packet(sess, HELLO, sess.nonce + self.vip)
@@ -492,13 +525,15 @@ class FakePeer:
             if sess is not None:
                 sess.resend_at = None
             return []
+        if self.mode in SCENE_MODES:
+            return self._scene_receive(ptype, hdr, remote, addr, now)
         if ptype != HELLO or self.mode == "silent":
             return []
         if self.mode == "ack_only":
             if sess is None:
                 sess = self.sessions[remote] = FakeSession(addr, self._randbits, self._token_bytes)
             echo = self._packet(sess, HELLO_ACK, hdr["payload"][:16] + self.vip)
-            return [(echo[0], echo[1], addr)]  # 그 데이터그램의 출발지로
+            return [(echo[0], echo[1], addr, 0)]  # 그 데이터그램의 출발지로
         if sess is not None:
             return []  # hello_only 와 close 모드는 상대의 첫 HELLO 에만 반응한다
         sess = self.sessions[remote] = FakeSession(addr, self._randbits, self._token_bytes)
@@ -507,54 +542,149 @@ class FakePeer:
             return [self._hello(sess)]
         return [self._hello(sess), self._packet(sess, CLOSE, bytes([_CLOSE_REASON[self.mode]]))]
 
+    def _scene_receive(self, ptype: int, hdr: dict, remote: int, addr: tuple[str, int], now: float) -> list:
+        """장면 모드의 수립. 상대의 HELLO 에 HELLO_ACK 을 그 출발지로 답하고, 처음이면 우리 HELLO 도 보낸다.
+        상대가 우리 nonce 를 echo 하면 SCENE_DELAY_S 뒤에 장면을 연다. 연 뒤에는 아무것도 답하지 않는다."""
+        sess = self.sessions.get(remote)
+        if sess is not None and sess.scene_open:
+            return []
+        if ptype == HELLO:
+            out = []
+            if sess is None:
+                sess = self.sessions[remote] = FakeSession(addr, self._randbits, self._token_bytes)
+                out.append(self._hello(sess))
+            echo = self._packet(sess, HELLO_ACK, hdr["payload"][:16] + self.vip)
+            return [(echo[0], echo[1], addr, 0)] + out
+        if ptype == HELLO_ACK and sess is not None and sess.scene_at is None and hdr["payload"][:16] == sess.nonce:
+            sess.scene_at = now + SCENE_DELAY_S
+        return []
+
+    def _open_scene(self, sess: FakeSession, now: float) -> list:
+        sess.scene_open = True
+        hlog("fake.scene", name=self.name, port=self.port, mode=self.mode)
+        if self.mode == "close_then_keepalive":
+            # C6: CLOSE 0x00 뒤에도 같은 세션 값으로 KEEPALIVE 를 계속 보낸다.
+            sess.keepalives_left = SCENE_KEEPALIVES
+            sess.keepalive_at = now + SCENE_KEEPALIVE_S
+            return [self._packet(sess, CLOSE, bytes([0x00]))]
+        if self.mode == "renegotiate":
+            # C7: 같은 주소에서 새 시도의 HELLO. epoch 와 nonce 를 새로 뽑고 sequence 는 0 부터다 (4.3, 4.4, 5.1).
+            sess.epoch = _new_epoch(self._randbits)
+            sess.nonce = self._token_bytes(16)
+            sess.seq = 0
+            return [self._hello(sess)]
+        if self.mode == "probe5":
+            # C8: 후보 밖의 서로 다른 출발지 다섯 곳에서 고정된 epoch 로 sequence 를 전진시키는 KEEPALIVE 하나씩.
+            # PROBE_AGAIN_S 뒤에 한 바퀴 더 보낸다. 잠정 경로가 살아 있는 동안 같은 경로에서 또 와도 검증 HELLO 가
+            # 다시 나가지 않는지를 보려는 것이다.
+            sess.probe_again_at = now + PROBE_AGAIN_S
+            return self._probe_round(sess)
+        # flood. C9: 후보 밖 출발지 하나에서 고정된 epoch 의 HELLO 를 초당 20회로 10초.
+        sess.flood_at = now
+        sess.flood_end = now + FLOOD_DURATION_S
+        return []
+
+    def _probe_round(self, sess: FakeSession) -> list:
+        return [self._packet(sess, KEEPALIVE, b"", via=k) for k in range(1, PROBE_SOURCES + 1)]
+
     def due(self, now: float) -> list:
         out = []
         for sess in self.sessions.values():
+            if sess.probe_again_at is not None and now >= sess.probe_again_at:
+                sess.probe_again_at = None
+                out += self._probe_round(sess)
             if sess.resend_at is not None and now >= sess.resend_at:
                 sess.resend_at = now + HELLO_RESEND_S
                 out.append(self._hello(sess))
+            if sess.scene_at is not None and not sess.scene_open and now >= sess.scene_at:
+                out += self._open_scene(sess, now)
+            if sess.keepalives_left and now >= sess.keepalive_at:
+                sess.keepalives_left -= 1
+                sess.keepalive_at += SCENE_KEEPALIVE_S
+                out.append(self._packet(sess, KEEPALIVE, b""))
+            if sess.flood_at is not None and now >= sess.flood_at:
+                if now >= sess.flood_end:
+                    sess.flood_at = None
+                else:
+                    sess.flood_at += FLOOD_INTERVAL_S
+                    out.append(self._packet(sess, HELLO, sess.nonce + self.vip, via=1))
         return out
 
 
 class FakeEndpoint:
-    """가짜 피어의 UDP 소켓과 그 스레드.
+    """가짜 피어의 UDP 소켓들과 그 스레드.
 
     asyncio 데이터그램 전송을 쓰지 않는다. Windows 의 proactor 전송은 recvfrom 이 ConnectionResetError(닫힌
     포트로 보낸 뒤 오는 ICMP)를 내면 error_received 를 부르고 다음 수신을 걸지 않는다(Python 3.14 의
-    _ProactorDatagramTransport._loop_reading). hello_only 는 상대가 끝난 뒤에도 보낼 수 있어 실제로 난다."""
+    _ProactorDatagramTransport._loop_reading). hello_only 는 상대가 끝난 뒤에도 보낼 수 있어 실제로 난다.
+
+    소켓 0 은 후보로 등록한 것이다. 장면 모드가 후보 밖 출발지(1 부터)를 쓰면 그때 0.0.0.0:0 에 하나씩 연다.
+    그 소켓에 온 것은 fake.rx 줄만 내고 답하지 않는다. 상대가 그 출발지로 무엇을 보냈는지를 하네스 로그로도
+    셀 수 있게 하려는 것이다."""
 
     def __init__(self, peer: FakePeer, sock: socket.socket) -> None:
         self.peer = peer
         self.sock = sock
+        self.extra: dict[int, socket.socket] = {}
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name=f"fake-{peer.port}", daemon=True)
 
-    def _send(self, kind: str, data: bytes, dest: tuple[str, int]) -> None:
+    def _socket(self, via: int) -> socket.socket:
+        if via == 0:
+            return self.sock
+        if via not in self.extra:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind(("0.0.0.0", 0))
+            self.extra[via] = s
+            hlog("fake.source", name=self.peer.name, port=self.peer.port, via=via, src_port=s.getsockname()[1])
+        return self.extra[via]
+
+    def _send(self, kind: str, data: bytes, dest: tuple[str, int], via: int = 0) -> None:
         try:
-            self.sock.sendto(data, dest)
+            sock = self._socket(via)
+            sock.sendto(data, dest)
         except OSError as exc:
             hlog("fake.tx_error", name=self.peer.name, port=self.peer.port, type=kind, exc=type(exc).__name__)
             return
         seq = int.from_bytes(data[16:20], "big")
         extra = {"reason": data[HEADER_SIZE]} if data[5] == CLOSE else {}
-        hlog("fake.tx", name=self.peer.name, port=self.peer.port, type=kind, dst=f"{dest[0]}:{dest[1]}", seq=seq,
-             **extra)
+        hlog("fake.tx", name=self.peer.name, port=sock.getsockname()[1], type=kind, dst=f"{dest[0]}:{dest[1]}",
+             seq=seq, **extra)
+
+    def _log_extra(self, sock: socket.socket, data: bytes, addr: tuple[str, int]) -> None:
+        hdr, why = decode_packet(data)
+        port = sock.getsockname()[1]
+        if hdr is None:
+            hlog("fake.drop", name=self.peer.name, port=port, reason=why, src=f"{addr[0]}:{addr[1]}")
+        else:
+            hlog("fake.rx", name=self.peer.name, port=port, type=TYPE_NAMES[hdr["type"]], src=f"{addr[0]}:{addr[1]}",
+                 peer_id=hdr["peer_id"], seq=hdr["seq"])
 
     def _run(self) -> None:
-        self.sock.settimeout(FAKE_RECV_POLL_S)
         while not self.stop.is_set():
             out = []
+            socks = [self.sock, *self.extra.values()]
             try:
-                data, addr = self.sock.recvfrom(2048)
-                out = self.peer.receive(data, addr, time.monotonic())
-            except TimeoutError:
-                pass
-            except ConnectionResetError:
-                hlog("fake.icmp", name=self.peer.name, port=self.peer.port)
+                ready, _, _ = select.select(socks, [], [], FAKE_RECV_POLL_S)
             except OSError as exc:
                 if not self.stop.is_set():
-                    hlog("error", reason="fake_recv_failed", port=self.peer.port, exc=type(exc).__name__)
+                    hlog("error", reason="fake_select_failed", port=self.peer.port, exc=type(exc).__name__)
                 break
+            for sock in ready:
+                try:
+                    data, addr = sock.recvfrom(2048)
+                except ConnectionResetError:
+                    hlog("fake.icmp", name=self.peer.name, port=sock.getsockname()[1])
+                    continue
+                except OSError as exc:
+                    if not self.stop.is_set():
+                        hlog("error", reason="fake_recv_failed", port=self.peer.port, exc=type(exc).__name__)
+                    self.stop.set()
+                    break
+                if sock is self.sock:
+                    out += self.peer.receive(data, addr, time.monotonic())
+                else:
+                    self._log_extra(sock, data, addr)
             for item in out + self.peer.due(time.monotonic()):
                 self._send(*item)
 
@@ -565,6 +695,8 @@ class FakeEndpoint:
         self.stop.set()
         self.thread.join(2)
         self.sock.close()
+        for s in self.extra.values():
+            s.close()
 
 
 # 가짜 피어가 하네스 자신의 제어 서버에 보내는 요청. control_plane.md 3.3 의 형식 그대로다.

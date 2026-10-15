@@ -926,10 +926,11 @@ def _peer(mode, role="player", draws=(0x11111111,), nonce=b"m" * 16):
                       token_bytes=lambda n: nonce)
 
 
-def _decoded(out):
-    """(타입, 헤더, 목적지) 목록. 바이트가 공통 검사를 통과해야 한다."""
+def _decoded(out, via=0):
+    """(타입, 헤더, 목적지) 목록. 바이트가 공통 검사를 통과해야 하고 출발지가 via 여야 한다."""
     rows = []
-    for kind, data, dest in out:
+    for kind, data, dest, source in out:
+        assert source == via
         hdr, why = H.decode_packet(data)
         assert why == "" and H.TYPE_NAMES[hdr["type"]] == kind
         rows.append((kind, hdr, dest))
@@ -1046,6 +1047,125 @@ def test_check_lan_ip(ip, ok):
     else:
         with pytest.raises(ValueError):
             H.check_lan_ip(ip)
+
+
+# ---------------------------------------------------------------- 가짜 피어: 장면 모드 (tools/phase4-capture C6~C9)
+
+ECHO_OF_OURS = H.encode_packet(H.HELLO_ACK, REMOTE_ID, 0x55, 1, b"m" * 16 + bytes([10, 100, 0, 1]))
+
+
+def _scene(mode, draws=(0x11111111, 0x22222222)):
+    """상대를 CONNECTED 까지 데려간 장면 모드 피어. 장면은 t=10 에 열린다."""
+    p = _peer(mode, role="player", draws=draws, nonce=b"m" * 16)
+    out = _decoded(p.receive(_hello(nonce=b"A" * 16), SRC, 8.0))
+    assert [k for k, _, _ in out] == ["HELLO_ACK", "HELLO"]
+    assert out[0][1]["payload"][:16] == b"A" * 16 and out[1][1]["payload"][:16] == b"m" * 16
+    assert p.receive(ECHO_OF_OURS, SRC, 8.0) == []
+    return p
+
+
+@pytest.mark.parametrize("mode", H.SCENE_MODES)
+def test_scene_modes_answer_every_hello_until_the_scene_opens(captured, mode):
+    p = _scene(mode)
+    again = _decoded(p.receive(_hello(nonce=b"A" * 16, seq=1), SRC, 9.0))
+    assert [k for k, _, _ in again] == ["HELLO_ACK"]           # 우리 HELLO 는 처음 한 번만
+    assert p.due(9.99) == []
+    p.due(10.0)                                                 # 장면이 열린다
+    assert any(line.startswith("HARNESS fake.scene name=Fake port=40000 mode=" + mode) for line in captured)
+    assert p.receive(_hello(nonce=b"A" * 16, seq=2), SRC, 10.1) == []   # 연 뒤에는 답하지 않는다
+
+
+@pytest.mark.parametrize("mode", H.SCENE_MODES)
+def test_an_echo_of_another_nonce_does_not_open_the_scene(captured, mode):
+    p = _peer(mode, nonce=b"m" * 16)
+    p.receive(_hello(nonce=b"A" * 16), SRC, 0.0)
+    p.receive(H.encode_packet(H.HELLO_ACK, REMOTE_ID, 0x55, 1, b"x" * 16 + bytes(4)), SRC, 0.0)
+    assert p.due(100.0) == []
+
+
+def test_close_then_keepalive_sends_close_00_then_twelve_keepalives(captured):
+    p = _scene("close_then_keepalive")
+    close = _decoded(p.due(10.0))
+    assert [k for k, _, _ in close] == ["CLOSE"] and close[0][1]["payload"] == b"\x00"
+    epoch = close[0][1]["epoch"]
+    kas = []
+    t = 10.0
+    while t < 30.0:
+        t += 0.1
+        kas += _decoded(p.due(t))
+    assert [k for k, _, _ in kas] == ["KEEPALIVE"] * 12
+    assert {h["epoch"] for _, h, _ in kas} == {epoch}           # 같은 세션 값
+    assert [h["seq"] for _, h, _ in close + kas] == list(range(2, 15))
+    assert {d for _, _, d in kas} == {SRC}
+
+
+def test_renegotiate_sends_one_hello_with_a_new_epoch_nonce_and_sequence(captured):
+    p = _scene("renegotiate", draws=(0x11111111, 0x22222222))
+    p._token_bytes = lambda n: b"z" * 16
+    out = _decoded(p.due(10.0))
+    assert [k for k, _, _ in out] == ["HELLO"]
+    h = out[0][1]
+    assert h["epoch"] == 0x22222222 and h["seq"] == 0 and h["payload"][:16] == b"z" * 16
+    assert out[0][2] == SRC
+    assert p.due(30.0) == []
+
+
+def test_probe5_sends_two_rounds_of_advancing_keepalives_from_five_sources(captured):
+    p = _scene("probe5")
+    first = p.due(10.0)
+    assert p.due(10.99) == []
+    second = p.due(11.0)                                        # 잠정 경로 수명 5초 안의 둘째 바퀴
+    for out, seqs in ((first, [2, 3, 4, 5, 6]), (second, [7, 8, 9, 10, 11])):
+        assert [via for _, _, _, via in out] == [1, 2, 3, 4, 5]
+        rows = [(k, H.decode_packet(d)[0]) for k, d, _, _ in out]
+        assert [k for k, _ in rows] == ["KEEPALIVE"] * 5
+        assert [h["seq"] for _, h in rows] == seqs              # 고정된 epoch 에서 전진한다
+        assert {h["epoch"] for _, h in rows} == {0x11111111}
+    assert p.due(30.0) == []
+
+
+def test_flood_sends_twenty_hellos_a_second_for_ten_seconds_from_one_outside_source(captured):
+    p = _scene("flood")
+    sent = []
+    t = 10.0
+    while t <= 25.0:
+        sent += p.due(t)
+        t = round(t + 0.01, 2)
+    assert {via for _, _, _, via in sent} == {1}
+    hellos = [H.decode_packet(d)[0] for _, d, _, _ in sent]
+    assert len(hellos) == 200
+    assert {h["type"] for h in hellos} == {H.HELLO} and {h["epoch"] for h in hellos} == {0x11111111}
+    assert {h["payload"] for h in hellos} == {b"m" * 16 + bytes([10, 100, 0, 3])}
+
+
+def test_an_endpoint_sends_through_a_separate_socket_for_each_outside_source(captured):
+    """via 가 다르면 출발지 포트가 다르다. 그 소켓에 온 것은 fake.rx 줄만 낸다."""
+    import socket as s
+    import time
+
+    receiver = s.socket(s.AF_INET, s.SOCK_DGRAM)
+    receiver.bind(("127.0.0.1", 0))
+    receiver.settimeout(2)
+    main = s.socket(s.AF_INET, s.SOCK_DGRAM)
+    main.bind(("0.0.0.0", 0))
+    ep = H.FakeEndpoint(_peer("probe5"), main)
+    try:
+        dest = receiver.getsockname()
+        data = H.encode_packet(0x03, 1, 1, 0)
+        ports = set()
+        for via in (0, 1, 2, 1):
+            ep._send("KEEPALIVE", data, dest, via)
+            ports.add(receiver.recvfrom(64)[1][1])
+        assert len(ports) == 3 and main.getsockname()[1] in ports
+        ep.start()
+        receiver.sendto(_hello(), ("127.0.0.1", ep.extra[2].getsockname()[1]))
+        deadline = time.monotonic() + 2
+        while not any(" type=HELLO " in line and "fake.rx" in line for line in captured):
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+    finally:
+        ep.close()
+        receiver.close()
 
 
 # ---------------------------------------------------------------- 가짜 피어: 제어 서버 호출

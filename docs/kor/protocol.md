@@ -503,7 +503,7 @@ pending_pings[id] = steady_clock::now();
 |---|------|-------------|
 | 1 | 보낸 쪽이 호스트다 | `drop_roster_direction` |
 | 2 | 구조가 맞는다. 아래 셋이 모두 참이다 | `drop_type_length` |
-| 3 | `generation` 이 그 세션에서 마지막으로 받아들인 값보다 크다 | `drop_roster_stale` |
+| 3 | `generation` 이 그 세션에서 마지막으로 받아들인 값보다 작지 않다 | `drop_roster_stale` |
 | 4 | 모든 멤버의 `flags` 비트 1~7 이 0 이다 | `drop_roster_flags` |
 | 5 | 모든 멤버의 `name` 이 `control_plane.md` 2.7 `name` 의 문자 집합 안에 있다 | `drop_roster_name` |
 
@@ -518,8 +518,15 @@ pending_pings[id] = steady_clock::now();
 > 내용 위조이거나 송신 구현의 결함이다. 카운터를 나눠야 둘을 가를 수 있다. 그 이름을 화면에 내면
 > 표준 출력과 로그의 줄 규칙이 깨진다.
 
+**3번은 같은 값을 받아들인다.** 위 보내는 시점대로 호스트는 같은 명부를 같은 `generation` 으로 다시 보낸다.
+`generation` 은 명부가 바뀔 때마다 오르므로 같은 값의 명부는 내용도 같다. 받아들여도 바뀌는 것이 없다.
+
+> **왜.** 같은 값을 버리면 정상 세션의 재송신마다 `drop_roster_stale` 이 올라, 그 카운터가 순서가 뒤집혀 늦게 온
+> 명부를 가리키지 못한다. 결정은 [ADR 0024](decisions/0024-실측-뒤-결정.md) 다.
+
 **명부는 표시 전용이다.** 받은 값이 수신 검증도 라우팅도 바꾸지 않는다. 이름도 같다. 플레이어는
-받아들인 명부마다 `roster` 로그 줄을 하나 낸다([`architecture.md`](architecture.md) 9장 로그 출력).
+`generation` 이 처음이거나 커진 명부마다 `roster` 로그 줄을 하나 낸다([`architecture.md`](architecture.md) 9장 로그 출력).
+같은 값의 재송신은 내지 않는다.
 
 - 8.1 공통 검사 7번의 대조 집합은 **세션이 정한다.** 명부에 있는 `peer_id` 로 온 패킷이라도
   그 피어와 세션이 없으면 `drop_unknown_peer` 다
@@ -649,8 +656,8 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 대로 8.2 가 다른 epoch 의 `HELLO` 를 9.5 로 보내면 재협상이 8.3 보다 먼저 돈다.
 
 > **왜.** 카운터 하나가 원인 하나를 가리키게 한다. 망의 복제는 `drop_duplicate`, epoch 가 맞지 않는 패킷은 8.1 의
-> `drop_retired_epoch` 나 8.2 의 카운터, 내용 오류는 타입별 카운터다. 타입별 검사를 앞에 두면 망이 복제한 `ROSTER` 가
-> `drop_roster_stale` 로 섞인다. 결정과 버린 대안은
+> `drop_retired_epoch` 나 8.2 의 카운터, 내용 오류는 타입별 카운터다. 타입별 검사를 앞에 두면 망이 복제한 `PONG` 이
+> 이미 짝을 찾아 지워진 항목에 닿아 `drop_unmatched_pong` 으로 섞인다. 결정과 버린 대안은
 > [ADR 0021](decisions/0021-타입별-검사는-중복-억제-뒤.md) 이 갖는다.
 
 ### 8.1 공통 검사

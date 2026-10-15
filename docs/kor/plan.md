@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 2 까지 끝났다. Phase 3 은 산출물 확인 하나만 남았다(두 번째 기기, "대기 중인 것"). **Phase 4 를 재측정 전에 시작했다.** 아래 "다음에 할 일" 이 조각 순서다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 3 까지 끝났다. Phase 3 산출물은 `field-test` 시험 1 이 확인했다. Phase 4 진행 중이다. 아래 "다음에 할 일" 이 순서다 |
 | 대기 | 이 파일 "대기 중인 것" | 두 번째 기기나 측정이 있어야 풀린다 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 1건 |
@@ -16,9 +16,7 @@
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 친구 기기로 한꺼번에. 절차와 묶음은 [`tools/field-test`](../../tools/field-test/README.md) 다: `tools/nat-probe` 재측정(호스트 네 쌍), Phase 3 산출물, `tools/phase4-capture` 의 D1~D3, 로비 체류와 매핑, 선택으로 방화벽 인바운드 실측과 시연 상대 망의 매핑 수명 | 두 번째 기기가 필요한 일을 한 번에 한다. 재측정 결과로 방 생성 전 호스트 NAT 경고 여부를 정한다 (`roadmap.md` Phase 4 작업 머리) |
-
-**재측정 전에 Phase 4 를 시작한 것은 저장소 소유자의 결정이다.** `roadmap.md` 는 재측정을 착수 전 항목으로 둔다. 측정 결과에 기대는 자리는 호스트 NAT 경고 하나이고 위 조각 어디에도 들어 있지 않다. 측정에서 직접 연결 판정이 뒤집히면 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 을 다시 연다
+| 1 | `field-test` 시험 1 의 남은 둘을 다시 돈다. 로비 체류(아래 대기)와 D2 의 포트 하나 확인(`a-ports.txt` 가 없었다) | 나머지 항목은 통과했다. 절차와 보고서는 [`field-test/`](../../field-test/README.md) 에 있다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.
@@ -32,12 +30,11 @@
 | 무엇 | 막힌 이유 | 풀리는 조건 |
 |------|-----------|-------------|
 | 방화벽 인바운드 실측 | 상대 피어가 필요하다 | 두 번째 기기 |
-| 로비 체류가 NAT 매핑에 무엇을 하는가 | 측정한 적이 없다. [`concurrency.md`](concurrency.md) 7장 로비가 "단정하지 않는다" 로 적었다 | Phase 4 의 `tools/nat-probe` 재측정과 같이 본다 |
+| 로비 체류가 NAT 매핑에 무엇을 하는가 | [`concurrency.md`](concurrency.md) 7장 로비가 "단정하지 않는다" 로 적었다. `field-test` 시험 1 에서 체류가 약 50~70초라 이 기기 집 하한 58초를 넘지 못했다. 두 집 NAT 가 포트를 유지하므로 포트 비교로는 가르지 못하고, 볼 것은 긴 체류 뒤에도 다시 `CONNECTED` 되는가다 | 3분 이상 체류로 시험 1-2 를 다시 돈다 |
 | 시연 상대 망의 매핑 수명 | 두 집을 쟀다. 이 기기 집 Wi-Fi 하한 58초, 친구 집 Wi-Fi 300초 이상. 최솟값 58초로 [`protocol.md`](protocol.md) 11장 규칙(`간격 × 3 < 최솟값`)을 지킨다. 시연 상대가 이 둘이 아니면 그 망은 아직 모른다 | 시연 상대의 망에서 `tools/nat-lifetime` 을 돌린다. 그때마다 보안 그룹을 그 공인 IP `/32` 로 잠시 연다 |
 | 캡처 체크리스트의 보류 C6~C9 | 종료 상태 무응답, 재협상 뒤 `HELLO`, 잠정 경로, 무검증 예산을 와이어에서 보려면 지금 가짜 피어 모드로 만들 수 없는 상대가 필요하다. 논리는 단위 시험이 본다 | 그 상대를 만드는 가짜 피어 모드 ([`tools/phase4-capture`](../../tools/phase4-capture/README.md) 의 C6~C9 절) |
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증 | Wintun 어댑터가 아직 없다 | Phase 6(Wintun), 8(시연) |
-| 서로 다른 네트워크의 두 클라이언트 | `roadmap.md` Phase 3 산출물이다. 배포된 서버로 한 NAT 뒤의 두 프로세스는 돌렸다 | 두 번째 기기 |
 | NFR-5 를 두 종류로 나눈 것의 교수 확인 | 확인 대상은 Catch2 승인이 아니라 요구를 제품 의존성과 시험 전용 의존성으로 나눈 것이다 | 제출 전 확인. 결과가 다르면 [ADR 0005](decisions/0005-시험-프레임워크-catch2.md)를 뒤집고 새 ADR 을 쓴다 |
 
 Phase 1 의 두 머신 실측은 따로 기다리지 않는다. `roadmap.md` Phase 1 검증은 한 기기의 두 프로세스도

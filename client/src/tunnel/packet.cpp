@@ -349,8 +349,8 @@ RosterDecode decode_roster(std::span<const std::byte> payload,
         return fail(PacketError::kTypeLength);  // 남는 바이트
     }
 
-    // 3. generation 이 마지막으로 받아들인 값보다 크다.
-    if (context.last_generation && roster.generation <= *context.last_generation) {
+    // 3. generation 이 마지막으로 받아들인 값보다 작지 않다. 같은 값은 재송신이다.
+    if (context.last_generation && roster.generation < *context.last_generation) {
         return fail(PacketError::kRosterStale);
     }
 

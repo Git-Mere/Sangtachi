@@ -704,6 +704,9 @@ std::vector<RosterCase> make_roster_cases() {
     ok("flags 0 is allowed", simple_roster(7, {named("Bob", 0x00)}));
     ok("generation 0 with no prior roster", simple_roster(0, {named("Bob")}));
     ok("generation one above the last", simple_roster(6, {named("Bob")}), RosterContext{true, 5u});
+    ok("generation equal to the last is a resend", simple_roster(5, {named("Bob")}), RosterContext{true, 5u});
+    ok("generation 0 after 0 was accepted", simple_roster(0, {named("Bob")}), RosterContext{true, 0u});
+    ok("generation max after max", simple_roster(0xFFFFFFFFu, {named("Bob")}), RosterContext{true, 0xFFFFFFFFu});
     ok("generation max above 0", simple_roster(0xFFFFFFFFu, {named("Bob")}), RosterContext{true, 0u});
 
     // --- 1. 방향 ---
@@ -776,18 +779,21 @@ std::vector<RosterCase> make_roster_cases() {
     }
 
     // --- 3. generation ---
-    bad("generation equal to the last", simple_roster(5, {named("Bob")}), PacketError::kRosterStale,
+    bad("generation one below the last", simple_roster(4, {named("Bob")}), PacketError::kRosterStale,
         RosterContext{true, 5u});
-    bad("generation below the last", simple_roster(4, {named("Bob")}), PacketError::kRosterStale,
-        RosterContext{true, 5u});
-    bad("generation 0 after 0 was accepted", simple_roster(0, {named("Bob")}), PacketError::kRosterStale,
-        RosterContext{true, 0u});
+    bad("generation 0 after 1", simple_roster(0, {named("Bob")}), PacketError::kRosterStale,
+        RosterContext{true, 1u});
     bad("no wraparound: 0 after max is stale", simple_roster(0, {named("Bob")}), PacketError::kRosterStale,
         RosterContext{true, 0xFFFFFFFFu});
-    bad("stale with bad flags is stale first", simple_roster(5, {named("Bob", 0x02)}),
+    bad("stale with bad flags is stale first", simple_roster(4, {named("Bob", 0x02)}),
         PacketError::kRosterStale, RosterContext{true, 5u});
-    bad("stale with bad name is stale first", simple_roster(5, {named("B b")}),
+    bad("stale with bad name is stale first", simple_roster(4, {named("B b")}),
         PacketError::kRosterStale, RosterContext{true, 5u});
+    // 같은 값은 3번을 지나므로 4번과 5번이 본다
+    bad("equal generation with bad flags is flags", simple_roster(5, {named("Bob", 0x02)}),
+        PacketError::kRosterFlags, RosterContext{true, 5u});
+    bad("equal generation with bad name is name", simple_roster(5, {named("B b")}),
+        PacketError::kRosterName, RosterContext{true, 5u});
 
     // --- 4. flags 비트 1~7 ---
     for (const unsigned flags : {0x02u, 0x03u, 0x04u, 0x08u, 0x10u, 0x20u, 0x40u, 0x80u, 0xFEu, 0xFFu}) {

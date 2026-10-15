@@ -70,7 +70,7 @@
 // | 8.4 를 통과했는데 갈 곳이 없는 `DATA` | 유휴 타이머 갱신과 학습은 하고 `drop_no_sink` | 9.4 "모든 검증을 통과한 패킷". `drop_no_sink` 는 검증이 아니라 출구다 (concurrency.md 3장) |
 // | 만료한 `pending_pings` 항목에 온 `PONG` | 조회 전에 만료 항목을 치우므로 `drop_unmatched_pong` | 5.5 "5초를 넘긴 항목은 표본을 버리고 제거한다" |
 // | 재협상과 `next_ping_id` | 되돌리지 않는다 | 5.5 "세션 시도마다 0에서". 재협상은 새 시도가 아니다(9.5 5번) |
-// | 받아들인 `ROSTER` | `roster` 줄 하나(`peer_id`, `generation`, `members`). 버린 것은 내지 않는다 | 5.7 "받아들인 명부마다 `roster` 로그 줄", architecture.md 9장 |
+// | 받아들인 `ROSTER` | `generation` 이 처음이거나 커졌으면 `roster` 줄 하나(`peer_id`, `generation`, `members`). 같은 값의 재송신과 버린 것은 내지 않는다 | 5.7 "처음이거나 커진 명부마다 `roster` 로그 줄", architecture.md 9장 |
 // | 잠정 경로를 올리는 계기 | 위 머리의 학습 조건에서 (c) 만 못 한 패킷, 그리고 재협상을 일으킨 `HELLO`. `CLOSE` 는 세션을 끝내므로 올리지 않는다 | 10.4 (c), 9.5 9번 |
 // | 이미 잠정 경로인 주소 | 다시 올리지 않는다. 토큰도 쓰지 않는다 | 10.4 "경로당 검증 `HELLO` 1회", roadmap.md Phase 4 의 토큰 셈 |
 // | 회신과 등록의 순서 | 9.4 전이표의 동작(회신)이 먼저, 등록이 뒤다. 토큰이 하나 남았으면 `HELLO_ACK` 이 쓴다 | 9.4 `HELLO` 행의 순서 |

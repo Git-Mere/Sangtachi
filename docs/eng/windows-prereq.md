@@ -29,7 +29,7 @@ Each section header states its verification status.
 Currently 5 sections are measured, 4 partly measured, 4 unverified.
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
-`commit_history/` and `tools/nat-probe/records/`. This document holds only the current spec and the
+`commit_history/` and `field-test/`. This document holds only the current spec and the
 pass criteria.
 
 **A failed query and "absent" are distinguished.** Each kind of query is handled differently.

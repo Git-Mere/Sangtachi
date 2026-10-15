@@ -85,8 +85,8 @@ PING 이 왔다는 것만** 뜻한다. 상대 NAT 이 다른 매핑을 쓴 것�
 
 **흉내의 한계.** 실제 플레이어 넷은 망이 모두 다르다. 이 측정의 넷은 한 NAT 뒤의 소켓 넷이라 호스트가 보는
 원격 주소는 IP 하나에 포트 넷이다. 호스트 NAT 이 여러 원격 엔드포인트와 동시에 매핑과 필터를 다루는지는 보지만,
-원격 IP 가 다른 경우와 같다고 단정하지 않는다. 기록에 이 한계를 적는다. 기록 양식은
-[`RECORD-TEMPLATE.md`](RECORD-TEMPLATE.md) 4.5 다.
+원격 IP 가 다른 경우와 같다고 단정하지 않는다. 보고서의 "조건" 에 이 한계를 적는다. 양식은
+[`field-test/TEMPLATE.md`](../../field-test/TEMPLATE.md) 다.
 
 ## 측정 전에 확인할 것
 
@@ -145,11 +145,11 @@ PING 이 왔다는 것만** 뜻한다. 상대 NAT 이 다른 매핑을 쓴 것�
 
 | 무엇 | 어디 |
 |------|------|
-| 결과 JSON | `results/`. **`.gitignore` 로 막혀 있다** |
-| 측정 기록 | `records/`. **`.gitignore` 로 막혀 있다.** 양식은 `RECORD-TEMPLATE.md` |
+| 결과 JSON | `results/`. **`.gitignore` 로 막혀 있다.** 실측이 끝나면 [`field-test/`](../../field-test/README.md) 의 그 날짜 폴더로 옮긴다 |
+| 보고서 | `field-test/` 의 그 날짜 폴더. 양식은 `field-test/TEMPLATE.md` |
 | 판정 근거 | `docs/kor/audit-history/design-audit.md` 후속 5번, [ADR 0001](../../docs/kor/decisions/0001-직접-연결-대비책-미도입.md) |
 
-**공인 IP 가 들어가는 원본은 커밋하지 않는다.** 두 디렉터리 모두 `.gitignore` 에 있고 `.gitkeep` 만 추적된다. 공개 레포이고 두 가정의 공인 IP 와 분 단위 시각이 들어 있다. 로컬에 보관하고 보고서 제출 때만 첨부한다. **커밋해야 한다면 가린 사본만 올린다.**
+**공인 IP 가 들어가는 원본은 커밋하지 않는다.** `results/` 와 `field-test/` 의 날짜 폴더 모두 `.gitignore` 에 있다. 이유와 보관 방법은 `field-test/README.md` 가 갖는다.
 
 ## 나쁜 결과도 실측 성공이다
 

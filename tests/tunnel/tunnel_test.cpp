@@ -580,7 +580,9 @@ TEST_CASE("tunnel: ROSTER names are checked through the receive path", "[tunnel]
     // 1 과 16 은 받는다
     feed_roster(roster_bytes(1, {name_of(1), name_of(16, 'Z')}));
     REQUIRE(s->last_roster_generation() == 1u);
-    feed_roster(roster_bytes(1, {name_of(1)}));
+    feed_roster(roster_bytes(1, {name_of(1)}));  // 같은 값은 재송신이다
+    REQUIRE(f.scount(Counter::DropRosterStale) == 0);
+    feed_roster(roster_bytes(0, {name_of(1)}));
     REQUIRE(f.scount(Counter::DropRosterStale) == 1);
 }
 

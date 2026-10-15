@@ -129,7 +129,7 @@ using StunResolveFn = std::function<std::optional<Endpoint>(std::string_view hos
 // > **왜 2 가 필요한가.** 두 서버에 묻는 이유는 목적지가 달라져도 매핑이 그대로인지 보는
 // > 것이다. 같은 주소에 두 번 물으면 목적지가 하나여서 그 판정이 성립하지 않는데, 목록
 // > 항목 수만 보면 두 개로 보인다. 기본 목록의 앞 두 이름이 실제로 한 주소로 풀린 실측이
-// > `tools/nat-probe/records/` 에 있다.
+// > `field-test/` 에 있다.
 //
 // **포트가 다르면 다른 서버다.** 같은 호스트의 다른 포트는 다른 목적지다.
 [[nodiscard]] std::vector<StunServer> resolve_stun_servers(std::span<const StunServerName> list,

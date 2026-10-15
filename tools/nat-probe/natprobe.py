@@ -1576,7 +1576,7 @@ def _run_players(args, servers: list) -> int:
     path = save(record, args.out, args.label, args.mode)
     print()
     print(f"  기록: {path}")
-    print("  RECORD-TEMPLATE.md 에 옮겨 적는다. 3회 반복이 필요하다.")
+    print("  field-test/TEMPLATE.md 양식으로 보고서를 쓴다. 3회 반복이 필요하다.")
     print()
     return 0
 
@@ -1779,7 +1779,7 @@ def main(argv=None) -> int:
     path = save(record, args.out, args.label, args.mode)
     print()
     print(f"  기록: {path}")
-    print("  RECORD-TEMPLATE.md 에 옮겨 적는다. 3회 반복이 필요하다.")
+    print("  field-test/TEMPLATE.md 양식으로 보고서를 쓴다. 3회 반복이 필요하다.")
     print()
     return 0
 

@@ -687,8 +687,12 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             enter_terminal(SessionState::kClosed, now);
             return RxResult{};
         case PacketType::kRoster: {
+            // 5.7: generation 이 처음이거나 커진 명부마다 roster 줄 하나 (architecture.md 9장).
+            // 같은 값은 재송신이라 내용도 같다. 바꾸는 것이 없다.
+            if (last_generation_ && roster->generation == *last_generation_) {
+                break;
+            }
             last_generation_ = roster->generation;
-            // 5.7: 받아들인 명부마다 roster 줄 하나 (architecture.md 9장).
             const std::string members = tunnel::format_roster_members(*roster);
             const LogField fields[] = {
                 field("peer_id", static_cast<std::uint64_t>(config_.peer_id)),

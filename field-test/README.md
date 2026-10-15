@@ -1,15 +1,39 @@
 # field-test
 
-사람이 직접 돌려야 하는 시험 목록이다. 같은 기기에서 되는 것은 이미 자동으로 돈다(`scripts/test.ps1`, 캡처 C0~C5).
-지금 사람이 돌릴 수 있는 것으로 남은 것은 **두 번째 기기가 있어야 하는 것**이다. 겹치는 항목은 한 번의 실행으로 묶었다.
-캡처 C6~C9 는 새 가짜 피어 모드가 있어야 해서 여기 없다(`plan.md` 의 대기).
+사람이 직접 하는 실측을 모두 여기서 한다. 시험 절차, 날짜별 보고서, 원본 데이터가 한 폴더에 있다.
+같은 기기에서 되는 것은 이미 자동으로 돈다(`scripts/test.ps1`, 캡처 C0~C5). 무엇이 남았는지는
+[`docs/kor/plan.md`](../docs/kor/plan.md) 가 갖는다.
 
-| 시험 | 어디서 | 시간 | 이 한 번으로 끝나는 항목 |
+## 기록하는 법
+
+```text
+field-test/
+  README.md                  이 파일. 준비와 시험 절차
+  TEMPLATE.md                보고서 양식
+  nat-probe-index.md         9월 nat-probe 실측의 라벨 표
+  YYYY-MM-DD/                실측한 날 (현지 날짜)
+    <측정 이름>.md            보고서 하나. TEMPLATE.md 를 복사해 채운다
+    <측정 이름>/              그 측정의 원본. 받은 그대로 둔다
+```
+
+1. 실측하기 전에 날짜 폴더를 만들고 보고서의 요약 표와 "방법" 을 먼저 채운다
+2. 실측한 뒤 원본을 `<측정 이름>/` 에 모으고 "결과" 와 "다음" 을 채운다
+3. 남은 일이 생기면 `plan.md` 에 옮긴다
+
+**이 README 와 `TEMPLATE.md` 만 커밋한다** (`.gitignore`). 보고서와 원본에는 실측 시각과 기록이 있고 원본에는 두 집의
+공인 IP 가 있다. 공개 레포다. 보고서를 밖에 낼 때의 규칙은 [ADR 0001](../docs/kor/decisions/0001-직접-연결-대비책-미도입.md)
+"따라야 할 조치" 2번이다.
+
+## 시험 목록
+
+| 시험 | 어디서 | 시간 | 이 한 번으로 보는 항목 |
 |------|--------|:---:|------------------------|
 | 1 | 서로 다른 두 집 (원격, 메신저로 맞춤) | 약 40분 | `tools/nat-probe` 재측정(호스트 네 쌍), 로비 체류가 매핑에 미치는 영향, Phase 3 산출물, Phase 4 "서로 다른 가정망 양방향", 캡처 D1(AWS 미경유)·D2(배포 환경 NFR-9), M-2, 기록 파일 |
 | 2 | 같은 공유기 아래 두 PC (함께 있을 때) | 약 5분 | Phase 4 "같은 LAN 두 PC", 캡처 D3 |
 | 3 (선택) | 시연 상대의 집 | 약 10분 | 시연 상대 망의 매핑 수명. 상대가 이미 잰 두 집이 아닐 때만 |
 | 4 (선택) | 시험 1 과 같이 | 약 20분 | 방화벽 인바운드 실측. ADR 0002 를 다시 열 때만 |
+
+캡처 C6~C9 는 새 가짜 피어 모드가 있어야 해서 여기 없다(`plan.md` 의 대기).
 
 ## 준비 (한 번)
 
@@ -98,13 +122,16 @@ A:  powershell -ExecutionPolicy Bypass -File tools\nat-probe\unsolicited-firewal
 B:  python natprobe.py punch --unsolicited --label home-b      (A 의 시행마다 한 번)
 ```
 
-## 보낼 것
+## 모으기
 
-시험마다 아래를 모아 나(이 레포의 에이전트)에게 넘긴다. **공인 IP 가 들어 있으니 커밋하지 않는다.**
+공인 IP 가 들어 있으니 커밋하지 않는다. 시험마다 아래를 `YYYY-MM-DD/<측정 이름>/A`, `B` 에 모은다.
 
 | 시험 | 파일 |
 |------|------|
-| 1 | A·B 의 `results\*.json`(nat-probe), `a.log`, `b.log`, 양쪽 `records\*.log`, A 의 `t1.pcapng` 와 `a-ports.txt` |
-| 2 | `a2.log`, `b2.log` |
+| 1 | A·B 의 nat-probe `results\*.json`, `a.log`, `b.log`, 양쪽 `records\*.log`, A 의 `t1.pcapng` 와 `a-ports.txt` |
+| 2 | `a2.log`, `b2.log`, 양쪽 `records\*.log` |
 | 3 | 상대의 `results\*.json` |
 | 4 | A·B 의 `results\*.json` |
+
+A 쪽 파일은 흩어져 생긴다. nat-probe JSON 은 `tools\nat-probe\results\` 에, `t1.pcapng` 와 `a-ports.txt` 는 그 명령을 친
+폴더에 생긴다.

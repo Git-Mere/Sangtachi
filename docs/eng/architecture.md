@@ -1129,6 +1129,12 @@ counters cannot know what to wait for. There are three moments.
   all of the process table, and for every remaining session (including those kept in a terminal state) all of its table
 - Immediately, when requested by a `[console]` command, the same scope as just above
 
+**One session's table can appear twice.** When the shutdown procedure closes a `CONNECTED` session, that
+session appears once when it reaches the terminal state and once more right after, in the scope of the
+shutdown procedure. A session kept in a terminal state can still rise afterwards (`drop_terminal_state`),
+so the shutdown procedure emits it again. Analysis uses the last table of that session. The decision is
+[ADR 0024](decisions/0024-decisions-after-field-tests.md).
+
 **Lines of a session table carry `peer_id` and `peer_name`.** Lines of the process table do not. When a session object is
 deleted, its table goes with it. It was already emitted when the session reached a terminal state.
 

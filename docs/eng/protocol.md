@@ -553,7 +553,7 @@ single send. That session does not get it twice.
 |---|------|-------------|
 | 1 | The sender is the host | `drop_roster_direction` |
 | 2 | The structure is right. All three below are true | `drop_type_length` |
-| 3 | `generation` is greater than the last value accepted on that session | `drop_roster_stale` |
+| 3 | `generation` is not less than the last value accepted on that session | `drop_roster_stale` |
 | 4 | Bits 1~7 of every member's `flags` are 0 | `drop_roster_flags` |
 | 5 | Every member's `name` is within the character set of `control_plane.md` 2.7 `name` | `drop_roster_name` |
 
@@ -570,9 +570,18 @@ The structure check of check 2:
 > implementation. Separate counters are needed to tell the two apart. Putting such a name on the
 > screen would break the line rules of standard output and the log.
 
+**Check 3 accepts an equal value.** As in the sending times above, the host sends the same roster again
+with the same `generation`. `generation` rises whenever the roster changes, so a roster with the same
+value also has the same content. Accepting it changes nothing.
+
+> **Why.** If an equal value were discarded, `drop_roster_stale` would rise on every resend in a normal
+> session, and the counter could no longer point to a roster that arrived late out of order. The
+> decision is [ADR 0024](decisions/0024-decisions-after-field-tests.md).
+
 **The roster is for display only.** The received value changes neither receive validation nor
-routing. The same goes for names. A player emits one `roster` log line per accepted roster
-([`architecture.md`](architecture.md) Chapter 9 Log Output).
+routing. The same goes for names. A player emits one `roster` log line per roster whose `generation`
+is the first or a larger one ([`architecture.md`](architecture.md) Chapter 9 Log Output). A resend with
+the same value emits nothing.
 
 - The comparison set of check 7 in 8.1 Common Checks is **decided by the session.** Even a packet
   that arrives with a `peer_id` from the roster is `drop_unknown_peer` if there is no session with
@@ -714,7 +723,7 @@ before 8.2. Side effects happen only after every check passes. **The one excepti
 
 > **Why.** One counter should point to one cause. Network duplication is `drop_duplicate`, a packet with a mismatching epoch is
 > 8.1 `drop_retired_epoch` or an 8.2 counter, and a content error is the per-type counter. With the per-type checks first, a
-> `ROSTER` duplicated by the network would be mixed into `drop_roster_stale`. The decision and the rejected alternative are in
+> `PONG` duplicated by the network would reach an entry already matched and removed, and be mixed into `drop_unmatched_pong`. The decision and the rejected alternative are in
 > [ADR 0021](decisions/0021-per-type-checks-come-after-replay-suppression.md).
 
 ### 8.1 Common Checks

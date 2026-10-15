@@ -817,7 +817,7 @@ TEST_CASE("session: DATA goes to every candidate before learning and stops at a 
 
 // ---------------------------------------------------------------- 5.7 ROSTER 수신
 
-TEST_CASE("session: ROSTER records the generation and rejects stale ones", "[peer][session]") {
+TEST_CASE("session: ROSTER records the generation, accepts resends and rejects stale ones", "[peer][session]") {
     Fixture f;
     f.connect();
     tunnel::Roster roster;
@@ -833,9 +833,10 @@ TEST_CASE("session: ROSTER records the generation and rejects stale ones", "[pee
     sangtachi::testing::LogCapture logs;
     REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 2), kT0).accepted());
     REQUIRE(f.session.last_roster_generation() == 5u);
-    REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 3), kT0).dropped ==
-            Counter::DropRosterStale);
-    // 받아들인 명부마다 roster 줄 하나 (5.7, architecture.md 9장). 버린 것은 내지 않는다
+    // 같은 값은 재송신이다. 받아들이고 세지 않으며 roster 줄을 다시 내지 않는다 (5.7 3번, ADR 0024)
+    REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 3), kT0).accepted());
+    REQUIRE(f.count(Counter::DropRosterStale) == 0);
+    REQUIRE(f.session.last_roster_generation() == 5u);
     auto lines = logs.with_event("roster");
     REQUIRE(lines.size() == 1);
     REQUIRE(lines[0].find(" generation=5 ") != std::string::npos);
@@ -854,6 +855,14 @@ TEST_CASE("session: ROSTER records the generation and rejects stale ones", "[pee
     lines = logs.with_event("roster");
     REQUIRE(lines.size() == 2);
     REQUIRE(lines[1].find(" generation=6 ") != std::string::npos);
+    // 더 작은 값만 낡은 명부다
+    roster.generation = 5;
+    buf.assign(200, std::byte{0});
+    buf.resize(tunnel::encode_roster(roster, buf));
+    REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 6), kT0).dropped ==
+            Counter::DropRosterStale);
+    REQUIRE(f.session.last_roster_generation() == 6u);
+    REQUIRE(logs.with_event("roster").size() == 2);
 }
 
 TEST_CASE("session: ROSTER goes to every candidate before learning", "[peer][session]") {

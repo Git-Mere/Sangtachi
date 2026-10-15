@@ -512,8 +512,8 @@ they are decided
       limits of the emulation
     - Passing means three consecutive runs in which all four pairs on the host side are `success`. Only
       runs that pass the pre-punch check count
-  - This measurement decides whether to judge the risk of the host NAT before the room is created and
-    warn the person (ADR 0006). If it goes in, first fix what that verdict takes as input
+  - The risk of the host NAT is not judged before the room is created, and the person is not warned
+    ([ADR 0024](decisions/0024-decisions-after-field-tests.md)). This answers the question ADR 0006 left open
 
 **Implementation.** Follow the `protocol.md` 15 implementation checklist as written. This Phase is
 implementation, not design.

@@ -871,7 +871,8 @@ PC A <========== Direct UDP ==========> PC B
 - `protocol.md` 15장 구현 적합성 목록 가운데 **4.5 손실 집계와 퍼즈 방어**를 구현한다
   - 수용 창 자체는 Phase 4 의 몫이다
   - 손실 값은 [`architecture.md`](architecture.md) 9장 로그 출력의 `session.loss` 로 낸다
-- ASan 을 켠 시험 빌드(MSVC `/fsanitize=address`). 아래 퍼즈 시험이 이 빌드에서 돈다
+- ASan 을 켠 시험 빌드(MSVC `/fsanitize=address`). 아래 퍼즈 시험이 이 빌드에서 돈다. `scripts/test.ps1 -Asan` 이
+  그 빌드로 단위 시험을 돈다
 - 장시간 연결 안정성 확보
 - Phase 4 캡처 C6~C9 를 돌릴 수단. 제어 서버 하네스의 가짜 피어에 그 네 장면을 만드는 모드를 더한다.
   장면과 판정은 [`tools/phase4-capture`](../../tools/phase4-capture/README.md) 의 보류된 절이 갖는다

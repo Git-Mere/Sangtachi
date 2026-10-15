@@ -7,20 +7,19 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 3 까지 끝났다. Phase 4 의 코드는 [`protocol.md`](protocol.md) 15장 구현 적합성 목록과 대조해 빠진 것이 없다. Phase 4 에 남은 것은 캡처 C6~C9(`roadmap.md` Phase 5 작업, 아래 "다음에 할 일" 2)와 두 번째 기기가 있어야 하는 실측(아래 대기)이다. Phase 5 착수 전 결정은 [ADR 0025](decisions/0025-phase-5-착수-전-결정.md) 다. 아래 "다음에 할 일" 이 순서다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 3 까지 끝났다. Phase 4 의 코드는 [`protocol.md`](protocol.md) 15장 구현 적합성 목록과 대조해 빠진 것이 없다. Phase 4 에 남은 것은 캡처 C6~C9(`roadmap.md` Phase 5 작업, 아래 "다음에 할 일" 1)와 두 번째 기기가 있어야 하는 실측(아래 대기)이다. Phase 5 착수 전 결정은 [ADR 0025](decisions/0025-phase-5-착수-전-결정.md) 다. 아래 "다음에 할 일" 이 순서다 |
 | 대기 | 이 파일 "대기 중인 것" | 두 번째 기기나 측정이 있어야 풀린다 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 1건 |
 
 ## 다음에 할 일
 
-Phase 5 다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 5 가 갖는다. 4.5 손실 집계와 `session.loss` 는 들어갔다.
+Phase 5 다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 5 가 갖는다. 4.5 손실 집계와 `session.loss`, ASan 시험 빌드와 퍼즈 두 단계는 들어갔다.
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | ASan 시험 빌드와 퍼즈 두 단계 | 퍼즈 판정이 그 빌드를 전제한다 |
-| 2 | 하네스 가짜 피어의 C6~C9 모드와 캡처 | 한 기기에서 돌릴 수 있는 Phase 4 의 마지막 항목이다 |
-| 3 | 장시간 시험 스크립트(제어 평면 중단 10분, 1시간 유지). 1시간 시험의 두 집 절차를 [`field-test/`](../../field-test/README.md) 에 더한다 | 오래 걸려 `scripts/test.ps1` 밖에서 돈다 |
+| 1 | 하네스 가짜 피어의 C6~C9 모드와 캡처 | 한 기기에서 돌릴 수 있는 Phase 4 의 마지막 항목이다 |
+| 2 | 장시간 시험 스크립트(제어 평면 중단 10분, 1시간 유지). 1시간 시험의 두 집 절차를 [`field-test/`](../../field-test/README.md) 에 더한다 | 오래 걸려 `scripts/test.ps1` 밖에서 돈다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.

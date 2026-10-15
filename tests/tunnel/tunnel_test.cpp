@@ -7,6 +7,7 @@
 
 #include "sangtachi/console.hpp"
 #include "sangtachi/loop.hpp"
+#include "sangtachi/network/stun.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
 #include "sangtachi/peer/candidates.hpp"
@@ -14,9 +15,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
 #include <vector>
@@ -654,6 +658,242 @@ TEST_CASE("tunnel: session.loss through the receive entry point", "[tunnel][loop
     const auto lines = logs.with_event("session.loss");
     REQUIRE(lines.size() == 1);
     REQUIRE(lines[0] == "INFO session.loss peer_id=572662306 expected=13 accepted=5 lost=8");
+}
+
+// ---------------------------------------------------------------- 퍼즈 (roadmap.md Phase 5)
+//
+// 두 단계다. 1단계는 분류와 8.1 을 소켓으로, 2단계는 8.2 뒤의 파이프라인을 수신 주입 진입점으로 본다.
+// 메모리 오류 판정은 ASan 빌드(scripts/test.ps1 -Asan)가 한다. 일반 빌드에서도 같은 시험이 돌고 그때는
+// 크래시만 본다. seed, 개수, 길이 범위는 시작할 때 표준 오류에 한 줄로 낸다. 크래시해도 남는다.
+
+namespace {
+
+// rx.raw 같은 진단 줄 10만 개를 내지 않는다. 판정은 카운터로 한다.
+class QuietLog final : public LogSink {
+public:
+    QuietLog() noexcept : previous_(set_log_sink(this)) {}
+    ~QuietLog() override { (void)set_log_sink(previous_); }
+    QuietLog(const QuietLog&) = delete;
+    QuietLog& operator=(const QuietLog&) = delete;
+    void write(std::string_view) override {}
+
+private:
+    LogSink* previous_;
+};
+
+void fill_random(std::mt19937& rng, std::span<std::byte> out) {
+    for (auto& b : out) {
+        b = static_cast<std::byte>(rng() & 0xFF);
+    }
+}
+
+// 5장 타입마다 8.1 6번을 통과하는 페이로드 길이 하나 (5.1~5.7).
+std::size_t valid_length(std::uint8_t type, std::mt19937& rng) {
+    switch (type) {
+        case 0x01:
+        case 0x02:
+            return 20;
+        case 0x03:
+            return 0;
+        case 0x04:
+            return 20 + rng() % (protocol::kMaxInner - 20 + 1);
+        case 0x05:
+        case 0x06:
+            return 8;
+        case 0x07:
+            return 1;
+        default:
+            return 16 + rng() % (135 - 16 + 1);  // 0x08 ROSTER
+    }
+}
+
+}  // namespace
+
+TEST_CASE("fuzz: stage 1 random datagrams through the socket", "[tunnel][loop][fuzz]") {
+    constexpr std::uint32_t kSeed = 0x5A4E4701u;
+    constexpr std::size_t kCount = 100000;
+    constexpr std::size_t kMinLen = 1;
+    constexpr std::size_t kMaxLen = 2000;
+    constexpr std::size_t kBatch = 32;  // 2000 x 32 바이트는 SO_RCVBUF 256KB 안이다. 커널이 버리지 않는다
+    std::fprintf(stderr, "fuzz stage=1 seed=0x%08X count=%zu len=%zu..%zu\n", kSeed, kCount, kMinLen,
+                 kMaxLen);
+    const QuietLog quiet;
+
+    const network::WsaContext wsa;
+    auto sender = network::open_udp_socket();
+    auto receiver = network::open_udp_socket();
+    REQUIRE(sender.ok());
+    REQUIRE(receiver.ok());
+    const network::Endpoint to(0x7F000001u, receiver.socket->local().port());
+    Counters loop_counters;
+    auto console = ConsoleSession::create();
+    REQUIRE(console != nullptr);
+    EventLoop loop(std::move(*receiver.socket), loop_counters, console->queue(), console->event(),
+                   LoopOptions{});
+    REQUIRE(loop.valid());
+
+    // 8.1 검사 7 을 지나 세션까지 가는 상대가 하나 있다.
+    TunnelFixture f;
+    REQUIRE(f.connect() != nullptr);
+    std::size_t tunnel_calls = 0;
+    std::size_t stun_calls = 0;
+    loop.set_tunnel_handler([&](const network::Endpoint& from, std::span<const std::byte> bytes) {
+        ++tunnel_calls;
+        f.tunnel.on_datagram(from, bytes);
+    });
+    // STUN 으로 분류된 것은 응답 해석기까지 태운다. 트랜잭션 ID 는 데이터그램의 것을 쓴다.
+    loop.set_stun_handler([&](const network::Endpoint&, std::span<const std::byte> bytes) {
+        ++stun_calls;
+        if (const auto id = network::peek_transaction_id(bytes)) {
+            (void)network::parse_binding_response(bytes, *id);
+        }
+    });
+    // 대기가 무한이 되지 않게 마감을 늘 지난 것으로 둔다. run_once 가 기다리지 않고 돌아온다.
+    loop.set_deadline_source({[] { return std::optional<Millis>(Millis{0}); }, [](Millis) {}});
+
+    const auto accounted = [&] {
+        return loop_counters.value(Counter::DropOversizeDatagram) +
+               loop_counters.value(Counter::DropBadSource) +
+               loop_counters.value(Counter::DropUnclassified) + tunnel_calls + stun_calls;
+    };
+
+    std::mt19937 rng(kSeed);
+    std::uniform_int_distribution<std::size_t> length(kMinLen, kMaxLen);
+    std::vector<std::byte> datagram;
+    std::size_t sent = 0;
+    while (sent < kCount) {
+        const std::size_t batch = std::min(kBatch, kCount - sent);
+        for (std::size_t i = 0; i < batch; ++i) {
+            datagram.resize(length(rng));
+            fill_random(rng, datagram);
+            // 무작위 바이트가 STUN 분류(상위 2비트 00, magic cookie)에 닿을 확률은 2^-34 다. 여덟에 하나는
+            // 그 두 자리를 맞춰 STUN 갈래와 응답 해석기도 밟게 한다.
+            if (datagram.size() >= 20 && rng() % 8 == 0) {
+                datagram[0] &= std::byte{0x3F};
+                datagram[4] = std::byte{0x21};
+                datagram[5] = std::byte{0x12};
+                datagram[6] = std::byte{0xA4};
+                datagram[7] = std::byte{0x42};
+            }
+            REQUIRE(sender.socket->send_to(to, datagram).ok);
+        }
+        sent += batch;
+        for (int spins = 0; accounted() < sent && spins < 10000; ++spins) {
+            REQUIRE(loop.run_once());
+        }
+        INFO("sent " << sent);
+        REQUIRE(accounted() == sent);
+    }
+    REQUIRE(loop_counters.value(Counter::RxErrRecv) == 0);
+    // 세 갈래가 다 밟혔다
+    REQUIRE(loop_counters.value(Counter::DropOversizeDatagram) > 0);
+    REQUIRE(stun_calls > 0);
+    REQUIRE(f.count(Counter::DropMagic) > 0);
+}
+
+TEST_CASE("fuzz: stage 2 valid headers with random bodies through the receive entry point",
+          "[tunnel][loop][fuzz]") {
+    constexpr std::uint32_t kSeed = 0x5A4E4702u;
+    constexpr std::size_t kCount = 100000;
+    constexpr std::size_t kMinLen = protocol::kHeaderSize;
+    constexpr std::size_t kMaxLen = protocol::kMaxDatagram;
+    std::fprintf(stderr, "fuzz stage=2 seed=0x%08X count=%zu len=%zu..%zu\n", kSeed, kCount, kMinLen,
+                 kMaxLen);
+    const QuietLog quiet;
+
+    const network::WsaContext wsa;
+    auto opened = network::open_udp_socket();
+    REQUIRE(opened.ok());
+    Counters loop_counters;
+    auto console = ConsoleSession::create();
+    REQUIRE(console != nullptr);
+    EventLoop loop(std::move(*opened.socket), loop_counters, console->queue(), console->event(),
+                   LoopOptions{});
+    REQUIRE(loop.valid());
+    TunnelFixture f;
+    loop.set_tunnel_handler([&f](const network::Endpoint& from, std::span<const std::byte> bytes) {
+        f.tunnel.on_datagram(from, bytes);
+    });
+
+    // 세션이 CLOSE 로 끝나면 새 epoch 로 다시 세운다. 이전 epoch 는 터널이 폐기 목록에 넣는다 (4.3).
+    // 끝난 세션의 표는 합쳐 둔다.
+    std::uint32_t epoch = 0xC0DE0000u;
+    peer::Session* s = f.connect(kPeerId, epoch);
+    Counters session_total;
+    std::size_t reconnects = 0;
+    const auto fold = [&session_total](const peer::Session& done) {
+        for (std::size_t c = 0; c < kCounterCount; ++c) {
+            session_total.add(static_cast<Counter>(c), done.counters().value(static_cast<Counter>(c)));
+        }
+    };
+
+    std::mt19937 rng(kSeed);
+    std::uint32_t last_seq = 1;
+    std::vector<std::byte> datagram;
+    for (std::size_t i = 0; i < kCount; ++i) {
+        if (!s->active()) {
+            fold(*s);
+            ++epoch;
+            ++reconnects;
+            s = f.connect(kPeerId, epoch);
+            last_seq = 1;
+        }
+        tunnel::Header h;
+        h.peer_id = kPeerId;
+        h.session_epoch = epoch;
+        // 타입은 대개 5장 목록 안이고, 가끔 밖이다 (8.1 4번).
+        h.type = (rng() % 8 != 0) ? static_cast<std::uint8_t>(1 + rng() % 8)
+                                  : static_cast<std::uint8_t>(rng() & 0xFF);
+        // 본문 길이는 반은 그 타입이 받는 길이, 반은 아무 길이다 (8.1 6번).
+        const std::size_t body = (rng() % 2 == 0)
+                                     ? valid_length(h.type, rng)
+                                     : rng() % (kMaxLen - kMinLen + 1);
+        // payload_length 는 대개 실제 길이이고 가끔 아무 값이다 (8.1 5번).
+        h.payload_length = (rng() % 8 != 0) ? static_cast<std::uint16_t>(body)
+                                            : static_cast<std::uint16_t>(rng() & 0xFFFF);
+        // sequence 는 반은 직전 근처(중복, 재정렬, 창 밖), 반은 아무 값이다 (8.3).
+        if (rng() % 2 == 0) {
+            last_seq += static_cast<std::uint32_t>(static_cast<std::int32_t>(rng() % 80) - 70);
+            h.sequence = last_seq;
+        } else {
+            h.sequence = static_cast<std::uint32_t>(rng());
+        }
+        const auto header = tunnel::serialize_header(h);
+        datagram.assign(header.begin(), header.end());
+        datagram.resize(protocol::kHeaderSize + body);
+        const std::span<std::byte> payload(datagram.data() + protocol::kHeaderSize, body);
+        if (h.type == 0x04 && body >= 20 && rng() % 2 == 0) {
+            // 8.4 를 깊이 밟게 그럴듯한 내부 IPv4 를 넣고 몇 바이트를 흔든다.
+            const auto inner = inner_ipv4(kPeerVip, kLocalVip, body);
+            std::copy(inner.begin(), inner.end(), payload.begin());
+            for (auto k = rng() % 3; k > 0; --k) {
+                payload[rng() % body] = static_cast<std::byte>(rng() & 0xFF);
+            }
+        } else {
+            fill_random(rng, payload);
+        }
+        loop.receive_datagram(kCandA, datagram);
+        if (f.sent.size() > 1024) {
+            f.sent.clear();  // 회신 기록이 10만 개로 자라지 않게 한다
+        }
+    }
+    fold(*s);
+    INFO("reconnects " << reconnects);
+
+    // 8.1 을 넘었다. magic 은 늘 맞으므로 drop_magic 은 0 이다.
+    REQUIRE(f.count(Counter::DropMagic) == 0);
+    REQUIRE(f.count(Counter::DropUnknownType) > 0);
+    REQUIRE(f.count(Counter::DropLength) > 0);
+    REQUIRE(f.count(Counter::DropTypeLength) > 0);
+    // 8.3, 8.4, 타입별 검사까지 갔다 (세션 표).
+    REQUIRE(session_total.value(Counter::DropDuplicate) > 0);
+    REQUIRE(session_total.value(Counter::DropTooOld) > 0);
+    REQUIRE(session_total.value(Counter::DropInnerNotIpv4) > 0);
+    REQUIRE(session_total.value(Counter::DropInnerChecksum) > 0);
+    REQUIRE(session_total.value(Counter::DropNoSink) > 0);
+    REQUIRE(session_total.value(Counter::DropBadReason) > 0);
+    REQUIRE(session_total.value(Counter::DropUnmatchedPong) > 0);
+    REQUIRE(session_total.value(Counter::DropTypeLength) > 0);  // 5.7 ROSTER 구조
 }
 
 // ---------------------------------------------------------------- 7장 출발지 위생 (b) 층

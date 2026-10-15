@@ -6,6 +6,7 @@
 #   pwsh -File scripts/test.ps1
 #   pwsh -File scripts/test.ps1 -Filter wsa      이름에 wsa 가 든 케이스만
 #   pwsh -File scripts/test.ps1 -Jobs 1          케이스를 하나씩 돌린다
+#   pwsh -File scripts/test.ps1 -Asan            ASan 빌드로 단위 시험만 돌린다 (roadmap.md Phase 5 퍼즈)
 #
 # 케이스는 기본으로 코어 수만큼 동시에 돈다 (ctest -j). 케이스마다 30초 상한은 그대로다.
 
@@ -16,7 +17,8 @@ param(
     [string]$BuildDir = '',
     [string]$Filter = '',
     [ValidateRange(0, 256)]
-    [int]$Jobs = 0
+    [int]$Jobs = 0,
+    [switch]$Asan
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,9 +26,10 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'buildpath.ps1')
 
 # 기본 위치의 근거는 build.ps1 머리에 있고 판정은 buildpath.ps1 이 한다.
-$buildDir = Resolve-BuildDir -Config $Config -Explicit $BuildDir
+$dirName = if ($Asan) { "$Config-asan" } else { $Config }
+$buildDir = Resolve-BuildDir -Config $dirName -Explicit $BuildDir
 
-& (Join-Path $PSScriptRoot 'build.ps1') -Config $Config -BuildDir $buildDir
+& (Join-Path $PSScriptRoot 'build.ps1') -Config $Config -BuildDir $buildDir -Asan:$Asan
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
 
 # 0 이면 코어 수다.
@@ -40,8 +43,9 @@ ctest @ctestArgs
 if ($LASTEXITCODE -ne 0) { throw "tests failed ($LASTEXITCODE)" }
 
 # 실행 파일의 기동 계약. 단위 시험이 볼 수 없는 종료 코드와 로그 줄을 본다.
-# -Filter 를 준 실행은 단위 시험만 좁혀 보는 것이므로 건너뛴다.
-if (-not $Filter) {
+# -Filter 를 준 실행은 단위 시험만 좁혀 보는 것이므로 건너뛴다. -Asan 도 건너뛴다. 그 빌드의 일은
+# 단위 시험 안의 메모리 오류 판정이고, 아래 스크립트는 같은 실행 파일의 계약을 이미 일반 빌드로 본다.
+if (-not $Filter -and -not $Asan) {
     & (Join-Path $PSScriptRoot 'cli-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "cli check failed ($LASTEXITCODE)" }
 

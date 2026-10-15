@@ -14,6 +14,7 @@
 #   pwsh -File scripts/build.ps1                 Debug 빌드
 #   pwsh -File scripts/build.ps1 -Config Release
 #   pwsh -File scripts/build.ps1 -Fresh          설정 캐시를 버리고 다시 설정한다
+#   pwsh -File scripts/build.ps1 -Asan           ASan 빌드. 산출물은 <Config>-asan 디렉터리다
 
 [CmdletBinding()]
 param(
@@ -21,6 +22,7 @@ param(
     [string]$Config = 'Debug',
     [string]$BuildDir = '',
     [switch]$Fresh,
+    [switch]$Asan,
     [switch]$SelfTest
 )
 
@@ -131,7 +133,9 @@ if ($SelfTest) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$buildDir = Resolve-BuildDir -Config $Config -Explicit $BuildDir
+# ASan 빌드는 디렉터리를 따로 둔다. 같은 디렉터리에서 켜고 끄면 매번 전부 다시 빌드한다.
+$dirName = if ($Asan) { "$Config-asan" } else { $Config }
+$buildDir = Resolve-BuildDir -Config $dirName -Explicit $BuildDir
 
 . (Join-Path $PSScriptRoot 'vsdevshell.ps1')
 
@@ -144,7 +148,9 @@ if ($Fresh -and (Test-Path -LiteralPath $buildDir)) {
     Remove-Item -LiteralPath $buildDir -Recurse -Force
 }
 
-cmake -S $repoRoot -B $buildDir -G Ninja "-DCMAKE_BUILD_TYPE=$Config"
+# 켜고 끄는 것을 늘 명시한다. 캐시에 남은 값이 조용히 이기지 않게 한다.
+$asanFlag = if ($Asan) { 'ON' } else { 'OFF' }
+cmake -S $repoRoot -B $buildDir -G Ninja "-DCMAKE_BUILD_TYPE=$Config" "-DSANGTACHI_ASAN=$asanFlag"
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
 
 cmake --build $buildDir

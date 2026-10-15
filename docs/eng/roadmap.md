@@ -1009,7 +1009,8 @@ fallback is not implemented at this point and remains a stretch goal.
 - Implement **4.5 loss accounting and fuzz defense** from the `protocol.md` 15 implementation conformance list
   - The acceptance window itself belongs to Phase 4
   - Loss values are emitted as `session.loss` in [`architecture.md`](architecture.md) chapter 9 Log Output
-- A test build with ASan enabled (MSVC `/fsanitize=address`). The fuzz tests below run in this build
+- A test build with ASan enabled (MSVC `/fsanitize=address`). The fuzz tests below run in this build. `scripts/test.ps1 -Asan`
+  runs the unit tests with that build
 - Long-duration connection stability
 - A way to run Phase 4 captures C6-C9. Add modes that create those four scenes to the fake peer of the
   control server harness. The scenes and verdicts are owned by the deferred sections of

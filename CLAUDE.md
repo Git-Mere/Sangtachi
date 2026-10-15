@@ -12,6 +12,18 @@ CSP 400 캡스톤. Windows 우선 direct-first P2P 가상 네트워크.
 
 셸이 Linux여도 클라이언트가 Linux에서 빌드되는지는 신경 쓰지 않는다.
 
+## 에이전트 셸 (Prime Agent, Windows)
+
+Prime Agent 의 `bash()` 는 Windows 에서 POSIX 셸 경로를 `PRIME_AGENT_BASH_SHELL` 환경 변수로 받는다.
+이 기기에서는 Git Bash `C:\Program Files\Git\bin\bash.exe` 를 쓴다. 사용자 환경 변수에도 등록돼 있다.
+
+세션 시작 시 `bash()` 가 이 변수가 없다고 실패하면, 첫 셸 호출 전에 REPL 에서 설정한다.
+
+```python
+import os
+os.environ["PRIME_AGENT_BASH_SHELL"] = r"C:\Program Files\Git\bin\bash.exe"
+```
+
 ## 문서 구조
 
 이 레포는 전역 규약의 `docs/spec.md`, `docs/plan.md` 구조를 사용하지 않는다.

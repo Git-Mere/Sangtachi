@@ -21,10 +21,11 @@ ReplayDecision ReplayWindow::check(std::uint32_t seq) const noexcept {
     d.seq = seq;
 
     if (!initialized_) {
-        // 첫 패킷은 무엇이든 수용하고 위치 0 에 둔다.
+        // 첫 패킷은 무엇이든 수용하고 위치 REPLAY_WINDOW 에 둔다. back 은 창 크기 이하이므로
+        // 아래 재정렬의 position - back 이 0 아래로 내려가지 않는다 (4.5).
         d.verdict = ReplayVerdict::kAdvance;
         d.distance = 0;
-        d.pkt_pos = 0;
+        d.pkt_pos = kWindow;
         return d;
     }
 
@@ -56,8 +57,8 @@ ReplayDecision ReplayWindow::check(std::uint32_t seq) const noexcept {
         return d;
     }
     d.verdict = ReplayVerdict::kReorder;
-    // 4.5 의 pkt_pos = position - back 그대로다. 첫 패킷보다 앞선 번호가 창 안에서 오면
-    // position < back 이라 uint64_t 에서 감싸 돈다. 손실 집계(Phase 5)가 이 값을 쓴다.
+    // 4.5 의 pkt_pos = position - back 그대로다. position 은 REPLAY_WINDOW 에서 시작하고
+    // back 은 그 이하이므로 감싸 돌지 않는다. 손실 집계(Phase 5)가 이 값을 쓴다.
     d.pkt_pos = position_ - back;
     return d;
 }
@@ -74,7 +75,7 @@ bool ReplayWindow::commit(const ReplayDecision& decision) noexcept {
 
     if (!initialized_) {
         highest_ = decision.seq;
-        position_ = 0;
+        position_ = kWindow;
         seen_bits_ = 0;
         initialized_ = true;
         return true;

@@ -960,8 +960,9 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `data.rx` | `from` (상대 가상 IP), `len`, `sha256` (페이로드 훅이 받은 바이트열). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.echo` | `rtt_ms` (되돌아온 에코의 오프셋 32 송신 시각에서 받은 시각까지. 밀리초). **시험 빌드에만 있다** | Phase 4 RTT 기준선 |
 | `roster` | `generation`, `members` (멤버마다 `<peer_id>/<가상 IP>/<비트 0>/<이름>` 을 쉼표로 이어 붙인 것) | Phase 4 `ROSTER` 수신 확인 ([`protocol.md`](protocol.md) 5.7) |
+| `session.loss` | `peer_id`, `expected`, `accepted`, `lost` ([`protocol.md`](protocol.md) 4.5 의 세션 값. 재협상 구간의 합계를 포함한다) | Phase 5 손실·재정렬 집계 |
 
-여기 없는 이벤트는 자유롭게 늘려도 된다. **이 열일곱 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
+여기 없는 이벤트는 자유롭게 늘려도 된다. **이 열여덟 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
 
 **`timer.tick` 은 만료하는 모든 타이머가 낸다.** `name` 이 어느 타이머인지를 가른다. Phase 2
 부터는 STUN 재시도와 마감이 `[loop]` 의 같은 집합에 들어가므로 제품 빌드에서도 이 줄이 나간다
@@ -984,6 +985,7 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `value` (`counter`) | 10진 정수 |
 | `peer_id` (`counter`) | 10진 정수 |
 | `peer_name` (`counter`) | [`control_plane.md`](control_plane.md) 2.7 `name` 의 형식. 모르면 `-` |
+| `peer_id`, `expected`, `accepted`, `lost` (`session.loss`) | 10진 정수 |
 
 나머지 필드의 값 형식은 정하지 않는다. 사람이 읽는 진단이다.
 
@@ -1009,6 +1011,9 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 - 프로세스 종료 절차([`concurrency.md`](concurrency.md) 7장 종료)에서 프로세스 표 전량과, 남아 있는 세션(종료 상태로
   보존된 것 포함)마다 그 세션의 표 전량
 - `[console]` 명령으로 요청받았을 때 즉시, 바로 위와 같은 범위
+
+**`session.loss` 는 세션 표와 같은 때에 그 세션마다 한 줄 낸다.** `CONNECTED` 에 들어가지 않은
+세션은 값이 모두 0 이다. 손실률은 읽는 쪽이 계산한다. `expected` 가 0 보다 크면 `lost / expected`, 아니면 0 이다.
 
 **한 세션의 표가 두 번 나올 수 있다.** 종료 절차가 `CONNECTED` 세션을 닫으면 그 세션은 종료 상태 도달 때 한 번,
 바로 뒤 종료 절차의 범위로 한 번 나온다. 종료 상태로 남긴 세션의 표도 그 뒤에 오를 수 있으므로(`drop_terminal_state`)

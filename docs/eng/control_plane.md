@@ -45,7 +45,7 @@ this document first.
 | Virtual IP assignment | Collect metrics. The telemetry service does that ([`architecture.md`](architecture.md) 3.4, [ADR 0003](decisions/0003-telemetry-service-split.md)) |
 | Store and deliver candidate endpoints | **Open a UDP socket.** The EC2-side UDP probe sender used to measure NAT mapping lifetime is not a function of the control server. It is a separate tool. That tool is [`tools/nat-lifetime`](../../tools/nat-lifetime/README.md), and the measurement timing belongs to the [`roadmap.md`](roadmap.md) Phase 4 pre-start item |
 | Provide the rendezvous reference point (`punch_delay_ms`, `elapsed_since_ready_ms`) | Judge NAT type or hole punching results. The client does that |
-| Reclaim a slot on the host's report, and server reclaim of a participant who left without candidates (4.6 `host_report`) | Start session retries. Who retries and when is undecided, and [`protocol.md`](protocol.md) 10.4 Endpoint Learning says so |
+| Reclaim a slot on the host's report, and server reclaim of a participant who left without candidates (4.6 `host_report`) | Start session retries. There is no automatic retry, and a new attempt starts when the player joins again ([`protocol.md`](protocol.md) 9.6 Failure Transitions) |
 | Renew the room lease on the host's signal (4.6, 5.1) | **Judge tunnel liveness.** Even if the lease lapses, an already established tunnel keeps going ([`spec.md`](spec.md) NFR-3) |
 | Record pair readiness (4.6, 5.2) | **Recover the identifiers of a departed peer.** There is no rejoin (4.3). Coming back in is a new join |
 
@@ -2063,6 +2063,5 @@ per table under `control-server/tests/mutants/`, and the runner `tests/mutate.py
 |------|-------------|
 | Telemetry service port, schema, authentication | Outside this document's scope. [`roadmap.md`](roadmap.md) Phase 9 |
 | Whether the two services share one table, whether IAM is split | [ADR 0004](decisions/0004-state-store-dynamodb.md) deferred it to Phase 9 |
-| Automatic retry and re-polling by the surviving side | [`protocol.md`](protocol.md) 10.4 open item. There is no rejoin (4.3), so that procedure has to stand on a new join |
 | TLS, caller authentication | Stretch. 1.2 |
 | Whether `ROOM_LEASE_S` (120) and the two signalling intervals are right | After the Phase 8 demo. Judged by how long a room takes to disappear after the host dies, and by how long a late participant waits |

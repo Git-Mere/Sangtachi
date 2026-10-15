@@ -360,7 +360,7 @@ void Session::enter_connected(Millis now) {
     hello_due_.reset();
     punch_deadline_.reset();
     // KEEPALIVE 는 진입 즉시 1회 보낸 뒤 15초 간격, 유휴 타임아웃은 진입에 시작, PING 은 첫
-    // 송신이 진입 5초 뒤다. 4.5 손실 집계 초기화는 Phase 5 다 (15장).
+    // 송신이 진입 5초 뒤다. 4.5 손실 집계 초기화는 Phase 5 다 (roadmap.md Phase 5).
     arm(idle_deadline_, idle_since_, now, protocol::kIdleTimeoutMs);
     arm(ping_due_, ping_since_, now, protocol::kPingIntervalMs);
     send_keepalive(now);

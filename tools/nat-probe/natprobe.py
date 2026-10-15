@@ -218,7 +218,7 @@ def _disable_udp_connreset(sock: socket.socket) -> None:
 def make_socket(port: int, record_state: bool = True) -> socket.socket:
     """진단 전체가 공유할 UDP 소켓 하나를 만든다.
 
-    protocol.md 15장 체크리스트를 따른다.
+    protocol.md 15장 구현 적합성 목록을 따른다.
       - SO_EXCLUSIVEADDRUSE 설정, SO_REUSEADDR 미사용
       - SIO_UDP_CONNRESET off
       - connect() 미호출

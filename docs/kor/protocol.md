@@ -220,8 +220,8 @@ bool     initialized;
 
 ```text
 initialized 가 거짓이면:
-    highest = seq; position = 0; seen_bits = 0; initialized = true
-    -> 수용 (전진). 이 패킷의 pkt_pos = 0
+    highest = seq; position = REPLAY_WINDOW; seen_bits = 0; initialized = true
+    -> 수용 (전진). 이 패킷의 pkt_pos = REPLAY_WINDOW
 
 seq == highest 이면:
     -> 폐기, drop_duplicate
@@ -277,7 +277,24 @@ expected = position - baseline
 > **왜.** 상태값 `position`을 그대로 쓰면 `baseline` 이전에 보내진 재정렬 패킷까지
 > `accepted`에 세어 `accepted > expected`가 되고, `손실`이 음수로 언더플로한다.
 
-`drop_too_old`로 버린 패킷은 이미 손실로 확정된 것이므로 되돌리지 않는다. 손실률은 10초 주기로 스냅샷을 찍어 텔레메트리 서비스에 올린다.
+**`position`은 0이 아니라 `REPLAY_WINDOW`에서 시작한다.** 재정렬 수용의 `back`은
+`REPLAY_WINDOW` 이하이므로 `position - back`이 0 아래로 내려가지 않는다.
+
+> **왜.** 0에서 시작하면 첫 수용 패킷보다 앞선 번호가 창 안에서 늦게 올 때 `position - back`이
+> 64비트에서 감싸 돌아 아주 큰 값이 된다. 그 패킷은 `baseline`보다 뒤로 판정되어 `accepted`에
+> 세어지고, 위와 같은 언더플로가 난다. 펀치 구간에 여러 후보로 보낸 `HELLO`는 순서 없이
+> 도착하므로 실제로 일어나는 경우다.
+
+수용 창에는 시간 기반 만료가 없다. 손실은 만료로 확정되는 것이 아니라 위의 `expected - accepted`로
+나온다. `drop_too_old`로 버린 패킷은 이미 손실로 확정된 것이므로 되돌리지 않는다.
+
+**집계 구간은 `CONNECTED` 진입에서 시작해 9.5 재협상 3번이나 세션의 끝에서 끝난다.** 세션
+합계는 0에서 시작한다. 재협상 3번은 구간 안이면 그 구간의 `expected`와 `accepted`를 세션 합계에
+더한 뒤 집계를 초기화한다. 구간 밖(첫 `CONNECTED` 전, 재협상 뒤 다음 `CONNECTED` 전)에서는 지금
+구간의 값이 0이다. 세션이 끝나면 마지막 구간의 값이 그대로 남고 더 바뀌지 않는다. 세션의 값은 그
+합계에 지금 구간의 값을 더한 것이다. 이 값을 로그로 내는 시점과 형식은
+[`architecture.md`](architecture.md) 9장 로그 출력이 갖는다. 손실률은 10초 주기로 스냅샷을 찍어
+텔레메트리 서비스에 올린다.
 
 ---
 
@@ -1018,7 +1035,8 @@ nonce로 시작하는 것이지, 끝난 세션이 되살아나는 것이 아니�
 
 1. **상대의** 이전 epoch를 폐기 목록에 2분간 등록
 2. `got_ack`, `sent_ack`를 거짓으로 초기화
-3. 중복 억제 상태, `pending_pings`, 손실 집계를 초기화
+3. 중복 억제 상태, `pending_pings`, 손실 집계를 초기화. 손실 집계는 그 구간의 값을 세션 합계에
+   더한 뒤 초기화한다(4.5)
 4. 상대 epoch를 새 값으로 고정
 5. **우리 쪽 `session_epoch`와 nonce는 그대로 유지한다**
 6. 수신한 `HELLO`에 대한 `HELLO_ACK`을 그 데이터그램의 출발지로 직접 보낸다.
@@ -1100,8 +1118,15 @@ nonce로 시작하는 것이지, 끝난 세션이 되살아나는 것이 아니�
    `FAILED`이고 `CLOSED`가 아니다
 3. 기록을 남긴다 (`architecture.md` 9장)
 
-`FAILED`는 종료 상태다. 재시도는 `IDLE`부터 새 시도로 시작하며 새 epoch와 새 nonce를 뽑는다.
-**프로세스가 그 뒤에 무엇을 하는지는 [`concurrency.md`](concurrency.md) 7장 종료가 정한다.**
+`FAILED`는 종료 상태다. **클라이언트는 자동으로 재시도하지 않는다.** 새 시도는 플레이어가 같은
+방에 다시 참가할 때 `IDLE`부터 시작하며 새 epoch와 새 nonce를 뽑는다. 호스트 쪽에서는 그
+참가자가 새 상대다. 프로세스가 그 뒤에 무엇을 하는지는 [`concurrency.md`](concurrency.md) 7장
+종료가 정한다.
+
+> **왜.** 재참가는 없으므로([`control_plane.md`](control_plane.md) 4.3 `join_room`) 자동으로 다시
+> 참가해도 새 `peer_id`와 새 가상 IP를 받는다. 게임에게는 다른 피어라 그 위의 연결은 어차피
+> 끊긴다. 옛 세션을 그대로 잇는 절차는 10.4 엔드포인트 학습이 적은 대로 v1이 두지 않는다. 결정과
+> 버린 대안은 [ADR 0025](decisions/0025-phase-5-착수-전-결정.md)다.
 
 위 세 가지 규칙의 근거는 아래와 같다.
 
@@ -1454,10 +1479,8 @@ macOS와 Linux에서도 같은 결과였기 때문이다. 다만 단정하지는
 
 - 이 절차가 시작되지 않고, 같은 이유로 9.5 재협상도 계기를 얻지 못한다
 - 양쪽이 유휴 타임아웃(50s)에 도달해 `TUNNEL_DROPPED`로 세션이 끝난다
-- 9.6 실패 전이가 정한 대로 재시도를 한다면 `IDLE`부터 새 epoch와 새 nonce로 시작하며 제어
-  평면을 다시 거친다
-
-**재시도를 누가 언제 개시하는지는 이 문서가 정하지 않았다.** 자동 재시도 여부는 미정이다.
+- 자동 재시도는 없다. 새 시도는 9.6 실패 전이가 정한 대로 플레이어가 다시 참가할 때 `IDLE`부터
+  새 epoch와 새 nonce로 시작하며 제어 평면을 다시 거친다
 
 **프로세스 재시작도 같은 실패에 걸린다.** 6장에 따라 소켓은 포트 0으로 bind 하므로 재시작한
 쪽은 새 로컬 포트를 얻고, 따라서 새 NAT 매핑을 얻는다. 살아남은 쪽에는 **같은 IP, 다른
@@ -1482,14 +1505,13 @@ macOS와 Linux에서도 같은 결과였기 때문이다. 다만 단정하지는
 | 재시작한 쪽 | 새 시도의 펀치 마감 10초 | 9.6 실패 전이의 플래그 개수 기준. 둘 다 미성립이면 `HOLE_PUNCH_TIMEOUT`, 하나만 성립이면 `PEER_HANDSHAKE_FAILED` |
 
 복구하려면 양쪽이 `IDLE`부터 새 시도를 시작해야 하는데, 살아남은 쪽은 위 50초를 기다린
-뒤에야 그 지점에 온다. 그 다음이 위에 적은
-미정 항목(자동 재시도)이다. 4.3 `session_epoch`가 "재시작이나 재시도 후 이전 시도의 지연 패킷"을 막는다고
+뒤에야 그 지점에 온다. 그 다음은 9.6 실패 전이대로 플레이어가 다시 참가하는 것이다. 4.3 `session_epoch`가 "재시작이나 재시도 후 이전 시도의 지연 패킷"을 막는다고
 적은 것은 **지연 패킷을 거르는 것**이지 재시작한 세션을 잇는 것이 아니다.
 
 살아남은 쪽이 제어 평면을 다시 폴링해 상대의 새 후보를 받는 방법이 있다. v1은 채택하지
 않는다. 재참가가 없으므로(`control_plane.md` 4.3 `join_room`) 재시작한 쪽은 새 `peer_id`와
 새로 배정된 가상 IP로 들어오고, 그것은 살아남은 쪽에게 **다른 피어**다. 이 절차를 넣으려면 새 피어를
-옛 세션에 잇는 규칙부터 정해야 하고, 그 규칙은 위의 자동 재시도와 같이 미정이다.
+옛 세션에 잇는 규칙부터 정해야 하고, v1은 그 규칙을 두지 않는다.
 
 (c)를 없애지는 않는다. 두 가지 이유다.
 
@@ -1721,44 +1743,48 @@ FINGERPRINT, MESSAGE-INTEGRITY, 인증, TURN, ICE 절차는 구현하지 않는�
 
 ---
 
-## 15. 구현 체크리스트
+## 15. 구현 적합성 목록
 
-Phase 4 에서 아래가 전부 코드에 있어야 한다. Phase 4 가 이 체크리스트를 구현하는 단계다.
+이 프로토콜을 구현한 코드가 갖춰야 할 것이다. 규칙 자체는 각 항목이 가리키는 절이 갖고, 이 목록은
+그 규칙 가운데 빠뜨리거나 틀리기 쉬운 것을 모은다. 언제 무엇을 구현하는지는
+[`roadmap.md`](roadmap.md)가 정한다.
 
-- [ ] 3장 상수 전부
-- [ ] 필드 단위 헤더 직렬화/역직렬화 + 라운드트립 테스트
-- [ ] `SO_EXCLUSIVEADDRUSE`, `SO_REUSEADDR` 미사용, `SIO_UDP_CONNRESET` off, `connect()` 미호출
-- [ ] `INADDR_ANY` + 포트 0 bind, `getsockname`으로 실제 포트 확인, `SO_RCVBUF` 설정과 적용값 확인 (6장)
-- [ ] 단일 수신 루프의 배타적 소켓 소유
-- [ ] 7장 출발지 위생(분류 전, `drop_bad_source`)과 분류 (상위 2비트 기준, magic은 검증 단계에서)
-- [ ] 8.1 공통 검사 8단계와 전용 카운터
-- [ ] 8.2 epoch/출발지 규칙 (특히 nonce 유효 `HELLO_ACK`의 epoch 고정)
-- [ ] 8.2 epoch 및 출발지 검사의 `virtual_ip` 검사(`drop_vip_mismatch`). **epoch 판정보다 먼저** (5.1, 5.2)
-- [ ] 4.5 중복 억제 알고리즘 (`highest` + `position` + 64비트 비트맵), 부수 효과보다 먼저
-- [ ] `seq == highest` 선행 판정, `if/else if/else` 상호 배타 분기, `shift == 64` 처리, 모든 비트 연산 `uint64_t`
-- [ ] `is_newer`의 `a != b` 조건
-- [ ] 세션 시도 단위 `session_epoch`, CSPRNG와 0 회피, 2분 폐기 목록과 `MAX_RETIRED_EPOCHS` 상한. **폐기 목록에 넣는 것은 상대의 epoch다** (4.3)
-- [ ] CSPRNG nonce, 시도당 고정, 2분 폐기 목록. probe nonce는 별도 표로 분리
-- [ ] 10.1 로컬 후보 판정, 등록 목록의 순서와 상한, 자기 서브넷 집합(7장 판정과 수신 후보 위생의 입력), 후보 위생 규칙 전부. 그 절의 케이스 표 셋을 전 행 돌린다
-- [ ] 10.2 상대 시각 기반 랑데부
-- [ ] 10.4 엔드포인트 학습 (전진 패킷만, 후보 밖 주소는 경로 검증 후), `MAX_PROBE_PATHS` 상한과 검증 `HELLO` 1회
-- [ ] 9.2 `CONNECTED` 조건의 이중 플래그, `sendto` 성공 후에만 `sent_ack`
-- [ ] 9.4 전이표 전체와 9.4.1 종료 상태 폐기(`drop_terminal_state`)
-- [ ] 9.4 무검증 목적지 공통 예산. 세션당 토큰 버킷(`UNVERIFIED_TX_BUCKET`, `UNVERIFIED_TX_REFILL`), `HELLO_ACK`·`PONG`·검증 `HELLO` 셋에 적용, `drop_unverified_tx`. **경로별로 따로 세지 않는다**
-- [ ] 9.5 재협상 10단계. **특히 로컬 epoch/nonce 유지와 10번 타이머 되돌리기**
+- 3장 상수 전부
+- 필드 단위 헤더 직렬화/역직렬화 + 라운드트립 테스트
+- `SO_EXCLUSIVEADDRUSE`, `SO_REUSEADDR` 미사용, `SIO_UDP_CONNRESET` off, `connect()` 미호출
+- `INADDR_ANY` + 포트 0 bind, `getsockname`으로 실제 포트 확인, `SO_RCVBUF` 설정과 적용값 확인 (6장)
+- 단일 수신 루프의 배타적 소켓 소유
+- 7장 출발지 위생(분류 전, `drop_bad_source`)과 분류 (상위 2비트 기준, magic은 검증 단계에서)
+- 8.1 공통 검사 8단계와 전용 카운터
+- 8.2 epoch/출발지 규칙 (특히 nonce 유효 `HELLO_ACK`의 epoch 고정)
+- 8.2 epoch 및 출발지 검사의 `virtual_ip` 검사(`drop_vip_mismatch`). **epoch 판정보다 먼저** (5.1, 5.2)
+- 4.5 중복 억제 알고리즘 (`highest` + `position` + 64비트 비트맵), 부수 효과보다 먼저. `position`은 `REPLAY_WINDOW`에서 시작한다
+- `seq == highest` 선행 판정, `if/else if/else` 상호 배타 분기, `shift == 64` 처리, 모든 비트 연산 `uint64_t`
+- `is_newer`의 `a != b` 조건
+- 세션 시도 단위 `session_epoch`, CSPRNG와 0 회피, 2분 폐기 목록과 `MAX_RETIRED_EPOCHS` 상한. **폐기 목록에 넣는 것은 상대의 epoch다** (4.3)
+- CSPRNG nonce, 시도당 고정, 2분 폐기 목록. probe nonce는 별도 표로 분리
+- 10.1 로컬 후보 판정, 등록 목록의 순서와 상한, 자기 서브넷 집합(7장 판정과 수신 후보 위생의 입력), 후보 위생 규칙 전부. 그 절의 케이스 표 셋을 전 행 돌린다
+- 10.2 상대 시각 기반 랑데부
+- 10.3 펀치. 상대의 모든 후보로 `HELLO`를 보낸다
+- 10.4 엔드포인트 학습 (전진 패킷만, 후보 밖 주소는 경로 검증 후), `MAX_PROBE_PATHS` 상한과 검증 `HELLO` 1회
+- 9.2 `CONNECTED` 조건의 이중 플래그, `sendto` 성공 후에만 `sent_ack`
+- 9.4 전이표 전체와 9.4.1 종료 상태 폐기(`drop_terminal_state`)
+- 9.4 무검증 목적지 공통 예산. 세션당 토큰 버킷(`UNVERIFIED_TX_BUCKET`, `UNVERIFIED_TX_REFILL`), `HELLO_ACK`·`PONG`·검증 `HELLO` 셋에 적용, `drop_unverified_tx`. **경로별로 따로 세지 않는다**
+- 9.5 재협상 10단계. **특히 로컬 epoch/nonce 유지와 10번 타이머 되돌리기**
   - 로컬 epoch/nonce 를 바꾸면 무한 핑퐁이 된다
   - 10번은 `HELLO` 재전송 재시작과 `KEEPALIVE`·`PING`·유휴 타임아웃 정지다
-- [ ] 9.5 재협상 상한 둘 (`MIN_RENEG_INTERVAL_MS`, `MAX_RENEGOTIATIONS`)
-- [ ] 11장 타이머 값과 생명주기
-- [ ] `CLOSE` 송수신, reason 값 검증, 송신·수신 양쪽의 `CLOSED` 전이와 라우팅 항목만 제거 (5.6)
-- [ ] 9.6 실패 전이의 세 가지: 재전송·세션 타이머 정지, 학습한 세션에 `CLOSE` `0x03` 1회, 기록
-- [ ] `sendto` 실패 시 `tx_err_send` (6장). `HELLO_ACK`은 `tx_err_ack`도 (9.2)
-- [ ] `pending_pings` 상한과 정리
-- [ ] 13장 STUN 범위
-- [ ] 5.4 `DATA` 타입, 8.4 내부 검증(검사 9~15), 8.5 송신 측 검증 전부
-- [ ] 8.5 라우팅 표. 6칸 고정 배열, 두 단계 조회, 케이스 표 전 행
-- [ ] 5.7 `ROSTER` 송수신. 방향·구조·`generation`·예약 비트·이름 검사와 전용 카운터 넷
-- [ ] 5.7 `ROSTER` 송신 시점 셋 (변경 즉시, 5초 2회, 15초 주기)
-
-Phase 5에서 추가: 4.5 손실 집계와 `baseline`(재정렬을 손실로 세지 않는 집계), 퍼즈 방어.
-**64칸 수용 창 자체는 위 Phase 4 항목이다.** 창과 집계는 다른 물건이다.
+- 9.5 재협상 상한 둘 (`MIN_RENEG_INTERVAL_MS`, `MAX_RENEGOTIATIONS`)
+- 11장 타이머 값과 생명주기
+- `CLOSE` 송수신, reason 값 검증, 송신·수신 양쪽의 `CLOSED` 전이와 라우팅 항목만 제거 (5.6)
+- 9.6 실패 전이의 세 가지: 재전송·세션 타이머 정지, 학습한 세션에 `CLOSE` `0x03` 1회, 기록
+- `sendto` 실패 시 `tx_err_send` (6장). `HELLO_ACK`은 `tx_err_ack`도 (9.2)
+- 5.5 `PING`/`PONG`의 `ping_id` 매칭과 RTT 측정
+- `pending_pings` 상한과 정리
+- 13장 STUN 범위
+- 5.4 `DATA` 타입, 8.4 내부 검증(검사 9~15), 8.5 송신 측 검증 전부
+- 8.5 라우팅 표. 6칸 고정 배열, 두 단계 조회, 케이스 표 전 행
+- 5.7 `ROSTER` 송수신. 방향·구조·`generation`·예약 비트·이름 검사와 전용 카운터 넷
+- 5.7 `ROSTER` 송신 시점 셋 (변경 즉시, 5초 2회, 15초 주기)
+- 4.5 손실 집계. `baseline`과 `pkt_pos`로 재정렬을 손실로 세지 않는 것, 재협상 구간의 세션 합계
+  - 위 4.5 중복 억제 항목의 64칸 수용 창과 이 집계는 다른 물건이다
+- 퍼즈 방어. 손상되거나 절단된 어떤 데이터그램에도 크래시하거나 메모리 오류를 내지 않는다

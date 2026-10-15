@@ -19,6 +19,9 @@ using sangtachi::tunnel::ReplayWindow;
 
 namespace {
 
+// 첫 수용 패킷의 위치다. 4.5 는 position 을 REPLAY_WINDOW 에서 시작시킨다.
+constexpr std::uint64_t kStart = sangtachi::protocol::kReplayWindow;
+
 constexpr std::uint64_t bit(unsigned back) {
     // back=b 는 비트 (b-1) 다 (4.5).
     return std::uint64_t{1} << (back - 1);
@@ -69,11 +72,11 @@ TEST_CASE("replay: the first packet initializes the window", "[tunnel][replay]")
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.accepted());
     REQUIRE(d.advanced());
-    REQUIRE(d.pkt_pos == 0);
+    REQUIRE(d.pkt_pos == kStart);
 
     REQUIRE(w.initialized());
     REQUIRE(w.highest() == 1000);
-    REQUIRE(w.position() == 0);
+    REQUIRE(w.position() == kStart);
     REQUIRE(w.seen_bits() == 0);
 }
 
@@ -122,9 +125,9 @@ TEST_CASE("replay: advancing by one sets bit 0", "[tunnel][replay]") {
     const ReplayDecision d = w.accept(11);
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.distance == 1);
-    REQUIRE(d.pkt_pos == 1);
+    REQUIRE(d.pkt_pos == kStart + 1);
     REQUIRE(w.highest() == 11);
-    REQUIRE(w.position() == 1);
+    REQUIRE(w.position() == kStart + 1);
     REQUIRE(w.seen_bits() == bit(1));
 }
 
@@ -134,7 +137,7 @@ TEST_CASE("replay: shift 63 keeps the old highest at back 63", "[tunnel][replay]
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.distance == 63);
     REQUIRE(w.seen_bits() == bit(63));
-    REQUIRE(w.position() == 63);
+    REQUIRE(w.position() == kStart + 63);
 
     REQUIRE(w.accept(100).verdict == ReplayVerdict::kDuplicate);  // back 63, 이미 받았다
     // back 64 는 받은 적 없는 창 안 번호다.
@@ -153,7 +156,7 @@ TEST_CASE("replay: shift exactly 64 sets bit 63 instead of clearing", "[tunnel][
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.distance == 64);
     REQUIRE(w.seen_bits() == bit(64));
-    REQUIRE(w.position() == 65);
+    REQUIRE(w.position() == kStart + 65);
 
     REQUIRE(w.accept(1001).verdict == ReplayVerdict::kDuplicate);  // back 64
     REQUIRE(w.accept(1000).verdict == ReplayVerdict::kTooOld);     // back 65
@@ -170,7 +173,7 @@ TEST_CASE("replay: shift 65 clears the bitmap", "[tunnel][replay]") {
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.distance == 65);
     REQUIRE(w.seen_bits() == 0);
-    REQUIRE(w.position() == 66);
+    REQUIRE(w.position() == kStart + 66);
 
     REQUIRE(w.accept(1065).verdict == ReplayVerdict::kReorder);  // back 1
     REQUIRE(w.accept(1002).verdict == ReplayVerdict::kReorder);  // back 64
@@ -184,7 +187,7 @@ TEST_CASE("replay: a large advance clears the bitmap", "[tunnel][replay]") {
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.distance == 0x7FFFFFFFu);
     REQUIRE(w.seen_bits() == 0);
-    REQUIRE(w.position() == 1u + 0x7FFFFFFFu);
+    REQUIRE(w.position() == kStart + 1u + 0x7FFFFFFFu);
 }
 
 TEST_CASE("replay: half a lap away is too old not newer", "[tunnel][replay]") {
@@ -221,9 +224,9 @@ TEST_CASE("replay: a reordered packet is accepted once", "[tunnel][replay]") {
     REQUIRE(d.accepted());
     REQUIRE_FALSE(d.advanced());  // 10.4 (b): 재정렬 수용은 엔드포인트 학습에 쓰지 않는다
     REQUIRE(d.distance == 5);
-    REQUIRE(d.pkt_pos == 5);  // position - back
+    REQUIRE(d.pkt_pos == kStart + 5);  // position - back
     REQUIRE(w.highest() == 10);
-    REQUIRE(w.position() == 10);
+    REQUIRE(w.position() == kStart + 10);
 
     REQUIRE(w.accept(5).verdict == ReplayVerdict::kDuplicate);
 }
@@ -244,18 +247,22 @@ TEST_CASE("replay: bits above 32 use 64-bit shifts", "[tunnel][replay]") {
     REQUIRE(w.accept(63).verdict == ReplayVerdict::kReorder);  // back 1
 }
 
-TEST_CASE("replay: a reorder older than the first packet follows the 4.5 formula", "[tunnel][replay]") {
-    // 첫 패킷보다 앞선 번호가 창 안에서 오면 수용된다. pkt_pos 는 4.5 의 position - back
-    // 그대로이고 position 이 0 이라 uint64_t 에서 감싸 돈다. 이 값은 Phase 5 손실 집계의
-    // baseline 비교에 들어가면 baseline 보다 크게 보인다. 문서가 이 경우를 따로 정하지 않아
-    // 공식을 그대로 따랐다. 문서를 고치면 이 케이스를 같이 고친다.
+TEST_CASE("replay: a reorder older than the first packet stays below the start position", "[tunnel][replay]") {
+    // 첫 패킷보다 앞선 번호가 창 안에서 오면 수용된다. pkt_pos 는 4.5 의 position - back 이다.
+    // position 이 REPLAY_WINDOW 에서 시작하므로 back 이 창 끝(64)이어도 감싸 돌지 않는다.
+    // 0 에서 시작하면 이 값이 2^64 근처로 감싸 돌아 손실 집계의 baseline 보다 뒤로 보인다 (4.5).
     ReplayWindow w = window_at(100);
     const ReplayDecision d = w.accept(99);
     REQUIRE(d.verdict == ReplayVerdict::kReorder);
     REQUIRE(d.distance == 1);
-    REQUIRE(d.pkt_pos == ~std::uint64_t{0});
-    REQUIRE(w.position() == 0);
+    REQUIRE(d.pkt_pos == kStart - 1);
+    REQUIRE(w.position() == kStart);
     REQUIRE(w.highest() == 100);
+
+    const ReplayDecision edge = w.accept(36);  // back 64, 창 끝
+    REQUIRE(edge.verdict == ReplayVerdict::kReorder);
+    REQUIRE(edge.distance == 64);
+    REQUIRE(edge.pkt_pos == 0);
 }
 
 // ---------------------------------------------------------------- 랩어라운드
@@ -266,13 +273,13 @@ TEST_CASE("replay: advancing across the 32-bit wrap", "[tunnel][replay]") {
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
     REQUIRE(d.distance == 21);
     REQUIRE(w.highest() == 5);
-    REQUIRE(w.position() == 21);  // position 은 순환하지 않는다
+    REQUIRE(w.position() == kStart + 21);  // position 은 순환하지 않는다
 
     REQUIRE(w.accept(0xFFFFFFFFu).verdict == ReplayVerdict::kReorder);  // back 6
     REQUIRE(w.accept(0xFFFFFFF0u).verdict == ReplayVerdict::kDuplicate);  // back 21
     REQUIRE(w.accept(0).verdict == ReplayVerdict::kReorder);  // back 5
     REQUIRE(w.accept(6).verdict == ReplayVerdict::kAdvance);
-    REQUIRE(w.position() == 22);
+    REQUIRE(w.position() == kStart + 22);
 }
 
 TEST_CASE("replay: too old across the 32-bit wrap", "[tunnel][replay]") {
@@ -301,7 +308,7 @@ TEST_CASE("replay: check has no side effects", "[tunnel][replay]") {
         (void)w.check(seq);
     }
     REQUIRE(w.highest() == 110);
-    REQUIRE(w.position() == 10);
+    REQUIRE(w.position() == kStart + 10);
     REQUIRE(w.seen_bits() == bits);
 
     // 판정만 하고 반영하지 않은 번호는 다시 와도 수용된다.
@@ -338,7 +345,7 @@ TEST_CASE("replay: commit refuses drops and stale decisions", "[tunnel][replay]"
     REQUIRE(w.commit(a));
     REQUIRE_FALSE(w.commit(a));
     REQUIRE(w.highest() == 55);
-    REQUIRE(w.position() == 5);
+    REQUIRE(w.position() == kStart + 5);
 
     // 판정 둘을 먼저 내고 뒤의 것을 먼저 반영하면 앞의 것은 낡았다. 그대로 반영하면 shift 5
     // 로 다시 밀어 창이 망가진다.
@@ -348,7 +355,7 @@ TEST_CASE("replay: commit refuses drops and stale decisions", "[tunnel][replay]"
     const std::uint64_t bits = w.seen_bits();
     REQUIRE_FALSE(w.commit(b));
     REQUIRE(w.highest() == 62);
-    REQUIRE(w.position() == 12);
+    REQUIRE(w.position() == kStart + 12);
     REQUIRE(w.seen_bits() == bits);
     // 60 은 아직 받지 않았으므로 지금 상태의 판정으로는 수용된다.
     REQUIRE(w.accept(60).verdict == ReplayVerdict::kReorder);
@@ -384,7 +391,7 @@ TEST_CASE("replay: reset returns to the uninitialized state", "[tunnel][replay]"
 
     const ReplayDecision d = w.accept(0);
     REQUIRE(d.verdict == ReplayVerdict::kAdvance);
-    REQUIRE(d.pkt_pos == 0);
+    REQUIRE(d.pkt_pos == kStart);
     REQUIRE(w.accept(1).verdict == ReplayVerdict::kAdvance);
 }
 
@@ -433,13 +440,13 @@ TEST_CASE("replay: matches a set-based reference model", "[tunnel][replay]") {
             REQUIRE(d.verdict == expected);
             if (d.accepted()) {
                 seen.insert(pos);
-                REQUIRE(d.pkt_pos == pos - base);
+                REQUIRE(d.pkt_pos == kStart + (pos - base));
             }
             if (expected == ReplayVerdict::kAdvance) {
                 top = pos;
                 init = true;
             }
-            REQUIRE(w.position() == top - base);
+            REQUIRE(w.position() == kStart + (top - base));
         }
     }
 }
@@ -457,10 +464,10 @@ TEST_CASE("replay: position keeps counting past 2^32 without wrapping", "[tunnel
     }
     constexpr std::uint64_t kExpected = std::uint64_t{kStep} * 3;
     STATIC_REQUIRE(kExpected > 0xFFFFFFFFull);
-    REQUIRE(w.position() == kExpected);
+    REQUIRE(w.position() == kStart + kExpected);
 
     // 창 안의 재정렬 패킷의 pkt_pos 도 64비트 위치다.
     const ReplayDecision d = w.accept(seq - 5);
     REQUIRE(d.verdict == ReplayVerdict::kReorder);
-    REQUIRE(d.pkt_pos == kExpected - 5);
+    REQUIRE(d.pkt_pos == kStart + kExpected - 5);
 }

@@ -249,8 +249,8 @@ is in 8.3 Duplicate Suppression.
 
 ```text
 if initialized is false:
-    highest = seq; position = 0; seen_bits = 0; initialized = true
-    -> accept (advance). This packet's pkt_pos = 0
+    highest = seq; position = REPLAY_WINDOW; seen_bits = 0; initialized = true
+    -> accept (advance). This packet's pkt_pos = REPLAY_WINDOW
 
 if seq == highest:
     -> drop, drop_duplicate
@@ -313,7 +313,26 @@ Reordered packets at or below `baseline` are excluded exactly.
 > **Why.** If the state value `position` were used as is, reordered packets sent before `baseline` would
 > also be counted in `accepted`, giving `accepted > expected` and making `loss` underflow to a negative number.
 
-Packets dropped with `drop_too_old` are already confirmed as loss and are not reverted. The loss rate is snapshotted every 10 seconds and uploaded to the telemetry service.
+**`position` starts at `REPLAY_WINDOW`, not 0.** The `back` of a reordered acceptance is at most
+`REPLAY_WINDOW`, so `position - back` never goes below 0.
+
+> **Why.** Starting at 0, a number older than the first accepted packet that arrives late inside the
+> window makes `position - back` wrap around in 64 bits to a very large value. That packet is judged to be
+> after `baseline`, is counted in `accepted`, and the same underflow as above follows. The `HELLO`s sent to
+> several candidates during the punch phase arrive in any order, so this case really happens.
+
+The acceptance window has no time-based expiry. Loss is not confirmed by expiry; it comes out of the
+`expected - accepted` above. Packets dropped with `drop_too_old` are already confirmed as loss and are not reverted.
+
+**An accounting segment starts on entering `CONNECTED` and ends at 9.5 Renegotiation step 3 or at the end
+of the session.** The session totals start at 0. If inside a segment, renegotiation step 3 adds that segment's
+`expected` and `accepted` to the session totals and then resets the accounting. Outside a segment (before the
+first `CONNECTED`, or after a renegotiation until the next `CONNECTED`) the current segment's values are 0. When the
+session ends, the last segment's values stay as they are and do not change again. The session's values are those
+totals plus the current segment's values.
+When and in what form these values are logged is owned by
+[`architecture.md`](architecture.md) chapter 9 Log Output. The loss rate is snapshotted every 10 seconds and
+uploaded to the telemetry service.
 
 ---
 
@@ -1092,7 +1111,8 @@ Once both caps pass, increment the renegotiation count by 1 and atomically perfo
 
 1. Register **the peer's** previous epoch on the retired list for 2 minutes
 2. Reset `got_ack` and `sent_ack` to false
-3. Reset the duplicate suppression state, `pending_pings`, and the loss accounting
+3. Reset the duplicate suppression state, `pending_pings`, and the loss accounting. The loss accounting
+   adds that segment's values to the session totals before the reset (4.5)
 4. Pin the peer epoch to the new value
 5. **Keep our own `session_epoch` and nonce unchanged**
 6. Send a `HELLO_ACK` for the received `HELLO` directly to the source of that datagram. Do not change
@@ -1182,9 +1202,15 @@ deadline and **a session under establishment is recorded as a disconnect.**
    is `FAILED`, not `CLOSED`
 3. Write the record (`architecture.md` chapter 9)
 
-`FAILED` is a terminal state. A retry starts as a new attempt from `IDLE` and draws a new epoch
-and a new nonce. **What the process does after that is decided by
-[`concurrency.md`](concurrency.md) chapter 7 Shutdown.**
+`FAILED` is a terminal state. **The client does not retry automatically.** A new attempt starts from
+`IDLE` when the player joins the same room again, and draws a new epoch and a new nonce. On the host side
+that participant is a new peer. What the process does after that is decided by
+[`concurrency.md`](concurrency.md) chapter 7 Shutdown.
+
+> **Why.** There is no rejoin ([`control_plane.md`](control_plane.md) 4.3 `join_room`), so even an automatic
+> rejoin gets a new `peer_id` and a new virtual IP. To the game that is a different peer, so the connection
+> on top of it breaks anyway. v1 has no procedure that continues the old session, as 10.4 Endpoint Learning
+> records. The decision and the rejected alternatives are in [ADR 0025](decisions/0025-decisions-before-phase-5.md).
 
 The basis for the three rules above follows.
 
@@ -1563,10 +1589,8 @@ In the non-guaranteed cases the following happens.
 
 - This procedure does not start, and for the same reason the 9.5 renegotiation gets no trigger either
 - Both sides reach the idle timeout (50s) and the session ends with `TUNNEL_DROPPED`
-- If a retry is made, as 9.6 Failure Transitions defines, it starts from `IDLE` with a new epoch and a new
-  nonce and goes through the control plane again
-
-**Who initiates the retry, and when, is not decided by this document.** Whether to retry automatically is undecided.
+- There is no automatic retry. As 9.6 Failure Transitions defines, a new attempt starts from `IDLE` when the
+  player joins again, with a new epoch and a new nonce, and goes through the control plane again
 
 **A process restart hits the same failure.** Per Chapter 6 the socket binds to port 0, so the restarted
 side gets a new local port and therefore a new NAT mapping. On the surviving side it arrives as **same IP, different
@@ -1591,14 +1615,13 @@ the case where both remain in the same session; a restart is not that.
 | Restarted side | 10-second punch deadline of the new attempt | By the flag count of 9.6 Failure Transitions. `HOLE_PUNCH_TIMEOUT` if neither is set, `PEER_HANDSHAKE_FAILED` if only one is |
 
 To recover, both sides have to start a new attempt from `IDLE`, and the surviving side reaches that point only after waiting out
-the 50 seconds above. After that comes the undecided item
-noted above (automatic retry). When 4.3 `session_epoch` says it blocks "delayed packets from a previous attempt after a restart or retry",
+the 50 seconds above. After that, per 9.6 Failure Transitions, the player joins again. When 4.3 `session_epoch` says it blocks "delayed packets from a previous attempt after a restart or retry",
 it means **filtering delayed packets**, not reconnecting a restarted session.
 
 There is a method where the surviving side re-polls the control plane and receives the peer's new candidates. v1 does not
 adopt it. There is no rejoin (`control_plane.md` 4.3 `join_room`), so the restarted side comes in with a new `peer_id` and
 a newly assigned virtual IP, and to the surviving side that is **a different peer**. Adding this procedure would first require a rule
-that attaches a new peer to an old session, and that rule is undecided, just like the automatic retry above.
+that attaches a new peer to an old session, and v1 has no such rule.
 
 (c) is not removed. There are two reasons.
 
@@ -1862,46 +1885,50 @@ that the old peer's session has already ended by then is in `control_plane.md` 2
 
 ---
 
-## 15. Implementation Checklist
+## 15. Implementation Conformance List
 
-Everything below has to be in the code in Phase 4. Phase 4 is the stage that implements this checklist.
+What code implementing this protocol has to have. Each rule itself is owned by the section the item points to;
+this list gathers the rules that are easy to miss or get wrong. When what is implemented is decided by
+[`roadmap.md`](roadmap.md).
 
-- [ ] Every constant in Chapter 3
-- [ ] Field-by-field header serialization/deserialization + round-trip test
-- [ ] `SO_EXCLUSIVEADDRUSE`, no `SO_REUSEADDR`, `SIO_UDP_CONNRESET` off, no `connect()` call
-- [ ] `INADDR_ANY` + port 0 bind, actual port confirmed with `getsockname`, `SO_RCVBUF` set and applied value confirmed (Chapter 6)
-- [ ] Exclusive socket ownership by a single receive loop
-- [ ] Chapter 7 source hygiene (before classification, `drop_bad_source`) and classification (by top two bits, magic at the validation step)
-- [ ] The 8 common checks of 8.1 with dedicated counters
-- [ ] 8.2 epoch/source rules (especially epoch pinning by a nonce-valid `HELLO_ACK`)
-- [ ] The `virtual_ip` check of 8.2 Epoch and Source Checks (`drop_vip_mismatch`). **Before the epoch decision** (5.1, 5.2)
-- [ ] 4.5 duplicate suppression algorithm (`highest` + `position` + 64-bit bitmap), before side effects
-- [ ] `seq == highest` checked first, `if/else if/else` mutually exclusive branches, `shift == 64` handling, every bit operation in `uint64_t`
-- [ ] The `a != b` condition of `is_newer`
-- [ ] Per-session-attempt `session_epoch`, CSPRNG and 0 avoidance, 2-minute retired list and the `MAX_RETIRED_EPOCHS` cap. **What goes on the retired list is the peer's epoch** (4.3)
-- [ ] CSPRNG nonce, fixed per attempt, 2-minute retired list. Probe nonces in a separate table
-- [ ] 10.1 local candidate decision, order and cap of the registered list, own-subnet set (input to the Chapter 7 decision and received candidate hygiene), every candidate hygiene rule. Run every row of that section's three case tables
-- [ ] 10.2 relative-time rendezvous
-- [ ] 10.4 endpoint learning (advancing packets only, addresses outside the candidate set after path validation), `MAX_PROBE_PATHS` cap and 1 validation `HELLO`
-- [ ] The dual flags of 9.2 `CONNECTED` Condition, `sent_ack` only after `sendto` success
-- [ ] The whole 9.4 transition table and 9.4.1 terminal-state drop (`drop_terminal_state`)
-- [ ] 9.4 common unverified-destination budget. Per-session token bucket (`UNVERIFIED_TX_BUCKET`,
+- Every constant in Chapter 3
+- Field-by-field header serialization/deserialization + round-trip test
+- `SO_EXCLUSIVEADDRUSE`, no `SO_REUSEADDR`, `SIO_UDP_CONNRESET` off, no `connect()` call
+- `INADDR_ANY` + port 0 bind, actual port confirmed with `getsockname`, `SO_RCVBUF` set and applied value confirmed (Chapter 6)
+- Exclusive socket ownership by a single receive loop
+- Chapter 7 source hygiene (before classification, `drop_bad_source`) and classification (by top two bits, magic at the validation step)
+- The 8 common checks of 8.1 with dedicated counters
+- 8.2 epoch/source rules (especially epoch pinning by a nonce-valid `HELLO_ACK`)
+- The `virtual_ip` check of 8.2 Epoch and Source Checks (`drop_vip_mismatch`). **Before the epoch decision** (5.1, 5.2)
+- 4.5 duplicate suppression algorithm (`highest` + `position` + 64-bit bitmap), before side effects. `position` starts at `REPLAY_WINDOW`
+- `seq == highest` checked first, `if/else if/else` mutually exclusive branches, `shift == 64` handling, every bit operation in `uint64_t`
+- The `a != b` condition of `is_newer`
+- Per-session-attempt `session_epoch`, CSPRNG and 0 avoidance, 2-minute retired list and the `MAX_RETIRED_EPOCHS` cap. **What goes on the retired list is the peer's epoch** (4.3)
+- CSPRNG nonce, fixed per attempt, 2-minute retired list. Probe nonces in a separate table
+- 10.1 local candidate decision, order and cap of the registered list, own-subnet set (input to the Chapter 7 decision and received candidate hygiene), every candidate hygiene rule. Run every row of that section's three case tables
+- 10.2 relative-time rendezvous
+- 10.3 punch. Send `HELLO` to every candidate of the peer
+- 10.4 endpoint learning (advancing packets only, addresses outside the candidate set after path validation), `MAX_PROBE_PATHS` cap and 1 validation `HELLO`
+- The dual flags of 9.2 `CONNECTED` Condition, `sent_ack` only after `sendto` success
+- The whole 9.4 transition table and 9.4.1 terminal-state drop (`drop_terminal_state`)
+- 9.4 common unverified-destination budget. Per-session token bucket (`UNVERIFIED_TX_BUCKET`,
   `UNVERIFIED_TX_REFILL`), applied to all three of `HELLO_ACK`·`PONG`·validation `HELLO`,
   `drop_unverified_tx`. **Not counted per path**
-- [ ] The 10 steps of 9.5 renegotiation. **Especially keeping the local epoch/nonce and the step 10 timer restore**
+- The 10 steps of 9.5 renegotiation. **Especially keeping the local epoch/nonce and the step 10 timer restore**
   - Changing the local epoch/nonce means infinite ping-pong
   - Step 10 is restarting `HELLO` retransmission and stopping `KEEPALIVE`, `PING`, and the idle timeout
-- [ ] The two 9.5 renegotiation caps (`MIN_RENEG_INTERVAL_MS`, `MAX_RENEGOTIATIONS`)
-- [ ] Chapter 11 timer values and lifecycles
-- [ ] `CLOSE` send/receive, reason value validation, the `CLOSED` transition on both send and receive sides, and removing only the routing entry (5.6)
-- [ ] The three things of 9.6 failure transitions: stopping retransmission and session timers, one `CLOSE` `0x03` to a learned session, and the record
-- [ ] `tx_err_send` on `sendto` failure (Chapter 6). `HELLO_ACK` also `tx_err_ack` (9.2)
-- [ ] `pending_pings` cap and cleanup
-- [ ] Chapter 13 STUN scope
-- [ ] 5.4 `DATA` type, 8.4 inner validation (checks 9~15), all of 8.5 transmit-side validation
-- [ ] The 8.5 routing table. Fixed array of 6 slots, two-step lookup, every row of the case table
-- [ ] `ROSTER` send/receive of 5.7. Direction, structure, `generation`, reserved-bit, and name checks with the four dedicated counters
-- [ ] The three `ROSTER` send triggers of 5.7 (immediately on change, twice at 5 seconds, 15-second period)
-
-Added in Phase 5: 4.5 loss accounting and `baseline` (accounting that does not count reordering as loss), fuzz defense.
-**The 64-slot acceptance window itself is a Phase 4 item above.** The window and the accounting are different things.
+- The two 9.5 renegotiation caps (`MIN_RENEG_INTERVAL_MS`, `MAX_RENEGOTIATIONS`)
+- Chapter 11 timer values and lifecycles
+- `CLOSE` send/receive, reason value validation, the `CLOSED` transition on both send and receive sides, and removing only the routing entry (5.6)
+- The three things of 9.6 failure transitions: stopping retransmission and session timers, one `CLOSE` `0x03` to a learned session, and the record
+- `tx_err_send` on `sendto` failure (Chapter 6). `HELLO_ACK` also `tx_err_ack` (9.2)
+- 5.5 `PING`/`PONG` `ping_id` matching and RTT measurement
+- `pending_pings` cap and cleanup
+- Chapter 13 STUN scope
+- 5.4 `DATA` type, 8.4 inner validation (checks 9~15), all of 8.5 transmit-side validation
+- The 8.5 routing table. Fixed array of 6 slots, two-step lookup, every row of the case table
+- `ROSTER` send/receive of 5.7. Direction, structure, `generation`, reserved-bit, and name checks with the four dedicated counters
+- The three `ROSTER` send triggers of 5.7 (immediately on change, twice at 5 seconds, 15-second period)
+- 4.5 loss accounting. Not counting reordering as loss through `baseline` and `pkt_pos`, and the session totals across renegotiation segments
+  - The 64-slot acceptance window of the 4.5 duplicate suppression item above and this accounting are different things
+- Fuzz defense. No crash and no memory error on any damaged or truncated datagram

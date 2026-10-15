@@ -1075,8 +1075,9 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.echo` | `rtt_ms` (from the send time at offset 32 of a returned echo to its arrival, in milliseconds). **Test build only** | Phase 4 RTT baseline |
 | `roster` | `generation`, `members` (per member `<peer_id>/<virtual IP>/<bit 0>/<name>`, joined with commas) | Phase 4 `ROSTER` receive check ([`protocol.md`](protocol.md) 5.7) |
+| `session.loss` | `peer_id`, `expected`, `accepted`, `lost` (the session values of [`protocol.md`](protocol.md) 4.5, including the totals of renegotiation segments) | Phase 5 loss and reordering accounting |
 
-Events not listed here may be added freely. **Only these seventeen keys and their field names do not
+Events not listed here may be added freely. **Only these eighteen keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
 **`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From
@@ -1102,6 +1103,7 @@ leaves one `WARN` line at startup.
 | `value` (`counter`) | Decimal integer |
 | `peer_id` (`counter`) | Decimal integer |
 | `peer_name` (`counter`) | The format of [`control_plane.md`](control_plane.md) 2.7 `name`. `-` if unknown |
+| `peer_id`, `expected`, `accepted`, `lost` (`session.loss`) | Decimal integer |
 
 The value formats of the remaining fields are not fixed. They are human-read diagnostics.
 
@@ -1128,6 +1130,9 @@ counters cannot know what to wait for. There are three moments.
 - In the process shutdown procedure ([`concurrency.md`](concurrency.md) chapter 7 Shutdown),
   all of the process table, and for every remaining session (including those kept in a terminal state) all of its table
 - Immediately, when requested by a `[console]` command, the same scope as just above
+
+**`session.loss` is emitted as one line per session, at the same moments as the session tables.** A session
+that never entered `CONNECTED` has all values 0. The reader computes the loss rate: `lost / expected` if `expected` is greater than 0, otherwise 0.
 
 **One session's table can appear twice.** When the shutdown procedure closes a `CONNECTED` session, that
 session appears once when it reaches the terminal state and once more right after, in the scope of the

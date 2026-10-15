@@ -515,46 +515,27 @@ they are decided
   - The risk of the host NAT is not judged before the room is created, and the person is not warned
     ([ADR 0024](decisions/0024-decisions-after-field-tests.md)). This answers the question ADR 0006 left open
 
-**Implementation.** Follow the `protocol.md` 15 implementation checklist as written. This Phase is
-implementation, not design.
+**Implementation.** Implement the [`protocol.md`](protocol.md) 15 implementation conformance list. Within that list,
+4.5 loss accounting and fuzz defense belong to Phase 5. This Phase is implementation, not design. What follows is
+decided in this Phase on top of that list.
 
-- Header serialization/deserialization (field by field, network byte order)
-- Exclusive socket ownership by a single receive loop, STUN/tunnel demultiplexing (`protocol.md` 6-7)
-- Required socket options: `SO_EXCLUSIVEADDRUSE`, `SIO_UDP_CONNRESET` off, no `connect()` call
-- Receive validation pipeline and dedicated drop counters (`protocol.md` 7-8)
-  - Chapter 7 source hygiene (before classification), 8.1 common checks 1-8, 8.4 inner validation
-    9-15, and 8.5 sender-side checks 1-6 are all in this Phase
-  - **In this Phase the input to 8.5 Transmit-Side Validation is a synthetic inner packet.** Wintun
-    reads become the input from Phase 6, and the checks themselves are the same
-- `session_epoch` generation and pinning
+- **In this Phase the input to 8.5 Transmit-Side Validation is a synthetic inner packet.** Wintun
+  reads become the input from Phase 6, and the checks themselves are the same
 - **The own-subnet broadcast verdict of chapter 7 source hygiene goes in here.** The
   classification in Phase 2 left that row empty. Computing it needs the interface address and
-  netmask, and the place that reads them is the candidate gathering just below
+  netmask, and the place that reads them is 10.1 local candidate gathering
   - **Until then a datagram whose source is our own subnet broadcast passes the classification
     step.** It is a path where a reply can be amplified, and the code that emits replies
     (`HELLO_ACK`, `PONG`) appears in Phase 4, so it is blocked in the same Phase as that code
   - A remote subnet's broadcast cannot be blocked because we do not know its netmask. That is where
     chapter 7 records a residual risk, and this item does not change it
-- Candidate gathering (local/server-reflexive) and control plane rendezvous polling (`protocol.md`
-  10.1, 10.2). **This wires the control plane client built in Phase 3 into the session state
-  machine.** The operation calls themselves are a Phase 3 deliverable; here their results become the
-  candidate set and the punch time
-- `HELLO` retransmission every 200ms to **all** of the peer's candidates, punch deadline 10 seconds
-- Endpoint learning that updates `peer_endpoint` to the source of a packet that passed validation and advanced `sequence`, and probe-nonce path verification for a new address (`protocol.md` 10.4)
-- Dual-flag `CONNECTED` condition, the full 9.4 transition table, 9.4.1 terminal-state discard
-- The four caps in chapter 3 and the two renegotiation caps in 9.5 (`protocol.md` 3, 4.3, 9.5, 10.4)
-- `KEEPALIVE` every 15 seconds (one immediately on entering `CONNECTED`), disconnect verdict based on the 50-second idle timeout
-- `PING`/`PONG` RTT measurement with `ping_id`
-- `CLOSE` send and receive
-- Minimal `DATA` type implementation and round trip. The payload is the **complete inner IPv4 packet**
+- Candidate gathering and rendezvous polling (`protocol.md` 10.1, 10.2) **wire the control plane client
+  built in Phase 3 into the session state machine.** The operation calls themselves are a Phase 3
+  deliverable; here their results become the candidate set and the punch time
+- `DATA` goes as far as a minimal implementation and round trip. The payload is the **complete inner IPv4 packet**
   defined in `protocol.md` 5.4 `DATA`. Without Wintun, build and insert a synthetic IPv4 packet.
   Virtual IPs are the values distributed by the control plane in Phase 3
-- `DATA` sender-side validation (`protocol.md` 8.5)
-- The fixed array of the routing table and the two-step lookup. Run every row of that section's case
-  table (`protocol.md` 8.5 Transmit-Side Validation)
-- `ROSTER` send and receive with dedicated drop counters. Check the direction, the structure, the
-  `generation`, the reserved bits, and the names (`protocol.md` 5.7 ROSTER)
-- The three `ROSTER` send moments (`protocol.md` 5.7)
+
 - **Display names** ([`spec.md`](spec.md) FR-16). Fix the control server and the client that Phase 3
   built
   - Control server. The `name` check and the `NAME#` claim of `create_room` and `join_room`,
@@ -565,7 +546,7 @@ implementation, not design.
   - Client. The `--name` argument, the lobby command `name`, the format check of `name` in
     responses, and the `<counterpart>` field of the `FAIL` line
     ([`architecture.md`](architecture.md) 3.5 Startup Inputs, `control_plane.md` 3.5)
-  - The names of `ROSTER` members go in together with the `ROSTER` send/receive item above
+  - The names of `ROSTER` members go in together with `ROSTER` receive validation of `protocol.md` 5.7
   - Deploy the fixed control server. The `PEER#` of a room created before the deploy has no `name`,
     so requests for that room become `internal` (the type rule of `control_plane.md` 6.3). The
     deploy is treated as ending every room from before it. It is not rolled out during a
@@ -1021,22 +1002,18 @@ fallback is not implemented at this point and remains a stretch goal.
 - **Goal:** Add robustness to the tunnel whose round trip was confirmed in Phase 4. Loss and reordering accounting, defenses against corrupted packets and fuzzing, and long-duration stability.
 - **Priority:** P1
 - **Requirements:** The [Requirement Traceability](#requirement-traceability) table is the source. Not repeated here
-- **Prerequisite:** The [`protocol.md`](protocol.md) 15 checklist is fully completed in Phase 4.
+- **Prerequisite:** The [`protocol.md`](protocol.md) 15 implementation conformance list is in the code. 4.5 loss accounting and fuzz defense belong to this Phase and are left out of the check. Items still missing after comparing against the code are held by [`plan.md`](../kor/plan.md).
 
 ### Tasks
 
-- `sequence`-based loss and reordering **accounting**. Implement the `position` / `baseline` /
-  `accepted` computation of [`protocol.md`](protocol.md) 4.5 Duplicate Suppression and Loss Accounting
-  to produce loss and loss rate
+- Implement **4.5 loss accounting and fuzz defense** from the `protocol.md` 15 implementation conformance list
   - The acceptance window itself belongs to Phase 4
-  - That window is a 64-slot position-based bitmap with no time-based expiry, so there is no "window
-    expiry" trigger
-  - Loss is not finalized by expiry; it comes out as `expected - accepted`. A packet dropped as
-    `drop_too_old` was already finalized as lost and is not reverted
-- Fuzz defense. No crash on corrupted and truncated input
+  - Loss values are emitted as `session.loss` in [`architecture.md`](architecture.md) chapter 9 Log Output
+- A test build with ASan enabled (MSVC `/fsanitize=address`). The fuzz tests below run in this build
 - Long-duration connection stability
-- **Fix whether to retry automatically.** `protocol.md` 9.6 Failure Transitions does not say who
-  initiates a retry and when after `TUNNEL_DROPPED`. Decide, then fix that document
+- A way to run Phase 4 captures C6-C9. Add modes that create those four scenes to the fake peer of the
+  control server harness. The scenes and verdicts are owned by the deferred sections of
+  [`tools/phase4-capture`](../../tools/phase4-capture/README.md)
 
 **What Phase 4 already implemented is not built again here.** For the three below, the **tests**
 belong to this Phase and the implementation is in Phase 4. If where things live is unclear, the
@@ -1089,17 +1066,29 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
     - Whether it got there is read from the counters. If only `drop_magic` increments and no counter
       after it moves at all, that test did not walk the pipeline
   - Both stages log the seed, count, and length range so they are reproducible
+  - Both stages run as unit tests of the ASan test build. Passing means no crash and no ASan report
 
   > **Why.** Running only stage 1 barely exercises the validation pipeline. Three quarters of random
   > first bytes end at the chapter 7 classification of [`protocol.md`](protocol.md), and what is left
   > is caught almost entirely by the 4-byte magic, so no input reaches past 8.2 Epoch and Source Checks
   > (the nonce table, the duplicate suppression bitmap, 8.4 inner validation, `CLOSE` reason,
   > renegotiation).
+
+  > **Why ASan.** The standard library assertions of a Debug build only see access through containers
+  > and iterators. Reading or writing past a buffer through a raw pointer or `memcpy` can pass without a crash.
 - Control plane outage test: after reaching `CONNECTED`, taking the control server down keeps `DATA` transfer and session state for 10 minutes (NFR-3)
-- Deliberately dropping packets yields a loss rate computed from `sequence` gaps
+  - Run it with two processes on the same machine and the control server harness. The harness takes the control server down
+  - This test and the 1-hour test below do not fit in the ctest per-case limit, so they run as a separate
+    script outside `scripts/test.ps1`
+- Deliberately dropping packets yields a loss rate computed from `sequence` gaps. Read it from the
+  `expected`, `accepted`, and `lost` of `session.loss`
 - Injecting packets out of order is not counted as loss (the 64-slot acceptance window of
   `protocol.md` 4.5 Duplicate Suppression and Loss Accounting accepts reordered packets and they count
   toward `accepted`)
+  - A number older than the first accepted packet that arrives inside the window after `CONNECTED` is not
+    counted in `accepted`. `lost` does not wrap negative. A mutation that starts `position` at 0 is caught here
+- For a session with a renegotiation in between, `session.loss` is the sum of both accounting segments
+  (`protocol.md` 4.5). Run it through the receive injection entry point
 - The loss rate does not jump when `sequence` wraps past the 32-bit boundary. **Run it through the
   receive injection entry point**
   - Inject a packet sequence starting at `sequence = 0xFFFFFFF0` and check that `position` continues
@@ -1108,7 +1097,13 @@ loss, reordering, and corruption. In Phase 7 the IP packets actually captured by
   > **Why.** Counting from 0 as the rule says would need 2^32 packets to reach the boundary, so it
   > cannot be run on the wire.
 - Idle timeout test: cutting the peer's transmission entirely records `TUNNEL_DROPPED` with the correct state transition (completes the FR-13 failure code set)
+  - After that the player goes to the lobby and does not join again on its own. The host stays in the room
+    (`protocol.md` 9.6 Failure Transitions)
 - Session state stays `CONNECTED` during a long (1 hour or more) connection
+  - The verdict is made with two processes on the same machine
+  - It is also run once between two different homes and recorded as an observation. The same machine
+    has no NAT, so it cannot see keepalive interacting with the mapping lifetime. The procedure is added to
+    [`field-test`](../../field-test/README.md)
 
 ---
 

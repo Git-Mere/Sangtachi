@@ -70,6 +70,8 @@ function Start-Client([string]$name, [string[]]$clientArgs) {
     if ($clientArgs -notcontains '--server') { $clientArgs = @('--server', '127.0.0.1:9') + $clientArgs }
     # --name 은 Phase 4 이후 필수다 (architecture.md 3.5 기동 입력). 이 검사는 제어 요청을 보내지 않으므로 같은 이름이어도 된다.
     if ($clientArgs -notcontains '--name') { $clientArgs = @('--name', 'e2e') + $clientArgs }
+    # 한 기기의 여러 프로세스다. 가상 어댑터를 만들지 않는다 (architecture.md 3.5 의 --no-adapter).
+    $clientArgs = @('--no-adapter') + $clientArgs
     $errPath = Join-Path $work "$name.err"
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $exe

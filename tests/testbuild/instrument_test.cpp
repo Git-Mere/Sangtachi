@@ -102,3 +102,142 @@ TEST_CASE("data.echo gives the round trip of an echoed request from the send tim
     testbuild::emit_echo_rtt(with_options, 2000);
     REQUIRE(logs.with_event("data.echo").size() == 1);
 }
+
+namespace {
+
+std::uint16_t sum16(const std::vector<std::byte>& p, std::size_t from, std::size_t to) {
+    std::uint32_t sum = 0;
+    for (std::size_t i = from; i < to; i += 2) {
+        const std::uint32_t hi = std::to_integer<std::uint32_t>(p[i]) << 8;
+        const std::uint32_t lo = i + 1 < to ? std::to_integer<std::uint32_t>(p[i + 1]) : 0;
+        sum += hi | lo;
+    }
+    while ((sum >> 16) != 0) {
+        sum = (sum & 0xFFFFu) + (sum >> 16);
+    }
+    return static_cast<std::uint16_t>(sum);
+}
+
+void put16(std::vector<std::byte>& p, std::size_t at, std::uint16_t v) {
+    p[at] = static_cast<std::byte>(v >> 8);
+    p[at + 1] = static_cast<std::byte>(v & 0xFF);
+}
+
+// Windows ping 이 내는 모양의 에코 요청. 10.100.0.1 -> 10.100.0.9, 식별자 1, 순번 seq.
+std::vector<std::byte> echo_request(std::size_t data_len, std::uint16_t seq = 7) {
+    std::vector<std::byte> p(20 + 8 + data_len);
+    p[0] = std::byte{0x45};
+    put16(p, 2, static_cast<std::uint16_t>(p.size()));
+    put16(p, 4, 0x1234);
+    p[8] = std::byte{128};
+    p[9] = std::byte{1};
+    const std::uint8_t src[] = {10, 100, 0, 1};
+    const std::uint8_t dst[] = {10, 100, 0, 9};
+    for (std::size_t i = 0; i < 4; ++i) {
+        p[12 + i] = static_cast<std::byte>(src[i]);
+        p[16 + i] = static_cast<std::byte>(dst[i]);
+    }
+    put16(p, 10, static_cast<std::uint16_t>(~sum16(p, 0, 20)));
+    p[20] = std::byte{8};
+    put16(p, 24, 1);
+    put16(p, 26, seq);
+    for (std::size_t i = 0; i < data_len; ++i) {
+        p[28 + i] = static_cast<std::byte>('a' + (i % 23));
+    }
+    put16(p, 22, static_cast<std::uint16_t>(~sum16(p, 20, p.size())));
+    return p;
+}
+
+void refill_ip_checksum(std::vector<std::byte>& p) {
+    put16(p, 10, 0);
+    put16(p, 10, static_cast<std::uint16_t>(~sum16(p, 0, 20)));
+}
+
+void refill_icmp_checksum(std::vector<std::byte>& p) {
+    put16(p, 22, 0);
+    put16(p, 22, static_cast<std::uint16_t>(~sum16(p, 20, p.size())));
+}
+
+}  // namespace
+
+TEST_CASE("icmp: an echo request comes back as a valid echo reply", "[testbuild]") {
+    for (const std::size_t data_len : {std::size_t{32}, std::size_t{33}, std::size_t{0}, std::size_t{1372}}) {
+        INFO("data_len=" << data_len);
+        const auto request = echo_request(data_len);
+        const auto reply = testbuild::make_icmp_echo_reply(request);
+        REQUIRE(reply.has_value());
+        REQUIRE(reply->size() == request.size());
+        // 두 체크섬이 맞는다
+        REQUIRE(sum16(*reply, 0, 20) == 0xFFFF);
+        REQUIRE(sum16(*reply, 20, reply->size()) == 0xFFFF);
+        // 출발지와 목적지가 뒤집혔다
+        for (std::size_t i = 0; i < 4; ++i) {
+            REQUIRE((*reply)[12 + i] == request[16 + i]);
+            REQUIRE((*reply)[16 + i] == request[12 + i]);
+        }
+        REQUIRE((*reply)[8] == std::byte{64});
+        REQUIRE((*reply)[9] == std::byte{1});
+        REQUIRE((*reply)[20] == std::byte{0});
+        REQUIRE((*reply)[21] == std::byte{0});
+        // 식별자, 순번, 데이터는 그대로다
+        for (std::size_t i = 24; i < request.size(); ++i) {
+            REQUIRE((*reply)[i] == request[i]);
+        }
+    }
+}
+
+TEST_CASE("icmp: no reply to anything but an intact unfragmented echo request", "[testbuild]") {
+    const auto good = echo_request(32);
+    REQUIRE(testbuild::make_icmp_echo_reply(good).has_value());
+
+    // 응답에는 다시 응답하지 않는다
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(*testbuild::make_icmp_echo_reply(good)).has_value());
+
+    auto v6 = good;
+    v6[0] = std::byte{0x65};
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(v6).has_value());
+
+    auto options = good;
+    options[0] = std::byte{0x46};
+    refill_ip_checksum(options);
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(options).has_value());
+
+    auto longer = good;
+    longer.push_back(std::byte{0});
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(longer).has_value());
+    auto shorter = good;
+    shorter.pop_back();
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(shorter).has_value());
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(std::vector<std::byte>(good.begin(), good.begin() + 27)).has_value());
+
+    auto more_fragments = good;
+    more_fragments[6] = std::byte{0x20};
+    refill_ip_checksum(more_fragments);
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(more_fragments).has_value());
+    auto offset = good;
+    offset[7] = std::byte{0x01};
+    refill_ip_checksum(offset);
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(offset).has_value());
+    auto dont_fragment = good;  // DF 만 선 것은 조각이 아니다
+    dont_fragment[6] = std::byte{0x40};
+    refill_ip_checksum(dont_fragment);
+    REQUIRE(testbuild::make_icmp_echo_reply(dont_fragment).has_value());
+
+    auto udp = good;
+    udp[9] = std::byte{17};
+    refill_ip_checksum(udp);
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(udp).has_value());
+
+    auto unreachable = good;
+    unreachable[20] = std::byte{3};
+    refill_icmp_checksum(unreachable);
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(unreachable).has_value());
+    auto code = good;
+    code[21] = std::byte{1};
+    refill_icmp_checksum(code);
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(code).has_value());
+
+    auto bad_sum = good;
+    bad_sum[30] = std::byte{0x00};
+    REQUIRE_FALSE(testbuild::make_icmp_echo_reply(bad_sum).has_value());
+}

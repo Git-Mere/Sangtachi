@@ -84,8 +84,9 @@
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
 | `tunnel/roster_publisher` | 호스트의 `ROSTER` 명부, `generation`, 세 송신 시점 ([`protocol.md`](protocol.md) 5.7, 11장) | 없음 |
 | `tunnel/data_sender` | 콘솔 `send` 와 합성 내부 패킷, 바퀴마다 나눠 보내기 ([`roadmap.md`](roadmap.md) Phase 4 콘솔 명령) | 없음 |
-| `testbuild/instrument` | 시험 빌드 장치. `data.tx`, `data.rx`, 에코 응답기. 실행 파일은 시험 빌드에서만 컴파일한다 ([ADR 0023](decisions/0023-3차-h-i-착수-전-결정.md)) | 없음 |
-| `adapter/wintun_adapter` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper) | **Wintun (승인 완료)**, IP Helper |
+| `testbuild/instrument` | 시험 빌드 장치. `data.tx`, `data.rx`, 에코 응답기, 어댑터의 ICMP 응답기(`roadmap.md` Phase 6 검증). 실행 파일은 시험 빌드에서만 컴파일한다 ([ADR 0023](decisions/0023-3차-h-i-착수-전-결정.md)) | 없음 |
+| `adapter` | 어댑터의 이름, GUID, 대역 상수와 루프가 보는 면(읽기 이벤트, read, inject, 세션 재시작). 헤더 하나다 | 없음 |
+| `platform/tun` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper), 관리자 권한 확인, 서브넷 충돌 스크립트 실행. 7장 어댑터 수명 | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
 | `loop` | 이벤트 루프 한 바퀴, 대기 집합, 소스별 비우기 예산, 콘솔 명령 처리. 구조는 `concurrency.md` 2·3장 | 없음 |
@@ -204,6 +205,7 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 | 방 코드 | `--room <6자>` | `player` 는 항상. Phase 3 이후. **`host` 에 주면 기동 실패다.** 역할 없이 주는 것도 Phase 3 이후 기동 실패다 | `control_plane.md` 2.1 `room_id` 의 형식. 소문자를 쳐도 된다. 서버가 대문자로 정규화한다 |
 | 표시 이름 | `--name <이름>` | Phase 4 이후 예. 그 전에는 받아서 보관만 하고 없어도 기동한다 | [`control_plane.md`](control_plane.md) 2.7 `name` 의 형식. 이 프로세스의 모든 방 만들기와 참가가 이 이름을 쓴다. 로비에서 아래 `name` 명령으로 바꾼다 |
 | STUN 서버 | `--stun <이름 또는 IPv4>:<포트>` 반복 | 아니오 | 주면 아래 기본 목록을 **통째로 대체**한다. 목록이 한 개일 때의 거동은 표 아래에 있다 |
+| 어댑터 없이 | `--no-adapter` | 아니오 | 값이 없는 스위치다. 가상 어댑터를 만들지 않고 7장 어댑터 수명의 기동 단계를 모두 건너뛴다. 관리자 권한이 없어도 기동한다. 한 기기에서 여러 프로세스를 띄우는 시험이 쓴다 |
 
 **`--stun` 목록이 한 개면 기동 시 `WARN` 한 줄을 남긴다.** 그 목록으로는 서로 다른 두 서버의
 응답을 얻을 수 없어 아래 "서버 선택" 대로 `STUN_DISCOVERY_FAILED` 로 끝난다.
@@ -371,7 +373,7 @@ FAIL <실패 코드> <상대> <사람이 읽는 문장>
 > **왜.** 눈으로 바이트를 비교하는 절차를 두지 않는 이유는 그것이 사람마다 다른 판정이 되기
 > 때문이다.
 
-**둘 다 Phase 6 에서 사라진다.** `[console]` 스레드는 콘솔 빌드에 남는다. 위 로비 명령을 받아야 하기 때문이다(`concurrency.md` 1장 스레드).
+**둘은 시험용이고 언제 지울지는 정하지 않았다.** `[console]` 스레드는 콘솔 빌드에 남는다. 위 로비 명령을 받아야 하기 때문이다(`concurrency.md` 1장 스레드).
 
 **기동 입력이 아닌 것.** 로컬 기록 파일 경로는 9장 로컬 기록 파일의 "경로" 가 정한다. 텔레메트리 서비스 주소는 Phase 9 다. 둘 다 여기 표에 없다.
 
@@ -414,7 +416,7 @@ Minecraft (TCP, 10.100.0.2 -> 10.100.0.1:25565)
    v  Windows 라우팅 테이블이 10.100.0.0/24 를 가상 어댑터로 보냄
 Wintun Adapter (송신측)
    |
-   v  wintun_adapter 가 원본 IP 패킷을 읽음
+   v  platform/tun 이 원본 IP 패킷을 읽음
 Router: 목적지 가상 IP -> 피어 세션 결정
    |
    v  tunnel 이 DATA 헤더를 붙임
@@ -426,7 +428,7 @@ Internet (UDP, 공인 엔드포인트 -> 공인 엔드포인트)
    v  상대 udp_socket 수신
 tunnel: 헤더 검증 및 제거
    |
-   v  wintun_adapter 가 원본 IP 패킷을 주입
+   v  platform/tun 이 원본 IP 패킷을 주입
 Wintun Adapter (수신측)
    |
    v
@@ -628,7 +630,23 @@ Host                 AWS (조율 / 텔레메트리)            Player
 
 플레이어는 Minecraft 서버 주소란에 `10.100.0.1:25565`를 입력한다. 공인 IP나 포트를 알 필요가 없다.
 
-Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리한다. 클라이언트가 어댑터 생성 시 Windows IP Helper API로 이 경로를 직접 설정하고, 종료 시 제거한다. Wintun은 주소나 라우트를 설정해 주지 않는다.
+Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리한다. 클라이언트가 Windows IP Helper API로 주소와 경로를 직접 설정하고 해제한다. Wintun은 주소나 라우트를 설정해 주지 않는다.
+
+**어댑터 수명.** 어댑터는 프로세스 하나에 하나이고 프로세스와 같이 산다. 주소는 방마다 붙였다 뗀다. `--no-adapter` 로 기동하면(3.5 기동 입력) 아래 전부를 건너뛴다.
+
+| 때 | 하는 일 | 실패하면 |
+|----|---------|----------|
+| 기동. 인자 검사 뒤, `[loop]` 시작 전 | 관리자 권한을 확인한다([`windows-prereq.md`](windows-prereq.md) 1절) | 기동 실패 |
+| 같은 때 | 서브넷 충돌을 검사한다(같은 문서 7절). 실행 파일 옆의 `Test-SubnetOverlap.ps1` 을 자기 어댑터의 GUID 와 이름으로 부르고 종료 코드로 판정한다 | 0 이 아니면 기동 실패 |
+| 같은 때 | `wintun.dll` 의 SHA-256 을 기대값과 비교하고 불러온다(같은 문서 4절) | 기동 실패 |
+| 같은 때 | 어댑터를 만든다. 이름과 GUID 는 클라이언트 상수다(같은 문서 3절). 인터페이스 MTU 를 [`protocol.md`](protocol.md) 12장 기본값으로, IPv4 DAD 전송 횟수를 0 으로 두고(같은 문서 9절), 남아 있는 IPv4 주소를 지운 뒤 세션을 연다 | 기동 실패 |
+| `create_room`, `join_room` 성공 응답 | 받은 가상 IP 를 `/24` 로 붙인다. 그 대역의 on-link 경로가 이 어댑터에 없을 때만 만든다(같은 문서 8절). 주소가 `Preferred` 가 될 때까지 기다린다(같은 문서 9절) | `ERROR` 한 줄을 내고 종료 이벤트를 신호한다 |
+| 방을 떠날 때([`concurrency.md`](concurrency.md) 7장 로비) | 붙인 주소와 만든 경로를 지운다 | `WARN` 한 줄. 다음 방의 주소 설정이 같은 어댑터의 주소를 먼저 지운다 |
+| 종료(`concurrency.md` 7장 종료의 5번과 6번) | 세션을 닫고, 주소와 경로를 지우고, 어댑터를 닫는다. Wintun 은 닫을 때 어댑터를 지운다 | 주소나 경로를 지우지 못하면 `WARN` 한 줄. 어댑터는 그래도 닫는다 |
+
+기동 실패의 종료 코드와 `ERROR` 줄은 3.5 기동 입력의 "인자 오류의 거동" 과 같다. 위 표의 순서대로 돈다.
+
+`windows-prereq.md` 7절은 3절 정리를 서브넷 검사보다 먼저 하라고 한다. 그 정리가 겨누는 것은 살아 있는 우리 어댑터에 남은 주소와 경로다. 프로세스가 끝나면 우리 어댑터가 남지 않는 것을 봤으므로(같은 문서 3절) 서브넷 검사 때 우리 어댑터는 없다. 같은 GUID 에 저장된 주소가 남았을 수 있지만 어댑터가 없으면 그 경로도 없다. 그래서 그 주소는 어댑터를 만든 직후에 지운다.
 
 **플레이어끼리는 가상 IP 로도 통신하지 않는다** ([`spec.md`](spec.md) FR-4). 위 경로 설정이
 `10.100.0.0/24` 전체를 가상 어댑터로 보내므로 플레이어가 다른 플레이어의 주소로 보낸 패킷도
@@ -1044,7 +1062,7 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 ```text
 Sangtachi/
 +-- client/
-|   +-- include/
+|   +-- include/         adapter.hpp 는 어댑터 상수와 루프가 보는 면 (7장 어댑터 수명)
 |   +-- src/
 |   |   +-- main.cpp
 |   |   +-- args.cpp     기동 인자 파싱 (3.5)
@@ -1055,12 +1073,11 @@ Sangtachi/
 |   |   +-- counters.cpp 카운터 표 (9장)
 |   |   +-- record.cpp   로컬 기록 파일의 줄과 쓰기 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file, tun
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (시험 빌드에서만)
-|   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
 |   |   +-- ui/          main_window
 |   |   +-- control/     control_client

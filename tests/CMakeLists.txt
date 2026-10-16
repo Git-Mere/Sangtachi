@@ -14,6 +14,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(sangtachi_tests
+    adapter_loop_test.cpp
     args_test.cpp
     crt_report_guard.cpp
     console_test.cpp

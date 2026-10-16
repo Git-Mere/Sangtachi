@@ -135,6 +135,12 @@ struct RunnerDeps {
 
     tunnel::Tunnel* tunnel = nullptr;  // 세션을 여는 곳. 널이면 OpenSession 이 실패한다
     RecordSink records;
+
+    // 가상 어댑터 (architecture.md 7장 어댑터 수명). `--no-adapter` 면 셋 다 비어 있다.
+    // own_wintun 은 자기 어댑터의 GUID 다. 로컬 후보 수집이 그 인터페이스를 뺀다 (protocol.md 10.1 제외 단계).
+    std::optional<platform::InterfaceGuid> own_wintun;
+    std::function<void(std::uint32_t virtual_ip)> assign_address;  // AssignAddress
+    std::function<void()> clear_address;                           // LeaveRoom
 };
 
 class ControlRunner {

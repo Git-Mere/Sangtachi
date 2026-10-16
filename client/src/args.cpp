@@ -193,6 +193,11 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
             continue;
         }
 
+        if (token == "--no-adapter") {
+            args.no_adapter = true;
+            continue;
+        }
+
         const bool takes_value =
             token == "--server" || token == "--room" ||
             token == "--stun" || token == "--peer" || token == "--name";

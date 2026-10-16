@@ -206,11 +206,88 @@ DrainOutcome EventLoop::drain_udp() {
     return DrainOutcome::Budget;
 }
 
+DrainOutcome EventLoop::drain_wintun() {
+    if (adapter_ == nullptr) {
+        return DrainOutcome::Empty;  // 어댑터가 없다. Phase 1~5 와 --no-adapter
+    }
+    for (std::size_t i = 0; i < kMaxDrain; ++i) {
+        const adapter::Received got = adapter_->receive();
+        switch (got.status) {
+            case adapter::ReceiveStatus::kEmpty:
+                return DrainOutcome::Empty;
+            case adapter::ReceiveStatus::kEof: {
+                // 어댑터가 끝나는 중이다. 종료 절차를 타게 한다 (concurrency.md 3장).
+                const LogField fields[] = {field("reason", std::string_view("eof"))};
+                emit(LogLevel::Error, "adapter.error", fields);
+                request_shutdown();
+                return DrainOutcome::Empty;
+            }
+            case adapter::ReceiveStatus::kCorrupt: {
+                // 링이 손상됐다. 세션을 다시 만든다. 새 세션은 새 읽기 이벤트를 주고, 대기 배열은
+                // 다음 바퀴에 그 값으로 다시 만들어진다. 다시 만들지 못하면 어댑터 없이 돌지 않는다.
+                // 터널이 죽은 채 살아 있는 척하게 된다 (concurrency.md 3장).
+                const bool restarted = adapter_->restart_session();
+                const LogField fields[] = {
+                    field("reason", std::string_view("ring_corrupt")),
+                    field("restarted", restarted ? std::string_view("yes") : std::string_view("no")),
+                };
+                emit(LogLevel::Error, "adapter.error", fields);
+                if (!restarted) {
+                    request_shutdown();
+                }
+                return DrainOutcome::Empty;
+            }
+            case adapter::ReceiveStatus::kError: {
+                counters_.increment(Counter::RxErrAdapter);
+                const LogField fields[] = {
+                    field("op", std::string_view("WintunReceivePacket")),
+                    field("code", static_cast<std::uint64_t>(got.error)),
+                };
+                emit(LogLevel::Warn, "adapter.error", fields);
+                return DrainOutcome::Empty;
+            }
+            case adapter::ReceiveStatus::kPacket: {
+                // 돌려주기를 스코프 가드로 건다. 처리 중에 빠져나가도 링 자리가 새지 않는다.
+                struct Release {
+                    adapter::Port* port;
+                    std::span<const std::byte> packet;
+                    ~Release() { port->release(packet); }
+                } release{adapter_, got.packet};
+                counters_.increment(Counter::AdapterRx);
+                if (on_adapter_packet_) {
+                    on_adapter_packet_(got.packet);
+                }
+                break;
+            }
+        }
+    }
+    return DrainOutcome::Budget;
+}
+
+bool EventLoop::inject_packet(std::span<const std::byte> packet) {
+    if (adapter_ == nullptr) {
+        counters_.increment(Counter::DropInjectError);
+        return false;
+    }
+    const adapter::InjectResult result = adapter_->inject(packet);
+    switch (result.status) {
+        case adapter::InjectStatus::kOk:
+            return true;
+        case adapter::InjectStatus::kRingFull:
+            counters_.increment(Counter::DropInjectRingFull);
+            return false;
+        case adapter::InjectStatus::kError:
+            break;
+    }
+    counters_.increment(Counter::DropInjectError);
+    return false;
+}
+
 void EventLoop::receive_datagram(const network::Endpoint& from,
                                  std::span<const std::byte> payload) {
     // Phase 1 의 대조 수단이다 (architecture.md 3.5 기동 입력). 분류 앞에 둔다. 로그 한 줄은
     // 회신이 아니라 진단이므로 출발지 위생이 막는 반사·증폭 경로에 들지 않고, 버려진
-    // 데이터그램도 진단에 남아야 한다. 시험용 `--peer`, `raw` 와 함께 Phase 6 에서 사라진다.
+    // 데이터그램도 진단에 남아야 한다. 시험용 `--peer`, `raw` 와 같이 지울지는 정하지 않았다 (architecture.md 3.5).
     emit_rx_raw(from, payload);
 
     // 자기 서브넷 집합은 루프가 소유한 그것이다 (concurrency.md 5장). 빈 집합을 넘기면 7장
@@ -366,13 +443,16 @@ bool EventLoop::run_once() {
     // 살아 있는 핸들만 모아 조밀한 배열을 만든다. 빈자리에 NULL 을 넣으면 WAIT_FAILED 가
     // 난다 (concurrency.md 2장). 논리적 순위와 배열 인덱스는 다르다.
     //
-    // 순위 2(Wintun)는 Phase 6 이후라 아직 없다. 순위 4(제어 응답)는 채널이 붙었을 때만 든다.
-    platform::WaitHandle handles[4];
+    // 순위 2(Wintun)는 어댑터가 붙었을 때만, 순위 4(제어 응답)는 채널이 붙었을 때만 든다.
+    platform::WaitHandle handles[5];
     std::size_t count = 0;
     const std::size_t shutdown_index = count;
     handles[count++] = shutdown_event_;
     const std::size_t udp_index = count;
     handles[count++] = socket_.read_event();
+    if (adapter_ != nullptr) {
+        handles[count++] = adapter_->read_event();
+    }
     const std::size_t console_index = count;
     handles[count++] = console_event_;
     if (control_ != nullptr) {
@@ -421,6 +501,7 @@ bool EventLoop::run_once() {
     // 신호 상태로 남아 루프가 스핀한다.
     socket_.enumerate_events();
     const DrainOutcome udp = drain_udp();
+    const DrainOutcome wintun = drain_wintun();
     drain_console();
     drain_control();  // concurrency.md 3장. Phase 3 이후
     const Millis now = now_ms();
@@ -442,7 +523,7 @@ bool EventLoop::run_once() {
     }
     const bool work_left = work_ ? work_(kMaxDrain) : false;
 
-    busy_ = (udp == DrainOutcome::Budget) || work_left;
+    busy_ = (udp == DrainOutcome::Budget) || (wintun == DrainOutcome::Budget) || work_left;
     return true;
 }
 

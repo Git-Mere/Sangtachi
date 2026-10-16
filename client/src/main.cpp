@@ -12,10 +12,12 @@
 #include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
+#include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/platform/console_ctrl.hpp"
 #include "sangtachi/platform/record_file.hpp"
 #include "sangtachi/platform/resolve.hpp"
 #include "sangtachi/platform/stdout.hpp"
+#include "sangtachi/platform/tun.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/timer.hpp"
 #include "sangtachi/tunnel/data_sender.hpp"
@@ -83,6 +85,78 @@ void emit_socket_error(std::string_view op, int code) {
     emit_op_error(op, static_cast<std::uint64_t>(code));
 }
 
+std::string guid_text(const sangtachi::platform::InterfaceGuid& g) {
+    // Windows GUID 의 메모리 배치에서 표기 순서로 (Data1, Data2, Data3 은 리틀 엔디언).
+    constexpr int kOrder[] = {3, 2, 1, 0, -1, 5, 4, -1, 7, 6, -1, 8, 9, -1, 10, 11, 12, 13, 14, 15};
+    constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out = "{";
+    for (const int i : kOrder) {
+        if (i < 0) {
+            out += '-';
+            continue;
+        }
+        out += kHex[g[static_cast<std::size_t>(i)] >> 4];
+        out += kHex[g[static_cast<std::size_t>(i)] & 0x0F];
+    }
+    out += '}';
+    return out;
+}
+
+// architecture.md 7장 어댑터 수명의 기동 단계. 0 이면 tun 에 어댑터가 들었다. 그 밖의 값은 기동
+// 실패의 종료 코드다. 실패마다 `adapter.error` 줄 하나를 낸다.
+int open_adapter(std::unique_ptr<sangtachi::platform::TunDevice>& tun) {
+    using sangtachi::LogLevel;
+    using sangtachi::field;
+    if (!sangtachi::platform::is_elevated()) {
+        // windows-prereq.md 1절. 어댑터를 만들다 실패하는 것보다 시작 전에 막는다.
+        const sangtachi::LogField fields[] = {field("reason", std::string_view("not_elevated"))};
+        sangtachi::emit(LogLevel::Error, "adapter.error", fields);
+        return kStartupFailure;
+    }
+
+    // windows-prereq.md 7절. 판정은 스크립트의 종료 코드다. unknown 은 통과가 아니다.
+    const auto subnet = sangtachi::platform::run_subnet_check(sangtachi::adapter::kSubnetText);
+    if (subnet.verdict != sangtachi::platform::SubnetVerdict::kProceed) {
+        std::string blocks;
+        for (const auto& prefix : subnet.blocks) {
+            blocks += blocks.empty() ? "" : ",";
+            blocks += prefix;
+        }
+        const std::string_view verdict =
+            subnet.verdict == sangtachi::platform::SubnetVerdict::kBlock ? "block" : "unknown";
+        const sangtachi::LogField fields[] = {
+            field("reason", std::string_view("subnet")),
+            field("verdict", verdict),
+            field("exit_code", static_cast<std::uint64_t>(subnet.exit_code)),
+            field("overlaps", blocks.empty() ? std::string_view("-") : std::string_view(blocks)),
+            field("op", subnet.failure.op.empty() ? std::string_view("-") : subnet.failure.op),
+            field("code", static_cast<std::uint64_t>(subnet.failure.code)),
+        };
+        sangtachi::emit(LogLevel::Error, "adapter.error", fields);
+        return kStartupFailure;
+    }
+
+    auto opened = sangtachi::platform::TunDevice::open(sangtachi::protocol::kAdapterMtu);
+    if (!opened.device) {
+        const sangtachi::LogField fields[] = {
+            field("reason", std::string_view("open")),
+            field("op", opened.failure.op),
+            field("code", static_cast<std::uint64_t>(opened.failure.code)),
+        };
+        sangtachi::emit(LogLevel::Error, "adapter.error", fields);
+        return kStartupFailure;
+    }
+    tun = std::move(opened.device);
+    const sangtachi::LogField fields[] = {
+        field("name", sangtachi::adapter::kName),
+        field("guid", guid_text(tun->guid())),
+        field("luid", tun->luid()),
+        field("mtu", static_cast<std::uint64_t>(sangtachi::protocol::kAdapterMtu)),
+    };
+    sangtachi::emit(LogLevel::Info, "adapter.open", fields);
+    return 0;
+}
+
 // 이벤트 하나를 들고 스코프 끝에서 닫는다.
 class OwnedEvent {
 public:
@@ -105,7 +179,8 @@ private:
 int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
                sangtachi::platform::WaitHandle shutdown_event,
                sangtachi::control::ControlChannel& control,
-               sangtachi::record::RecordWriter& records) {
+               sangtachi::record::RecordWriter& records,
+               sangtachi::platform::TunDevice* tun) {
     // **이름 해석은 `[loop]` 시작 전에 목록 전체를 한 번 한다** (architecture.md 3.5
     // 기동 입력). getaddrinfo 는 동기 호출이라 `[loop]` 안에 두면 응답이 올 때까지 한
     // 바퀴가 멈춘다. 해석 실패와 중복 엔드포인트를 거르는 규칙은 그 절에 있고
@@ -168,6 +243,23 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     if (!loop.valid()) {
         emit_socket_error("CreateEvent", 0);
         return kStartupFailure;
+    }
+
+    // 어댑터의 읽기 이벤트가 순위 2 로 들어온다 (concurrency.md 2장 대기). `--no-adapter` 면 없다.
+    if (tun != nullptr) {
+        loop.attach_adapter(tun);
+        if (!loop.valid()) {
+            emit_op_error("WintunGetReadWaitEvent", 0);
+            return kStartupFailure;
+        }
+#ifdef SANGTACHI_TEST_BUILD
+        // roadmap.md Phase 6 검증의 ICMP 응답기. 읽은 에코 요청에 응답을 만들어 주입한다.
+        loop.set_adapter_handler([&loop](std::span<const std::byte> packet) {
+            if (auto reply = sangtachi::testbuild::make_icmp_echo_reply(packet)) {
+                (void)loop.inject_packet(*reply);
+            }
+        });
+#endif
     }
 
     const auto& server = *args.server;
@@ -245,6 +337,41 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
         loop.set_own_subnets(std::move(subnets));
     };
     deps.tunnel = &tunnel;
+    // 가상 어댑터의 주소 (architecture.md 7장 어댑터 수명). 붙이지 못하면 종료한다.
+    if (tun != nullptr) {
+        deps.own_wintun = tun->guid();
+        deps.assign_address = [tun, &loop](std::uint32_t virtual_ip) {
+            const auto assigned = tun->assign_address(virtual_ip);
+            if (!assigned.ok) {
+                const sangtachi::LogField fields[] = {
+                    sangtachi::field("reason", std::string_view("address")),
+                    sangtachi::field("stage", assigned.reason),
+                    sangtachi::field("op", assigned.failure.op.empty() ? std::string_view("-")
+                                                                      : assigned.failure.op),
+                    sangtachi::field("code", static_cast<std::uint64_t>(assigned.failure.code)),
+                };
+                sangtachi::emit(sangtachi::LogLevel::Error, "adapter.error", fields);
+                loop.request_shutdown();
+                return;
+            }
+            const sangtachi::LogField fields[] = {
+                sangtachi::field("virtual_ip", sangtachi::network::format_ipv4(virtual_ip)),
+                sangtachi::field("route", assigned.route_created ? std::string_view("created")
+                                                                 : std::string_view("on_link")),
+            };
+            sangtachi::emit(sangtachi::LogLevel::Info, "adapter.address", fields);
+        };
+        deps.clear_address = [tun] {
+            if (const auto failed = tun->clear_address(); !failed.op.empty()) {
+                const sangtachi::LogField fields[] = {
+                    sangtachi::field("reason", std::string_view("clear_address")),
+                    sangtachi::field("op", failed.op),
+                    sangtachi::field("code", static_cast<std::uint64_t>(failed.code)),
+                };
+                sangtachi::emit(sangtachi::LogLevel::Warn, "adapter.error", fields);
+            }
+        };
+    }
     // 로컬 기록 파일 (architecture.md 9장). 줄은 실행기가 정하고 이 파일이 쓴다.
     deps.records.establish = [&records](std::string_view role, std::optional<std::uint32_t> peer,
                                         std::string_view result, std::optional<std::uint64_t> rtt_us,
@@ -342,6 +469,7 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.set_counter_dump_handler(nullptr);
     loop.set_send_handler(nullptr);
     loop.set_work_source(nullptr);
+    loop.set_adapter_handler(nullptr);
     tunnel.set_transition_handler(nullptr);
     return 0;
 }
@@ -473,8 +601,17 @@ int main(int argc, char** argv) {
             sangtachi::platform::wait_any(
                 std::span<const sangtachi::platform::WaitHandle>(shutdown_handles, 1), 0)
                 .status != sangtachi::platform::WaitStatus::Timeout;
+        // 가상 어댑터 (architecture.md 7장 어댑터 수명의 기동 단계). **이 블록이 닫힐 때 닫힌다.**
+        // 그 자리가 concurrency.md 7장 종료의 (5)(6) 이다. 카운터 전량(4) 뒤, 정리 완료(7) 앞이다.
+        std::unique_ptr<sangtachi::platform::TunDevice> tun;
+        if (!stopped_during_startup && !parsed.args->no_adapter) {
+            if (const int code = open_adapter(tun); code != 0) {
+                return code;
+            }
+        }
         if (!stopped_during_startup) {
-            const int code = run_client(*parsed.args, counters, shutdown_event.get(), *control, records);
+            const int code =
+                run_client(*parsed.args, counters, shutdown_event.get(), *control, records, tun.get());
             if (code != 0) {
                 return code;
             }
@@ -482,6 +619,20 @@ int main(int argc, char** argv) {
 
         // concurrency.md 7장 종료의 (4). 카운터 전량을 낸다.
         sangtachi::emit_all(counters);
+
+        // 같은 장의 (5)(6). 세션을 닫고 주소와 경로를 지우고 어댑터를 닫는다.
+        if (tun) {
+            if (const auto failed = tun->close(); !failed.op.empty()) {
+                const sangtachi::LogField fields[] = {
+                    sangtachi::field("reason", std::string_view("clear_address")),
+                    sangtachi::field("op", failed.op),
+                    sangtachi::field("code", static_cast<std::uint64_t>(failed.code)),
+                };
+                sangtachi::emit(sangtachi::LogLevel::Warn, "adapter.error", fields);
+            }
+            const sangtachi::LogField fields[] = {sangtachi::field("name", sangtachi::adapter::kName)};
+            sangtachi::emit(sangtachi::LogLevel::Info, "adapter.close", fields);
+        }
 
     } catch (const sangtachi::network::WsaStartupError& e) {
         emit_socket_error("WSAStartup", e.code());

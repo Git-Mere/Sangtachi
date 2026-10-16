@@ -66,7 +66,7 @@ There are two reasons.
 - `[console]` exists only in the console build. `[loop]` cannot block on standard input, so a
   separate thread reads it and pushes to a queue. The table above is the console build's composition
   - It stays after Phase 6 because it has to accept the lobby commands ([`architecture.md`](architecture.md) 3.5 Startup Inputs).
-    Only the test-only `--peer` and `raw` go away
+    When to remove the test-only `--peer` and `raw` is not decided
   - The thread composition of the GUI build is not decided yet. It is an open item left by ADR 0007
 - `[telemetry]` comes late because the place to upload to appears then. The telemetry service
   and the upload thread are deliverables of the same phase ([`roadmap.md`](roadmap.md))
@@ -85,7 +85,7 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 |------|------|------|-----------|
 | 0 | Shutdown event | `CreateEvent` (manual reset) | Always |
 | 1 | UDP socket event | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | Always |
-| 2 | Wintun read event | `WintunGetReadWaitEvent(session)` | Phase 6 onward |
+| 2 | Wintun read event | `WintunGetReadWaitEvent(session)` | Phase 6 onward. Absent when started with `--no-adapter` |
 | 3 | Console command event | `CreateEvent` (auto reset). Signaled by `[console]` | Console build |
 | 4 | Control response event | `CreateEvent` (auto reset). Signaled by `[control]` after pushing to the response queue | Phase 3 onward |
 
@@ -98,7 +98,7 @@ array and keep a separate mapping from logical source to actual index.
 |------|:---:|-----|
 | Phase 1~2 | 3 | |
 | Phase 3~5 | 4 | the control response event joins |
-| Phase 6 onward | 5 | the Wintun event joins. This counts the console build. The GUI build is the open item in chapter 1, Threads |
+| Phase 6 onward | 5 | the Wintun event joins. 4 with `--no-adapter`. This counts the console build. The GUI build is the open item in chapter 1, Threads |
 
 `timeout_ms` is computed as below. **Do not subtract first.**
 
@@ -232,7 +232,7 @@ batching policy layered on top.
 
 ```text
 drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
-    if session == NULL:  return EMPTY                  # Phase 1~5. No adapter
+    if session == NULL:  return EMPTY                  # No adapter. Phase 1~5 and --no-adapter
     repeat budget times:
         p = WintunReceivePacket(session, &size)
         if p == NULL:
@@ -240,11 +240,18 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
             ERROR_NO_MORE_ITEMS -> return EMPTY         # ring is empty. Normal
             ERROR_HANDLE_EOF    -> signal shutdown event, then return EMPTY
             ERROR_INVALID_DATA  -> return RESTART       # ring corrupted. See below
-            otherwise           -> increment counter, then return EMPTY
+            otherwise           -> rx_err_adapter++; return EMPTY
         guard = WintunReleaseReceivePacket(session, p) on scope exit
         route_and_send(p, size)
     return BUDGET
 ```
+
+**Other receive errors are counted as `rx_err_adapter`.** It is the counterpart of `rx_err_recv` in
+`drain_udp`. The log carries the error code.
+
+**`route_and_send` is [`roadmap.md`](roadmap.md) Phase 7 work.** Until then a read packet is
+counted as `adapter_rx` and handed only to the test build's ICMP responder (`roadmap.md` Phase 6
+verification); the product build drops it.
 
 `WintunReleaseReceivePacket` is **attached as a scope guard.** If it is placed after
 `route_and_send` in call order, an early return or exception inside leaks the ring packet. Each
@@ -312,15 +319,16 @@ distinguish the inner protocol (NFR-2), so this is not written as "always just a
 the counter for its cause, do not retry, and do not stop the loop. All four are independent of the
 cause.
 
-**Where a `DATA` that passed 8.4 DATA Inner Validation goes in a build without the adapter
-(Phase 4~5) is also decided here.** In that range there is no adapter to inject into, so the
-next step that section points to with "just before Wintun injection" is empty.
+**Where a `DATA` that passed 8.4 DATA Inner Validation goes in a run that does not inject is
+also decided here.** Phase 4~6 and `--no-adapter` runs are such runs. The next step that section
+points to with "just before Wintun injection" is empty. Connecting `DATA` to the injection path
+is [`roadmap.md`](roadmap.md) Phase 7 work.
 
-| Build | `DATA` that passed 8.4 |
+| Run | `DATA` that passed 8.4 |
 |------|------------------|
-| Adapter present (Phase 6 onward) | the injection path above |
-| No adapter, test build | handed to the **payload hook**. The hook is a single function that takes the extracted payload bytes and length as they are, and the `data.rx` used by the M-5 comparison and the echo responder of [`roadmap.md`](roadmap.md) Phase 4 attach at that point |
-| No adapter, product build | dropped, and `drop_no_sink` is incremented |
+| Injects (Phase 7 onward, adapter present) | the injection path above |
+| Does not inject, test build | handed to the **payload hook**. The hook is a single function that takes the extracted payload bytes and length as they are, and the `data.rx` used by the M-5 comparison and the echo responder of [`roadmap.md`](roadmap.md) Phase 4 attach at that point |
+| Does not inject, product build | dropped, and `drop_no_sink` is incremented |
 
 **The hook is not written as a test-only path.** It has to hang at the same point after 8.1~8.4
 validation so that the test exercises the real receive path. This is the same reason
@@ -331,11 +339,11 @@ itself, because a non-zero value in a product build means the design has drifted
 **The hook slot lives in core and the product build leaves it empty.** The code that attaches to the slot,
 that is the `data.rx` line of the M-5 comparison and the echo responder, is compiled only under the
 test-build CMake option. The product binary has no code to attach to the slot. The slot itself is not
-split by test build because in Phase 6 the same place leads to the injection path above.
+split by test build because in Phase 7 the same place leads to the injection path above.
 
 `drain_console` drains the command lines that `[console]` pushed to the queue. The event is auto
-reset, so no separate reset call is needed. From Phase 6 onward both this handle and the thread
-go away.
+reset, so no separate reset call is needed. In the console build it stays after Phase 6 (chapter 1
+Threads).
 
 **The `quit` command signals the shutdown event.** It does not call `shutdown()` directly. That
 way `[telemetry]` and `[control]` wake on the same signal, and the next iteration's wait returns
@@ -366,8 +374,8 @@ counter" (`roadmap.md`). The injection side does not count successes. Only failu
 by `drop_inject_ring_full` and `drop_inject_error`.
 
 **The counters in this section are at a different layer from the counters in `protocol.md`.**
-`drop_oversize_datagram`, `drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, and
-`adapter_rx` count results
+`drop_oversize_datagram`, `drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`, and
+`rx_err_adapter` count results
 returned by the socket and adapter APIs, so this document defines them. The `drop_*` counters in
 `protocol.md` chapter 7 Receive Classification and chapter 8 Receive Validation Pipeline belong
 to wire classification and the validation pipeline. Do not mix the two sources when making a
@@ -419,6 +427,10 @@ All of the following is owned solely by `[loop]`. No mutex and no atomic variabl
   - Reading the interfaces is a synchronous OS call. On this development machine, 20 measurements gave a
     median of 2.1ms and a maximum of 4.8ms. It runs once per attempt, so it is not moved to `[control]`.
     It is two orders of magnitude smaller than the shortest timer (200ms)
+- **Setting up and tearing down the adapter session and the virtual IP address**
+  ([`architecture.md`](architecture.md) chapter 7 Adapter lifetime). Setting the address is a
+  synchronous IP Helper call made once per room. DAD is turned off, so waiting for `Preferred`
+  takes almost no time ([`windows-prereq.md`](windows-prereq.md) 9)
 - Values received from the control plane such as `room_id`, `peer_id`, `peer_token`, and the
   remote peer info. `[control]` only passes those values through the response queue; it does
   not hold them as its own state. The one exception is the resolved server address noted in

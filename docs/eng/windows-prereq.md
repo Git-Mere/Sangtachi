@@ -26,7 +26,7 @@ Each section header states its verification status.
 | **Partly measured** | The command was run, but **the pass condition is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
-Currently 5 sections are measured, 4 partly measured, 4 unverified.
+Currently 6 sections are measured, 4 partly measured, 3 unverified.
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
 `commit_history/` and `field-test/`. This document holds only the current spec and the
@@ -44,16 +44,17 @@ pass criteria.
 > **Why.** Reading a permission failure as "absent" walks past leftovers.
 
 **"Measured" means the command runs on this machine, not that it was confirmed with the demo
-artefact.** The client adapter does not exist yet, so pass conditions that target our own adapter
-are confirmed for real in Phase 6 or later.
+artefact.** Pass conditions that target our own adapter are checked by `scripts/adapter-check.ps1`
+with the adapter on this machine. Each section states what was seen on the real thing.
 
 **Output from one machine is a fact about that one machine.** Adapter names, metrics and ranges
 differ per machine. What to compare is not the value itself but the pass criterion. Each
 section states its criterion.
 
 End-to-end verification on a freshly reset PC belongs to Phase 8 demo preparation and is not the
-completion condition of this document. Phase 1 implementation has not started, so the automatic
-handling by the client is a **design split**, not confirmed behaviour.
+completion condition of this document. Among the automatic handling by the client, that
+of sections 1, 3, 4, 7, 8 and 9 is implemented. The firewall rules of section 2 are still a **design
+split**, not confirmed behaviour. The Qt bundling of section 4 is not done yet either.
 
 ## 1. Administrator rights
 
@@ -63,8 +64,9 @@ Creating the Wintun adapter, assigning the IP and adding the route all require a
 rights. **This is a Windows API premise, not something confirmed on this machine.** What was
 measured here is only whether the shell is elevated.
 
-Which of the three operations fails, and with which error, is confirmed in Phase 6 when the adapter
-is first created.
+Which of the three operations fails, and with which error, was not checked. The client does not rely
+on that error shape; it checks the rights before creating the adapter and blocks there
+([`architecture.md`](architecture.md) chapter 7 Adapter lifetime).
 
 **Owner: person.** The client can elevate itself (UAC relaunch), but the user has to consent.
 
@@ -87,8 +89,9 @@ needs them. The marginal cost is "one more rule with rights we already have".
 ## 2. Firewall and network profile
 
 **Status: partly measured.** The default inbound policy and the profile classification of existing
-adapters were actually observed. **A newly created virtual adapter being classified as Public was
-not observed.** The adapter does not exist yet. Confirmed in Phase 6.
+adapters were actually observed. Our newly created adapter being classified as `Public` was seen in
+`scripts/adapter-check.ps1`. **No inbound rule for that adapter has been created yet.** That is
+[`roadmap.md`](roadmap.md) Phase 7 work.
 
 Windows Firewall is **inbound-block by default.** A newly created virtual adapter has no gateway,
 so it is classified as an "unidentified network", and that gets the Public profile. Under Public,
@@ -240,13 +243,16 @@ Get-NetConnectionProfile -InterfaceAlias '<adapter name>' | Select-Object Networ
 ## 3. Cleaning up leftover adapters, addresses and routes
 
 **Status: partly measured.** The query commands were run and a leftover adapter belonging to
-someone else (OpenVPN TAP) was actually visible. **Leftovers from an abnormal exit of our own
-client were not observed.** The adapter does not exist yet. Confirmed in Phase 6.
+someone else (OpenVPN TAP) was actually visible. `scripts/adapter-check.ps1` showed that after our
+client is killed no adapter with its GUID remains, and that starting it again creates the adapter
+again. **The path where an address stored against the same GUID remains was not observed.** Its
+cleanup follows the paragraph after the table below and has not been seen on the real thing.
 
-An abnormal exit leaves the adapter, address and route behind. Creating the same name again on the
-next run gives a duplicate-creation error.
+Some drivers end without deleting the adapter. The OpenVPN TAP adapter above was left that way.
+Creating the same name again over such a leftover gives a duplicate-creation error.
 
-**Owner: client.** At start it looks for leftovers under its own name and reuses or deletes them.
+**Owner: client.** At start it deletes leftovers under its own GUID. The order belongs to
+[`architecture.md`](architecture.md) chapter 7 Adapter lifetime.
 
 ```powershell
 Get-NetAdapter -IncludeHidden | Select-Object Name, InterfaceDescription, Status
@@ -264,9 +270,8 @@ Tailscale                Tailscale Tunnel                           Up
 vEthernet (FSE HostVnic) Hyper-V Virtual Ethernet Container Adapter Up
 ```
 
-**Pass criterion.** If our adapter name already exists, do not create a new one. Reuse it, or
-delete it and then create. **Do not delete unconditionally.** You could delete someone else's
-adapter with a matching name.
+**Pass criterion.** Do not delete by name. You could delete someone else's adapter with a
+matching name.
 
 **Ownership is decided by the recorded `InterfaceGuid` alone.** It is the same criterion as
 section 7 Subnet overlap. Neither the name nor `InterfaceDescription` is evidence of ownership.
@@ -276,11 +281,23 @@ Someone else can use both of them identically.
 > excluding an adapter from its computation on the same criterion, so there is no reason to lower
 > the bar here.
 
+**The record is a constant in the client code.** The adapter name, the Wintun tunnel type and the
+GUID live in `client/include/sangtachi/adapter.hpp`. Wintun takes the GUID at creation, so the client
+is the side that knows the value. Being a constant, the record cannot be lost, and there is no
+state file. The tunnel type is `Wintun`, so the adapter description becomes `Wintun Tunnel`. That is
+because the own-adapter exclusion of section 7 only excludes an adapter whose description is Wintun.
+
 | State | Action |
 |-------|--------|
-| An adapter with the recorded GUID exists | It is ours. Reuse it, or delete it and create |
-| There is no record (first run, state file lost) | **Do not delete.** If the name is free, create with that name; if it is already in use, create with a different name |
-| A record exists but no adapter carries that GUID | It is already gone. Delete the record and create anew. Do not touch someone else's adapter with the same name even if one is visible |
+| No adapter has that GUID | Create it |
+| An adapter has that GUID | Another process is using it. Wintun's creation fails and it is a startup failure. Do not delete it |
+| An adapter has the same name but a different GUID | It is someone else's. Do not delete it |
+
+**Even after a forced kill our adapter did not remain.** After killing the process, no adapter
+with that GUID was in `Get-NetAdapter -IncludeHidden` (Wintun 0.14.1, this machine). What `wintun.h`
+documents is only the deletion on `WintunCloseAdapter`, so this is an observation. What can remain is
+an address stored against the same GUID, and the client deletes every IPv4 address of the adapter
+right after creating it.
 
 **Leftover addresses and routes are deleted on the same criterion.** Only what is attached to the
 interface with that GUID is in scope. Deleting by range (`10.100.0.0/24`) alone touches someone
@@ -321,8 +338,9 @@ adapter gave `1`. The original errors were all `Category=ObjectNotFound`, and th
 
 ## 4. Distribution packaging
 
-**Status: unverified.** The runtimes the two subsections cover have not been brought in yet. Each
-subsection states its reason and when it gets verified.
+**Status: partly measured.** The Wintun subsection was run in the build and in
+`scripts/adapter-check.ps1`. Qt has not been brought in yet. That subsection states its reason and
+when it gets verified.
 
 Two runtimes ship with the distribution: Wintun, which opens the virtual adapter, and Qt, which
 draws the GUI.
@@ -336,17 +354,24 @@ no write permission.
 
 ### Wintun DLL and signature
 
-**Reason it is unverified.** Wintun has not been placed in the distribution yet. That is Phase 6
-work. The commands below can be run after `wintun.dll` is placed in the distribution.
+**Status: measured.** The build runs the three criteria below on every configure
+(`sangtachi_fetch_wintun` in `cmake/Wintun.cmake`). Changing the expected values one at a time was
+seen to stop the configure. The run-time check ran at startup in `scripts/adapter-check.ps1`.
 
 **The expected values live in [`cmake/Wintun.cmake`](../../cmake/Wintun.cmake).** They are the
 version, the download URL, the zip hash, the DLL hash, and the `Subject`. This document does not copy
 the values.
 
 Wintun ships as a single DLL with the driver embedded in it. **The architecture must match**
-(`bin/amd64/wintun.dll` for the x64 client).
+(`bin/amd64/wintun.dll` for the x64 client). The build and the client do not run the PE header
+procedure below separately. The DLL hash is bound to that very `bin/amd64/wintun.dll`, so a file of
+another architecture is caught by criterion 3.
 
-**Owner: person (at build time) + client (check at run time).**
+**Owner: build + client (check at run time).** The build runs the three criteria below on the
+distribution it downloaded. At startup the client loads only the `wintun.dll` next to the
+executable, and before loading it compares its SHA-256 with the expected value. A mismatch is a
+startup failure. The signature is not checked again at run time. If the hash matches, it is the very
+file the build judged.
 
 ```powershell
 $sig = Get-AuthenticodeSignature .\wintun.dll
@@ -540,10 +565,11 @@ Test-NetConnection -ComputerName <EC2 public address> -Port 8000
 
 ## 7. Subnet overlap
 
-**Status: partly measured.** The decision lives in [`tools/winprereq/Test-SubnetOverlap.ps1`](../../tools/winprereq/Test-SubnetOverlap.ps1)
-and it was run on this machine. The 85 cases are inside the script and run with `-SelfTest`.
-**The path that actually excludes a live Wintun adapter was not observed.** The adapter does not
-exist yet. That path was confirmed with 2 cases only; confirmation with the real thing is Phase 6.
+**Status: measured.** The decision lives in [`tools/winprereq/Test-SubnetOverlap.ps1`](../../tools/winprereq/Test-SubnetOverlap.ps1)
+and it was run on this machine. The 85 cases are inside the script and run with `-SelfTest`. With an
+address and route up on our live adapter, `scripts/adapter-check.ps1` ran this script twice. Given
+the GUID it excluded our adapter and gave `proceed`; without it, our own `/24` route gave `pick
+another range`.
 
 If `10.100.0.0/24` overlaps the real LAN, a Hyper-V virtual switch or another VPN, traffic goes to
 the wrong interface, or conversely **we shadow someone else's range.** Check before creating the
@@ -612,12 +638,9 @@ quietly. The only ownership mark is `InterfaceGuid`.
 
 **Contract the client must keep.**
 
-- Record the `InterfaceGuid` used when creating the adapter in its own state. Wintun lets you
-  specify the GUID at creation, so the client is the side that knows the value
+- The GUID of our adapter is the constant of section 3
 - Pass that value as `-OwnInterfaceGuid` when calling this check. `-OwnAlias` is not grounds for
   exclusion; it is only for checking once more that the name matches
-- Delete the record when deleting the adapter. A stale GUID excludes nothing, so the decision can
-  only err toward the strict side
 
 Exclude only when exactly one adapter matches by GUID, its description is Wintun, and the name
 matches too. If any one of those is off, **exclude nothing and write the reason in the output.** A
@@ -966,7 +989,7 @@ If the binary was changed right before the demo, run it once more with that file
 | 1 | Administrator rights | person | every run |
 | 2 | Firewall profile and rules | client + person | right after adapter creation |
 | 3 | Leftover cleanup | client | at start |
-| 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | person (at build time) + client (check at run time) | when making the distribution and at run time |
+| 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | build + client (check at run time) | when making the distribution and at run time |
 | 5 | `server.properties` | person | when first setting up the server |
 | 6 | EC2 security group and bind address | person | when setting up the instance |
 | 7 | Subnet overlap check | client | before creating the adapter |
@@ -977,8 +1000,8 @@ If the binary was changed right before the demo, run it once more with that file
 | 12 | Java path exception | person | after updating Java |
 | 13 | SmartScreen bypass | person | first run on the demo PC |
 
-**Every item the client owns, including those it owns only in part, is implemented in Phase 6 or
-later.** For now this is a design split. The "Who" of each row copies the `Owner:` line of that
+**Of the items the client owns, item 2 and the Qt bundling of item 4 are not implemented yet.** Qt
+comes in at the time section 4 states. The row of item 2 is a design split. The "Who" of each row copies the `Owner:` line of that
 section.
 
 ## 15. Usability limits

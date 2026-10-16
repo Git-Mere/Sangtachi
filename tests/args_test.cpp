@@ -353,3 +353,24 @@ TEST_CASE("args: name is last wins", "[args]") {
     REQUIRE(r.ok());
     REQUIRE(*r.args->name == "Bob");
 }
+
+TEST_CASE("args: --no-adapter is a switch without a value", "[args]") {
+    // architecture.md 3.5 의 "어댑터 없이". 기본은 어댑터를 만든다.
+    REQUIRE_FALSE(run({"--server", "a.example", "--name", "Alice"}).args->no_adapter);
+
+    const auto first = run({"--no-adapter", "--server", "a.example", "--name", "Alice"});
+    REQUIRE(first.ok());
+    REQUIRE(first.args->no_adapter);
+
+    const auto last = run({"host", "--server", "a.example", "--name", "Alice", "--no-adapter"});
+    REQUIRE(last.ok());
+    REQUIRE(last.args->no_adapter);
+    REQUIRE(last.args->role == Role::Host);
+
+    // 값을 붙인 꼴은 받지 않는다
+    const auto glued = run({"--no-adapter=1", "--server", "a.example", "--name", "Alice"});
+    REQUIRE(glued.error == ArgError::UnknownOption);
+    // 뒤의 낱말은 값이 아니라 위치 인자다
+    const auto valued = run({"--no-adapter", "yes", "--server", "a.example", "--name", "Alice"});
+    REQUIRE(valued.error == ArgError::BadRole);
+}

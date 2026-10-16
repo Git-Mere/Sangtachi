@@ -655,6 +655,7 @@ void Lobby::on_issued(Batch& out, const Reply<Issued>& reply) {
     tries_ = 0;
 
     out.push(PrintLine{room_line(room_id_)});
+    out.push(AssignAddress{local_vip_});
     if (role_ == LobbyRole::kHost) {
         // host_report 는 create_room 성공 응답에서 시작한다 (protocol.md 11장, 8.4).
         reporting_ = true;

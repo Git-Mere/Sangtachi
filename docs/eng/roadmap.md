@@ -1164,6 +1164,9 @@ On a single host, packets can be read from the virtual adapter and injected back
 - A real virtual IP round trip between two peers comes after tunnel integration and is verified in Phase 7
 - No adapter or route remains after the client exits
 - After an abnormal exit, rerunning recreates the adapter normally
+- The first item is checked by changing the values in `cmake/Wintun.cmake` and configuring again. The
+  remaining adapter items are run in one go by `scripts/adapter-check.ps1`. It needs administrator
+  rights, so it is not in `scripts/test.ps1`. Without administrator rights it ends without a verdict
 
 ### Risk
 
@@ -1187,6 +1190,7 @@ logic is owned by the project.
 - Transmit over the direct UDP connection
 - Decapsulate received packets
 - Inject the original IP packet into Wintun
+- Inbound firewall rule for the virtual adapter ([`windows-prereq.md`](windows-prereq.md) 2). ICMP echo and TCP from the peer must come in through the adapter
 - Handle packet size limits and fix the MTU
 - Add counters and diagnostics
 

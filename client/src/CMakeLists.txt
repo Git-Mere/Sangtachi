@@ -44,6 +44,7 @@ if(WIN32)
         platform/win32/resolve.cpp
         platform/win32/stdout.cpp
         platform/win32/tcp.cpp
+        platform/win32/tun.cpp
         platform/win32/udp_socket.cpp
         platform/win32/wait.cpp
         platform/win32/wsa.cpp

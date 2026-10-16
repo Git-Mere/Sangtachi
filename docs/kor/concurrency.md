@@ -63,7 +63,7 @@
 - `[console]`은 콘솔 빌드에만 있다. `[loop]`가 표준 입력에서 블록할 수 없으므로 별도
   스레드가 읽어 큐에 넣는다. 위 표는 콘솔 빌드의 구성이다
   - Phase 6 이후에도 남는 것은 로비 명령([`architecture.md`](architecture.md) 3.5 기동 입력)을
-    받아야 하기 때문이다. 사라지는 것은 시험용 `--peer` 와 `raw` 뿐이다
+    받아야 하기 때문이다. 시험용 `--peer` 와 `raw` 를 언제 지울지는 정하지 않았다
   - GUI 빌드의 스레드 구성은 아직 정하지 않았다. ADR 0007 이 남긴 미결이다
 - `[telemetry]`가 늦게 오는 이유는 올릴 곳이 그때 생기기 때문이다. 텔레메트리 서비스와
   업로드 스레드가 같은 Phase 의 산출물이다 ([`roadmap.md`](roadmap.md))
@@ -82,7 +82,7 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 |------|------|------|-----------|
 | 0 | 종료 이벤트 | `CreateEvent` (수동 리셋) | 항상 |
 | 1 | UDP 소켓 이벤트 | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | 항상 |
-| 2 | Wintun 읽기 이벤트 | `WintunGetReadWaitEvent(session)` | Phase 6 이후 |
+| 2 | Wintun 읽기 이벤트 | `WintunGetReadWaitEvent(session)` | Phase 6 이후. `--no-adapter` 로 기동하면 없다 |
 | 3 | 콘솔 명령 이벤트 | `CreateEvent` (자동 리셋). `[console]`이 신호 | 콘솔 빌드 |
 | 4 | 제어 응답 이벤트 | `CreateEvent` (자동 리셋). `[control]`이 응답 큐에 넣은 뒤 신호 | Phase 3 이후 |
 
@@ -95,7 +95,7 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 |------|:---:|-----|
 | Phase 1~2 | 3 | |
 | Phase 3~5 | 4 | 제어 응답 이벤트가 들어온다 |
-| Phase 6 이후 | 5 | Wintun 이벤트가 들어온다. 콘솔 빌드 기준이다. GUI 빌드는 1장 스레드의 미결이다 |
+| Phase 6 이후 | 5 | Wintun 이벤트가 들어온다. `--no-adapter` 면 4 다. 콘솔 빌드 기준이다. GUI 빌드는 1장 스레드의 미결이다 |
 
 `timeout_ms`는 아래처럼 계산한다. **뺄셈을 먼저 하면 안 된다.**
 
@@ -220,7 +220,7 @@ drain_udp(budget) -> {EMPTY, BUDGET}:
 
 ```text
 drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
-    if session == NULL:  return EMPTY                  # Phase 1~5. 어댑터가 없다
+    if session == NULL:  return EMPTY                  # 어댑터가 없다. Phase 1~5 와 --no-adapter
     budget회 반복:
         p = WintunReceivePacket(session, &size)
         if p == NULL:
@@ -228,11 +228,18 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
             ERROR_NO_MORE_ITEMS -> return EMPTY         # 링이 비었다. 정상
             ERROR_HANDLE_EOF    -> 종료 이벤트 신호 후 return EMPTY
             ERROR_INVALID_DATA  -> return RESTART       # 링 손상. 아래 참조
-            그 외                -> 카운터 증가 후 return EMPTY
+            그 외                -> rx_err_adapter++; return EMPTY
         guard = 스코프 이탈 시 WintunReleaseReceivePacket(session, p)
         route_and_send(p, size)
     return BUDGET
 ```
+
+**그 밖의 수신 오류는 `rx_err_adapter` 로 센다.** `drain_udp` 의 `rx_err_recv` 와 같은 자리다.
+오류 코드는 로그가 싣는다.
+
+**`route_and_send` 는 [`roadmap.md`](roadmap.md) Phase 7 작업이다.** 그 전에는 읽은 패킷을
+`adapter_rx` 로 센 뒤 시험 빌드의 ICMP 응답기(`roadmap.md` Phase 6 검증)에만 넘기고, 제품 빌드는
+버린다.
 
 `WintunReleaseReceivePacket`은 **스코프 가드로 건다.** 호출 순서상 `route_and_send` 뒤에
 두면 그 안에서 조기 반환하거나 예외가 나갈 때 링 패킷이 샌다. 한 번 빠뜨릴 때마다 링 버퍼가
@@ -294,15 +301,15 @@ Minecraft 경로가 그렇다), UDP 같은 비신뢰 프로토콜이면 그 패�
 **주입 실패의 동작 계약은 넷이다.** 주입이 실패하면 그 패킷을 버리고, 원인에 맞는 카운터를
 올리고, 재시도하지 않고, 루프를 멈추지 않는다. 넷 다 실패 원인과 무관하다.
 
-**어댑터가 없는 빌드(Phase 4~5)에서 8.4 `DATA` 내부 검증을 통과한 `DATA`가 갈 곳도 여기서
-정한다.** 그 구간에는 주입할 어댑터가 없으므로 그 절이 가리키는 "Wintun 주입 직전" 이
-가리키는 다음 단계가 비어 있다.
+**주입하지 않는 실행에서 8.4 `DATA` 내부 검증을 통과한 `DATA`가 갈 곳도 여기서 정한다.**
+Phase 4~6 과 `--no-adapter` 실행이 그렇다. 그 절이 가리키는 "Wintun 주입 직전" 의 다음 단계가
+비어 있다. `DATA` 를 주입 경로에 잇는 것은 [`roadmap.md`](roadmap.md) Phase 7 작업이다.
 
-| 빌드 | 8.4 통과 `DATA` |
+| 실행 | 8.4 통과 `DATA` |
 |------|------------------|
-| 어댑터 있음 (Phase 6 이후) | 위의 주입 경로 |
-| 어댑터 없음, 시험 빌드 | **페이로드 훅**에 넘긴다. 훅은 꺼낸 페이로드 바이트열과 길이를 그대로 받는 함수 하나이고, [`roadmap.md`](roadmap.md) Phase 4 의 M-5 비교가 쓰는 `data.rx` 와 에코 응답기가 그 자리에서 붙는다 |
-| 어댑터 없음, 제품 빌드 | 버리고 `drop_no_sink`를 올린다 |
+| 주입함 (Phase 7 이후, 어댑터 있음) | 위의 주입 경로 |
+| 주입하지 않음, 시험 빌드 | **페이로드 훅**에 넘긴다. 훅은 꺼낸 페이로드 바이트열과 길이를 그대로 받는 함수 하나이고, [`roadmap.md`](roadmap.md) Phase 4 의 M-5 비교가 쓰는 `data.rx` 와 에코 응답기가 그 자리에서 붙는다 |
+| 주입하지 않음, 제품 빌드 | 버리고 `drop_no_sink`를 올린다 |
 
 **훅을 시험 전용 경로로 따로 짜지 않는다.** 8.1~8.4 검증을 통과한 뒤의 같은 지점에 걸어야 그
 시험이 실제 수신 경로를 검증한다. `protocol.md` 7장 수신 분류의 출발지 위생 시험이 수신
@@ -311,10 +318,10 @@ Minecraft 경로가 그렇다), UDP 같은 비신뢰 프로토콜이면 그 패�
 
 **훅 칸은 core 에 있고 제품 빌드는 그 칸을 비워 둔다.** 칸에 붙는 코드, 즉 M-5 비교의 `data.rx` 줄과 에코
 응답기는 시험 빌드 CMake 옵션 안에만 컴파일한다. 제품 바이너리에는 칸에 걸 코드가 없다. 칸 자체를 시험
-빌드로 가르지 않는 이유는 Phase 6 에서 같은 자리가 위의 주입 경로로 이어지기 때문이다.
+빌드로 가르지 않는 이유는 Phase 7 에서 같은 자리가 위의 주입 경로로 이어지기 때문이다.
 
 `drain_console`은 `[console]`이 큐에 넣은 명령 줄을 비운다. 이벤트가 자동 리셋이라 별도 리셋
-호출이 필요 없다. Phase 6 이후에는 이 핸들도 스레드도 사라진다.
+호출이 필요 없다. 콘솔 빌드에서는 Phase 6 이후에도 남는다(1장 스레드).
 
 **`quit` 명령은 종료 이벤트를 신호한다.** `shutdown()`을 직접 부르지 않는다. 그러면
 `[telemetry]`와 `[control]`이 같은 신호로 함께 깨어나고, 다음 바퀴의 대기가 종료 핸들에서
@@ -341,7 +348,7 @@ Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀�
 성공을 세지 않는다. 실패만 `drop_inject_ring_full`과 `drop_inject_error`로 센다.
 
 **이 절의 카운터는 `protocol.md`의 카운터와 계층이 다르다.** `drop_oversize_datagram`,
-`drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`는 소켓과 어댑터 API가 낸 결과를 세는 것이라
+`drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`, `rx_err_adapter`는 소켓과 어댑터 API가 낸 결과를 세는 것이라
 이 문서가 정의한다. `protocol.md` 7장 수신 분류와 8장 수신 검증 파이프라인의 `drop_*`는 와이어
 분류와 검증 파이프라인의 카운터다. 목록을 만들 때 두 출처를 섞지 않는다.
 
@@ -379,6 +386,9 @@ Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀�
   위생과 받은 후보의 위생)도 `[loop]` 다. 그래서 넘길 것이 없다
   - 인터페이스 읽기는 동기 OS 호출이다. 이 개발 기기에서 20번 재 중앙값 2.1ms, 최대 4.8ms 였다.
     시도마다 한 번이라 `[control]` 로 옮기지 않는다. 가장 짧은 타이머(200ms)보다 두 자릿수 작다
+- **어댑터 세션과 가상 IP 주소의 설정과 해제** ([`architecture.md`](architecture.md) 7장 어댑터
+  수명). 주소 설정은 동기 IP Helper 호출이고 방마다 한 번이다. DAD 를 꺼 두므로 `Preferred` 를
+  기다리는 시간이 거의 없다([`windows-prereq.md`](windows-prereq.md) 9절)
 - `room_id`·`peer_id`·`peer_token`·상대 피어 정보 같은 제어 평면에서 받은 값. `[control]`은
   그 값을 응답 큐로 넘길 뿐 자기 상태로 들고 있지 않다. 예외는 8장 `[control]` 스레드가
   적은 해석된 서버 주소 하나다

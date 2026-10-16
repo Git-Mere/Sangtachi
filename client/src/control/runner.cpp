@@ -90,9 +90,9 @@ std::vector<Candidate> ControlRunner::collect(std::span<const network::Endpoint>
     }
     static const peer::OwnSubnets kNoSubnets;
     const peer::OwnSubnets& previous = deps_.own_subnets ? deps_.own_subnets() : kNoSubnets;
-    // 자기 Wintun 식별자는 Phase 6 까지 없다 (protocol.md 10.1 제외 단계).
+    // 자기 Wintun 식별자 (protocol.md 10.1 제외 단계). `--no-adapter` 면 없다.
     peer::Collection collection =
-        peer::collect(sources, reflexive, deps_.local_port, std::nullopt, previous);
+        peer::collect(sources, reflexive, deps_.local_port, deps_.own_wintun, previous);
     peer::emit_collection_warnings(collection);
     if (deps_.set_own_subnets) {
         deps_.set_own_subnets(std::move(collection.own_subnets));
@@ -262,6 +262,13 @@ void ControlRunner::execute(LobbyAction& action) {
             } else if constexpr (std::is_same_v<T, LeaveRoom>) {
                 if (deps_.tunnel != nullptr) {
                     deps_.tunnel->leave_room(deps_.clock());
+                }
+                if (deps_.clear_address) {
+                    deps_.clear_address();
+                }
+            } else if constexpr (std::is_same_v<T, AssignAddress>) {
+                if (deps_.assign_address) {
+                    deps_.assign_address(a.virtual_ip);
                 }
             } else if constexpr (std::is_same_v<T, StartRoster>) {
                 if (deps_.tunnel != nullptr) {

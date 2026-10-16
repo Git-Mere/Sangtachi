@@ -174,7 +174,9 @@ function New-MissingRoom {
 # control_plane.md 2.7). 장면 이름에는 2.7 밖의 글자(붙임표)가 있어 그대로 쓰지 않는다.
 $script:nameSeq = 0
 
-function Start-Client([string]$name, [string[]]$clientArgs = @(), [string]$exePath = $script:exe) {
+# -Adapter 면 가상 어댑터를 만든다. 관리자 권한이 있어야 하고 어댑터 기동 단계(서브넷 검사 포함)가 몇 초 걸린다
+# (architecture.md 7장 어댑터 수명). 아니면 --no-adapter 를 붙인다.
+function Start-Client([string]$name, [string[]]$clientArgs = @(), [string]$exePath = $script:exe, [switch]$Adapter) {
     if ($clientArgs -notcontains '--server') { $clientArgs = @('--server', "127.0.0.1:$script:cpPort") + $clientArgs }
     if ($clientArgs -notcontains '--name') {
         $script:nameSeq++
@@ -183,9 +185,11 @@ function Start-Client([string]$name, [string[]]$clientArgs = @(), [string]$exePa
     if ($clientArgs -notcontains '--stun') {
         $clientArgs = $clientArgs + @('--stun', "127.0.0.1:$($script:stunPorts[0])", '--stun', "127.0.0.1:$($script:stunPorts[1])")
     }
+    # 한 기기의 여러 프로세스다. 가상 어댑터를 만들지 않는다 (architecture.md 3.5 의 --no-adapter).
+    if (-not $Adapter -and $clientArgs -notcontains '--no-adapter') { $clientArgs = @('--no-adapter') + $clientArgs }
     $c = Start-Logged $name $exePath (($clientArgs | ForEach-Object { Quote-Arg $_ }) -join ' ') $script:repoRoot
     $script:clients += $c
-    $m = Wait-Match $c.err 0 'socket\.bind local=0\.0\.0\.0:(\d+)' 10000
+    $m = Wait-Match $c.err 0 'socket\.bind local=0\.0\.0\.0:(\d+)' $(if ($Adapter) { 60000 } else { 10000 })
     if ($null -eq $m) { throw "$($name): no socket.bind line. stderr: $(Read-Log $c.err)" }
     $c.port = [int]$m.Groups[1].Value
     return $c

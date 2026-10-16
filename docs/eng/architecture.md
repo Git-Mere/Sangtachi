@@ -86,8 +86,9 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `tunnel/router` | Virtual IP -> peer session mapping, destination decision | None |
 | `tunnel/roster_publisher` | The host's `ROSTER` roster, `generation`, and the three send times ([`protocol.md`](protocol.md) 5.7, Chapter 11) | None |
 | `tunnel/data_sender` | The console `send`, synthetic inner packets, sending split across rounds ([`roadmap.md`](roadmap.md) Phase 4 console commands) | None |
-| `testbuild/instrument` | Test-build instrumentation. `data.tx`, `data.rx`, echo responder. The executable compiles it only in the test build ([ADR 0023](decisions/0023-decisions-before-round-3-h-and-i.md)) | None |
-| `adapter/wintun_adapter` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper) | **Wintun (approved)**, IP Helper |
+| `testbuild/instrument` | Test-build instrumentation. `data.tx`, `data.rx`, echo responder, the adapter ICMP responder (`roadmap.md` Phase 6 verification). The executable compiles it only in the test build ([ADR 0023](decisions/0023-decisions-before-round-3-h-and-i.md)) | None |
+| `adapter` | The adapter's name, GUID and subnet constants and the face the loop sees (read event, read, inject, session restart). A single header | None |
+| `platform/tun` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper), administrator check, running the subnet conflict script. Chapter 7 Adapter lifetime | **Wintun (approved)**, IP Helper |
 | `telemetry/telemetry` | Metric collection, local buffering, transmission to the telemetry service | None |
 | `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
 | `loop` | One loop iteration, the wait set, the per-source drain budget, console command handling. `concurrency.md` chapters 2 and 3 own the structure | None |
@@ -217,6 +218,7 @@ becomes necessary is decided by [`roadmap.md`](roadmap.md).
 | Room code | `--room <6 chars>` | `player` always. Phase 3 onward. **Giving it to `host` is a startup failure.** Giving it without a role is also a startup failure from Phase 3 | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
 | Display name | `--name <name>` | Yes from Phase 4. Before that it only accepts and stores it, and starts without it | Format from [`control_plane.md`](control_plane.md) 2.7 `name`. Every room creation and join of this process uses this name. It is changed in the lobby with the `name` command below |
 | STUN servers | `--stun <name or IPv4>:<port>`, repeatable | No | If given, it **replaces the default list below entirely**. The behavior when the list has one entry is below the table |
+| Without adapter | `--no-adapter` | No | A switch without a value. Does not create the virtual adapter and skips every startup step of chapter 7 Adapter lifetime. Starts without administrator rights. Used by tests that run several processes on one machine |
 
 **A `--stun` list with one entry leaves one `WARN` line at startup.** That list cannot produce
 responses from two different servers, so it ends as `STUN_DISCOVERY_FAILED` per "Server
@@ -409,7 +411,7 @@ The decision reads `len` and `sha256`; `from` is what lets a person tell the two
 > **Why.** A procedure that compares bytes by eye is not used, because it becomes a decision
 > that differs per person.
 
-**Both go away in Phase 6.** The `[console]` thread stays in the console build, because it has to accept the lobby commands above (`concurrency.md` chapter 1 Threads).
+**Both are test-only, and when to remove them is not decided.** The `[console]` thread stays in the console build, because it has to accept the lobby commands above (`concurrency.md` chapter 1 Threads).
 
 **What is not a startup input.** The local record file path is set by "Path" under chapter 9
 Local Record File. The telemetry service address is Phase 9. Neither is in the table above.
@@ -458,7 +460,7 @@ Minecraft (TCP, 10.100.0.2 -> 10.100.0.1:25565)
    v  Windows routing table sends 10.100.0.0/24 to the virtual adapter
 Wintun Adapter (sending side)
    |
-   v  wintun_adapter reads the original IP packet
+   v  platform/tun reads the original IP packet
 Router: destination virtual IP -> peer session decision
    |
    v  tunnel attaches the DATA header
@@ -470,7 +472,7 @@ Internet (UDP, public endpoint -> public endpoint)
    v  remote udp_socket receives
 tunnel: header validation and removal
    |
-   v  wintun_adapter injects the original IP packet
+   v  platform/tun injects the original IP packet
 Wintun Adapter (receiving side)
    |
    v
@@ -702,8 +704,24 @@ Players enter `10.100.0.1:25565` in the Minecraft server address field. They nee
 public IP or port.
 
 Windows routing is handled by attaching a `10.100.0.0/24` route to the virtual adapter. The
-client sets this route directly through the Windows IP Helper API when creating the adapter and
-removes it on exit. Wintun does not configure addresses or routes.
+client sets and removes the address and route directly through the Windows IP Helper API. Wintun
+does not configure addresses or routes.
+
+**Adapter lifetime.** There is one adapter per process and it lives as long as the process. The address is attached and removed per room. Starting with `--no-adapter` (3.5 Startup Inputs) skips all of the below.
+
+| When | What | On failure |
+|----|---------|----------|
+| Startup. After argument checks, before `[loop]` starts | Check administrator rights ([`windows-prereq.md`](windows-prereq.md) 1) | Startup failure |
+| Same | Check for subnet conflicts (same document, 7). Call `Test-SubnetOverlap.ps1` next to the executable with our adapter's GUID and name and judge by its exit code | Startup failure if not 0 |
+| Same | Compare the SHA-256 of `wintun.dll` with the expected value and load it (same document, 4) | Startup failure |
+| Same | Create the adapter. Its name and GUID are client constants (same document, 3). Set the interface MTU to the default of [`protocol.md`](protocol.md) chapter 12 and the IPv4 DAD transmit count to 0 (same document, 9), delete any remaining IPv4 addresses, then open the session | Startup failure |
+| `create_room`, `join_room` success response | Attach the received virtual IP as `/24`. Create the on-link route for that range only if this adapter does not have it (same document, 8). Wait until the address is `Preferred` (same document, 9) | One `ERROR` line, then signal the shutdown event |
+| Leaving the room ([`concurrency.md`](concurrency.md) chapter 7 Lobby) | Delete the attached address and any route created | One `WARN` line. The next room's address setup first deletes the same adapter's address |
+| Shutdown (steps 5 and 6 of `concurrency.md` chapter 7 Shutdown) | Close the session, delete the address and route, close the adapter. Wintun deletes the adapter on close | One `WARN` line if the address or route cannot be deleted. The adapter is closed anyway |
+
+The exit code and `ERROR` line of a startup failure are the same as "Argument error behavior" in 3.5 Startup Inputs. The steps run in the order of the table above.
+
+`windows-prereq.md` 7 says to run the section 3 cleanup before the subnet check. What that cleanup targets is an address and route left on our live adapter. Our adapter was seen not to remain after the process ends (same document, 3), so our adapter does not exist at the subnet check. An address stored against the same GUID may remain, but without the adapter there is no route for it either. That is why that address is deleted right after the adapter is created.
 
 **Players do not talk to each other over the virtual IP either** ([`spec.md`](spec.md) FR-4).
 The route setup above sends all of `10.100.0.0/24` to the virtual adapter, so a packet a player
@@ -1166,7 +1184,7 @@ file does not exist yet in those Phases, which is why the keys and field names a
 ```text
 Sangtachi/
 +-- client/
-|   +-- include/
+|   +-- include/         adapter.hpp holds the adapter constants and the face the loop sees (chapter 7 Adapter lifetime)
 |   +-- src/
 |   |   +-- main.cpp
 |   |   +-- args.cpp     startup argument parsing (3.5)
@@ -1177,12 +1195,11 @@ Sangtachi/
 |   |   +-- counters.cpp counter table (chapter 9)
 |   |   +-- record.cpp   local record file lines and writes (chapter 9)
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file, tun
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (test build only)
-|   |   +-- adapter/     wintun_adapter
 |   |   +-- telemetry/   telemetry
 |   |   +-- ui/          main_window
 |   |   +-- control/     control_client

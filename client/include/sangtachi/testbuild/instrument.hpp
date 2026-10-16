@@ -32,4 +32,19 @@ void emit_echo_rtt(std::span<const std::byte> inner, std::uint64_t now_ms);
 // 아니다), 표시가 요청이 아니면 비어 있다. `0x5A` 에 응답하지 않으므로 양쪽이 켜져 있어도 끝없이 오가지 않는다.
 [[nodiscard]] std::optional<std::vector<std::byte>> make_echo_reply(std::span<const std::byte> inner);
 
+// roadmap.md Phase 6 검증의 ICMP 응답기. 어댑터에서 읽은 패킷이 ICMP 에코 요청이면 그 응답을 만든다.
+// 출발지와 목적지를 뒤집고, TTL 을 64 로, ICMP 형식을 0(에코 응답)으로 바꾸고, ICMP 체크섬과 IPv4 헤더
+// 체크섬을 다시 채운다. 식별자, 순번, 데이터는 그대로다. 받은 것을 되돌리는 장치라 위 에코 응답기와 같은
+// 시험 빌드에만 있다.
+//
+// | 받은 패킷 | 결과 |
+// |-----------|------|
+// | IPv4, IHL 5, 전체 길이 = 받은 길이, 조각 아님, 프로토콜 1, ICMP 형식 8 코드 0, ICMP 체크섬 맞음 | 응답 |
+// | 버전이 4 가 아님, IHL 이 5 가 아님(옵션이 있음) | 없음 |
+// | 전체 길이가 받은 길이와 다름, ICMP 머리 8바이트가 없음 | 없음 |
+// | 조각(MF 가 섰거나 조각 오프셋이 0 이 아님) | 없음. 조각 하나로는 ICMP 체크섬을 볼 수 없다 |
+// | 프로토콜이 1 이 아님, 형식이 8 이 아니거나 코드가 0 이 아님 | 없음. 응답(형식 0)에 다시 응답하지 않는다 |
+// | ICMP 체크섬이 틀림 | 없음 |
+[[nodiscard]] std::optional<std::vector<std::byte>> make_icmp_echo_reply(std::span<const std::byte> packet);
+
 }  // namespace sangtachi::testbuild

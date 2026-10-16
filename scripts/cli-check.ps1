@@ -107,7 +107,10 @@ function Format-Argument([string]$value) {
 #
 # 표준 오류는 직접 읽는다. 파이프라인에 섞으면 PowerShell 이 ErrorRecord 로 감싸
 # 원래 줄을 그대로 볼 수 없다.
-function Start-Client([string]$path, [string[]]$argList) {
+function Start-Client([string]$path, [string[]]$argList, [switch]$Adapter) {
+    # 이 검사는 관리자 권한 없이 돈다. 가상 어댑터를 만들지 않는다 (architecture.md 3.5 의 --no-adapter).
+    # 앞에 붙인다. 뒤에 붙이면 값이 빠진 옵션(`--server` 하나)이 이것을 값으로 읽어 다른 오류가 된다.
+    if (-not $Adapter) { $argList = @('--no-adapter') + $argList }
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $path
     $info.Arguments = (($argList | ForEach-Object { Format-Argument $_ }) -join ' ')
@@ -187,6 +190,25 @@ foreach ($c in $cases) {
             Write-Host ("      stderr did not contain: {0}" -f $c.contains)
             Write-Host ("      stderr was: {0}" -f ($err -replace "`r?`n", ' | ').Trim())
         }
+    }
+}
+
+# 관리자가 아니면 어댑터를 만들기 전에 기동 실패다 (architecture.md 7장 어댑터 수명, windows-prereq.md 1절).
+# 관리자로 돌린 실행에서는 어댑터가 실제로 생기므로 이 검사를 하지 않는다. 그쪽은 adapter-check.ps1 이 본다.
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $elevated) {
+    $r = Complete-Client (Start-Client $exe @('--server', $srv, '--name', $nm) -Adapter)
+    $label = 'without --no-adapter and not elevated'
+    if ($r.error) {
+        Write-Host ("FAIL  [{0}] {1}" -f $label, $r.error)
+        $failed++
+    } elseif ($r.code -eq 2 -and $r.err.Contains('ERROR adapter.error reason=not_elevated') -and
+              -not $r.err.Contains('socket.bind')) {
+        Write-Host ("ok    [{0}]" -f $label)
+    } else {
+        Write-Host ("FAIL  [{0}] exit={1} stderr: {2}" -f $label, $r.code, ($r.err -replace "`r?`n", ' | ').Trim())
+        $failed++
     }
 }
 

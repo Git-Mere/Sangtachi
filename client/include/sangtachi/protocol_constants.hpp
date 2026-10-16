@@ -17,6 +17,7 @@ inline constexpr std::uint8_t kTunnelVersion = 0x01;
 inline constexpr std::size_t kHeaderSize = 20;
 inline constexpr std::size_t kMaxInner = 1452;
 inline constexpr std::size_t kMaxDatagram = kHeaderSize + kMaxInner;  // 1472
+inline constexpr std::uint32_t kAdapterMtu = 1400;  // 가상 어댑터 MTU 기본값 (12장). 실측으로 확정한다
 inline constexpr std::uint32_t kStunCookie = 0x2112A442;  // RFC 5389
 inline constexpr std::size_t kMaxCandidates = 8;
 inline constexpr std::size_t kMaxPeers = 5;  // 한 방의 인원. 5.7 ROSTER 의 상한이기도 하다

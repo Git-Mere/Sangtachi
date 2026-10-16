@@ -5,6 +5,7 @@
 // `[loop]` 는 프로세스 주 스레드다. UDP 수신, 콘솔 명령, 타이머, 모든 송신을 혼자 한다.
 // 터널 상태를 건드리는 코드가 한 스레드에서만 도는 것이 이 설계의 전부다 (concurrency.md).
 
+#include "sangtachi/adapter.hpp"
 #include "sangtachi/console.hpp"
 #include "sangtachi/control/channel.hpp"
 #include "sangtachi/control/lobby.hpp"
@@ -118,8 +119,25 @@ public:
     [[nodiscard]] bool valid() const noexcept {
         return shutdown_event_ != nullptr && console_event_ != nullptr &&
                socket_.read_event() != nullptr &&
-               (control_ == nullptr || control_->response_event() != nullptr);
+               (control_ == nullptr || control_->response_event() != nullptr) &&
+               (adapter_ == nullptr || adapter_->read_event() != nullptr);
     }
+
+    // 가상 어댑터를 붙인다 (concurrency.md 2장 대기의 순위 2, 3장의 drain_wintun).
+    //
+    // 소유하지 않는다. 어댑터는 이 루프보다 오래 산다. 붙이지 않은 루프는 순위 2 없이 돈다.
+    // `--no-adapter` 실행과 Phase 1~5 의 시험이 그 모양이다. 붙인 뒤에는 valid() 를 다시 본다.
+    void attach_adapter(adapter::Port* port) noexcept { adapter_ = port; }
+
+    // drain_wintun 이 읽은 패킷을 하나씩 넘길 곳. 받은 바이트열은 그 호출 안에서만 유효하다.
+    // 비워 두면 세고 버린다 (concurrency.md 3장 "route_and_send 는 Phase 7 작업이다").
+    void set_adapter_handler(std::function<void(std::span<const std::byte> packet)> handler) {
+        on_adapter_packet_ = std::move(handler);
+    }
+
+    // 어댑터에 패킷 하나를 넣는다. 넣었으면 참이다. 실패는 여기서 센다 (concurrency.md 3장 inject).
+    // 어댑터가 붙지 않았으면 drop_inject_error 다.
+    bool inject_packet(std::span<const std::byte> packet);
 
     // `[control]` 의 채널을 붙인다 (concurrency.md 2장 대기의 순위 4, 3장의 drain_control).
     //
@@ -248,6 +266,10 @@ public:
 
 private:
     DrainOutcome drain_udp();
+    // concurrency.md 3장 drain_wintun. RESTART 는 이 함수가 세션을 다시 만드는 것으로 처리한다.
+    // 다시 만들지 못하면 종료를 신호하고 Empty 를 돌려준다. 대기 배열은 바퀴마다 새로 만드므로 새
+    // 세션의 읽기 이벤트가 다음 바퀴에 그대로 들어간다.
+    DrainOutcome drain_wintun();
     // `[console]` 이 올린 원자 변수를 표에 넣는다 (concurrency.md 6장 텔레메트리 격리).
     // 비우는 바퀴와 종료 바퀴가 같이 쓴다. 종료 바퀴는 drain_console() 앞에서 돌아가므로
     // 여기를 거치지 않으면 카운터 전량 출력이 낡은 값을 낸다.
@@ -274,6 +296,8 @@ private:
     std::function<void(std::string_view)> on_send_;
     std::function<bool(std::size_t)> work_;
     control::ControlChannel* control_ = nullptr;  // 소유하지 않는다
+    adapter::Port* adapter_ = nullptr;            // 소유하지 않는다
+    std::function<void(std::span<const std::byte>)> on_adapter_packet_;
     peer::OwnSubnets own_subnets_;                // protocol.md 10.1. 첫 수집 전에는 비어 있다
 
     void* shutdown_event_ = nullptr;  // 수동 리셋. 이 객체가 소유한다

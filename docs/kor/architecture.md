@@ -96,7 +96,7 @@
 | `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md)와 `concurrency.md` 다 | 없음 |
 | `record` | 9장 로컬 기록 파일의 줄 형식, 파일 이름, 시도 번호, 쓰기 실패 뒤 정지. 쓰기와 벽시계는 주입받고 기본은 `platform/record_file` 이다 | 없음 |
 | `args` | 기동 인자 파싱 (3.5) | 없음 |
-| `hash` | `rx.raw` 가 싣는 SHA-256 | Windows CNG |
+| `hash` | SHA-256. `wintun.dll` 해시 확인(7장)과 시험 빌드의 `data.tx`, `data.rx`(9장)가 쓴다 | Windows CNG |
 | `network/stun` | STUN 메시지 구성과 파싱. `XOR-MAPPED-ADDRESS` 디코드를 포함하고 순수 함수만 둔다. RFC 5389 를 직접 구현한다 ([`protocol.md`](protocol.md) 13장 STUN 사용 범위) | 없음 |
 | `network/stun_client` | STUN 재시도와 마감, 서버 선택과 교체. 시계·소켓·난수원·이름 해석을 주입받는다 | 없음 |
 | `platform/wait` | 단조 시계(밀리초, 그리고 RTT 용 마이크로초), 이벤트 핸들, 여러 핸들 한 번에 기다리기 (`concurrency.md` 2·4장) | Win32 |
@@ -348,32 +348,16 @@ FAIL <실패 코드> <상대> <사람이 읽는 문장>
 > **왜.** CLI 와 콘솔이 다른 경로로 방에 들어가면 같은 실패가 들어온 경로에 따라 다르게
 > 끝난다. 규칙을 한 벌로 둔다.
 
-**Phase 1~2 의 시험용 인자 둘.** 위 표는 제품 경로의 입력이다. Phase 1 은 제어 평면도 STUN 도
-없이 "알려진 두 엔드포인트" 로 송수신을 확인하므로(`roadmap.md` Phase 1) 상대 주소를 받을
-자리가 필요하다.
+**로비 명령 밖의 콘솔 명령.**
 
-| 입력 | 인자 | 값 |
-|------|------|-----|
-| 상대 엔드포인트 | `--peer <IPv4>:<포트>` | Phase 1~2 시험 전용. 없으면 송신하지 않고 수신만 한다. 이 인자로 보내는 것은 터널 헤더가 없는 시험 바이트열이고 Phase 4 이후의 `DATA` 와 다르다 |
-| 원시 송신 | 콘솔 명령 `raw <바이트 수>` | `--peer` 로 받은 주소에 그 길이의 데이터그램을 1개 보낸다. 내용은 `0x00` 부터 1씩 증가하는 바이트열이라 수신 측이 계산으로 대조할 수 있다. 길이는 1 이상 `MAX_DATAGRAM`(1472) 이하. 범위 밖이면 보내지 않고 `WARN` |
-| 카운터 출력 | 콘솔 명령 `counters` | 카운터 전량을 즉시 낸다. 9장이 정한 세 시점 중 하나다 |
-| 종료 | 콘솔 명령 `quit` | 종료 이벤트를 신호한다. `concurrency.md` 3장 루프 한 바퀴가 그 경로를 정한다 |
+| 명령 | 하는 일 |
+|------|---------|
+| `counters` | 카운터 전량을 즉시 낸다. 9장이 정한 세 시점 중 하나다 |
+| `quit` | 종료 이벤트를 신호한다. `concurrency.md` 3장 루프 한 바퀴가 그 경로를 정한다 |
 
-**수신 측은 `rx.raw` 로그 한 줄을 낸다.** 필드는 `from`(출발지 `IPv4:port`), `len`,
-`sha256`(수신 바이트열의 16진 해시 앞 16자)이다. **이 줄은 받은 데이터그램 전부에 나간다.**
-[`protocol.md`](protocol.md) 7장 수신 분류가 버리는 것도 포함하고, Phase 2 부터는 STUN 응답도
-여기 찍힌다. 버려진 것이 진단에 남아야 하고 로그는 회신이 아니므로 분류보다 앞에 둔다. 바이트열 자체를 로그에 싣지 않는다. **송신
-측도 같은 줄을 낸다.** 두 줄의 `len` 과 `sha256` 이 같으면 Phase 1 의 "바이트 단위로 일치" 가
-성립한다.
-
-**송신 측의 `from` 은 자신의 로컬 엔드포인트다.** 그 데이터그램의 출발지가 자신이기
-때문이다. bind 가 `INADDR_ANY` 이므로 주소 부분은 `0.0.0.0` 이다(`protocol.md` 6장). 판정이
-보는 것은 `len` 과 `sha256` 둘이고 `from` 은 어느 쪽 줄인지를 사람이 가르는 데 쓴다.
-
-> **왜.** 눈으로 바이트를 비교하는 절차를 두지 않는 이유는 그것이 사람마다 다른 판정이 되기
-> 때문이다.
-
-**둘은 시험용이고 언제 지울지는 정하지 않았다.** `[console]` 스레드는 콘솔 빌드에 남는다. 위 로비 명령을 받아야 하기 때문이다(`concurrency.md` 1장 스레드).
+합성 패킷을 `DATA` 로 보내는 `send` 의 계약은 [`roadmap.md`](roadmap.md) Phase 4 시험 장치가 갖는다.
+Phase 1 의 송수신 확인에 쓰던 시험용 입력은 두지 않는다. 근거는
+[ADR 0028](decisions/0028-시험용-peer-raw-제거.md) 이다.
 
 **기동 입력이 아닌 것.** 로컬 기록 파일 경로는 9장 로컬 기록 파일의 "경로" 가 정한다. 텔레메트리 서비스 주소는 Phase 9 다. 둘 다 여기 표에 없다.
 
@@ -398,7 +382,6 @@ FAIL <실패 코드> <상대> <사람이 읽는 문장>
 | `--name` | `control_plane.md` 2.7 `name` 의 검사 |
 | `--server` 의 포트 | 생략하면 `control_plane.md` 2.6 상수의 `CONTROL_PORT` |
 | 모든 포트 | 1~65535 |
-| `--peer` 의 주소 | IPv4 리터럴만 받는다. 이름을 받지 않는다 |
 | `--stun` 의 주소 | 이름 또는 IPv4 리터럴. 포트는 생략할 수 없다 |
 
 **반례 목록은 시험이 갖는다.** IPv4 리터럴, 포트 범위, `--room` 의 케이스 표는
@@ -972,7 +955,6 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `control.result` | `op`, `ok`, `error` (실패 코드 문자열, 성공이면 `-`) | Phase 3 연산 검증, `CONTROL_PLANE_EXCHANGE_FAILED` 원인 확인. **`room_id` 와 `peer_token` 을 싣지 않는다** (3.5) |
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (상대 후보 `ip:port` 를 쉼표로 이어 붙인 것) | `spec.md` M-3, Phase 3 `get_peers` 검증 |
 | `timer.tick` | `name`, `elapsed_ms` (직전 만료로부터 실제로 흐른 밀리초) | Phase 1 drain 예산, Phase 3 제어 평면 사망 중 `[loop]` 생존 |
-| `rx.raw` | `from`, `len`, `sha256` | Phase 1 원시 송수신 대조 (3.5) |
 | `record.open` | `file` (로컬 기록 파일의 이름. 폴더를 빼고) | Phase 4 기록 확인, `spec.md` M-6 |
 | `data.tx` | `to` (목적지 가상 IP), `len`, `sha256` (캡슐화 직전의 내부 패킷). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.rx` | `from` (상대 가상 IP), `len`, `sha256` (페이로드 훅이 받은 바이트열). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
@@ -1123,7 +1105,7 @@ Sangtachi/
 | Wintun | Windows 가상 네트워크 인터페이스 접근만. 어댑터 생성, 패킷 read/inject | **승인됨** |
 | Windows IP Helper / NetIO API | 가상 어댑터의 IP 주소와 라우트 설정. **Wintun은 이 기능을 제공하지 않는다.** 로컬 후보를 위한 인터페이스 열거와 기본 경로 조회 (`platform/interfaces`) | OS 기본 제공 |
 | Winsock2 | Windows 기본 소켓 API | OS 기본 제공 |
-| Windows CNG (`BCryptHash`) | 9장 `rx.raw` 가 싣는 SHA-256 | OS 기본 제공 |
+| Windows CNG (`BCryptHash`) | `wintun.dll` 해시 확인과 9장 `data.tx`, `data.rx` 의 SHA-256 | OS 기본 제공 |
 | 공개 STUN 서버 | Binding Response 응답. 서버는 구현하지 않고 이용만 한다 | 외부 공개 서비스 |
 | Python 표준 라이브러리 | `asyncio`, `json` | 표준 라이브러리 |
 | AWS SDK for Python (`boto3`) | 제어 서버와 텔레메트리 서비스의 DynamoDB 접근 | **승인됨** |

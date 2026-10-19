@@ -78,16 +78,9 @@ Client A <------ UDP ------> Client B
 ### Verification
 
 - Bidirectional message exchange succeeds between two machines on the same LAN (or two processes on one machine)
-  - The input and the judging means are the `--peer` argument and the `raw <byte count>` console
-    command in [`architecture.md`](architecture.md) 3.5 Startup Inputs
-  - When run on two machines, **each side sends once first**
-
-  > **Why.** If only one side sends, that first datagram is unsolicited inbound to the other side and
-  > is blocked exactly as measured in [`windows-prereq.md`](windows-prereq.md) 2.
 - Received content matches sent content byte for byte
-  - **The judgment is a comparison of `len` and `sha256` on the two `rx.raw` log lines**
-    (`architecture.md` 9)
-  - Do not compare bytes by eye
+  - The test-only inputs that judged the two items above no longer exist. Now the `DATA` round-trip match in the Phase 4
+    verification checks the same property. The rationale is [ADR 0028](decisions/0028-remove-test-peer-raw.md)
 - On a socket error the process does not die and the error code is logged
 - Console command queue cap ([`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation).
   **Observe with the consumer stopped**
@@ -580,7 +573,7 @@ Established without router port forwarding in supported environments. The packet
 Contracts of the tools the verification procedures use. These are equipment, not pass criteria.
 
 - **Pin the console commands used by the verification procedures.** Among the commands that
-  `[console]` ([`concurrency.md`](concurrency.md)) accepts, the verification procedures use the five
+  `[console]` ([`concurrency.md`](concurrency.md)) accepts, the verification procedures use the four
   below. `host` and `join`, which create and join a room, are lobby commands, and their contract is
   in `architecture.md` 3.5 Startup Inputs
   - `quit` signals the shutdown event and starts the normal shutdown procedure (`concurrency.md`
@@ -589,8 +582,6 @@ Contracts of the tools the verification procedures use. These are equipment, not
     Lobby)
   - `counters` dumps all counters to the log immediately (`architecture.md` 9). Verification items
     that read counters take their snapshot with this command
-  - `raw <byte count>` is the raw send of Phases 1-2, and its contract is in `architecture.md` 3.5
-    Startup Inputs
   - `send <n> [size] [to]` sends `n` synthetic inner IPv4 packets as `DATA`
 
   The contract of `send <n> [size] [to]`.
@@ -1184,6 +1175,7 @@ logic is owned by the project.
 
 ### Tasks
 
+- Remove the test-only `--peer` argument, `raw` console command, and `rx.raw` log ([ADR 0028](decisions/0028-remove-test-peer-raw.md))
 - Read outgoing IP packets from Wintun
 - Determine the target peer from the destination virtual IP
 - Encapsulate as `DATA` packets

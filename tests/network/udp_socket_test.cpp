@@ -42,7 +42,7 @@ bool wait_readable(const UdpSocket& socket, unsigned timeout_ms = 2000) {
 }
 
 std::vector<std::byte> pattern(std::size_t size) {
-    // architecture.md 3.5 의 `raw` 명령과 같은 규칙. 0x00 부터 1씩 증가한다.
+    // 0x00 부터 1씩 증가한다. 받은 쪽이 계산으로 대조할 수 있다.
     std::vector<std::byte> out(size);
     for (std::size_t i = 0; i < size; ++i) {
         out[i] = static_cast<std::byte>(i & 0xFF);

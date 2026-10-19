@@ -10,9 +10,7 @@
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
-using sangtachi::kShortHashChars;
 using sangtachi::sha256_hex;
-using sangtachi::sha256_short;
 
 namespace {
 
@@ -42,22 +40,10 @@ TEST_CASE("hash: abc matches the published SHA-256 vector", "[hash]") {
     REQUIRE(*got == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
-TEST_CASE("hash: the short form is the first sixteen hex characters", "[hash]") {
-    // architecture.md 3.5 가 rx.raw 의 sha256 을 "16진 해시 앞 16자" 로 정했다.
-    const auto data = bytes_of("abc");
-    const auto full = sha256_hex(data);
-    const auto shortened = sha256_short(data);
-    REQUIRE(full.has_value());
-    REQUIRE(shortened.has_value());
-    REQUIRE(shortened->size() == kShortHashChars);
-    REQUIRE(*shortened == full->substr(0, kShortHashChars));
-    REQUIRE(*shortened == "ba7816bf8f01cfea");
-}
-
 TEST_CASE("hash: different payloads give different digests", "[hash]") {
-    // rx.raw 두 줄을 대조하는 판정이 이 성질에 기댄다.
-    const auto a = sha256_short(bytes_of("payload-a"));
-    const auto b = sha256_short(bytes_of("payload-b"));
+    // data.tx 와 data.rx 를 대조하는 판정이 이 성질에 기댄다 (architecture.md 9장).
+    const auto a = sha256_hex(bytes_of("payload-a"));
+    const auto b = sha256_hex(bytes_of("payload-b"));
     REQUIRE(a.has_value());
     REQUIRE(b.has_value());
     REQUIRE(*a != *b);

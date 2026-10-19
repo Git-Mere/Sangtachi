@@ -87,8 +87,7 @@ using DatagramHandler =
     std::function<void(const network::Endpoint& from, std::span<const std::byte> payload)>;
 
 struct LoopOptions {
-    std::optional<network::Endpoint> peer;  // architecture.md 3.5 의 --peer
-    bool probe_timer = false;               // 시험 빌드의 probe200 타이머
+    bool probe_timer = false;  // 시험 빌드의 probe200 타이머
     // 종료 이벤트. 비워 두면 루프가 만든다. 주면 루프는 그것을 **복제해서** 든다.
     //
     // main 은 제어 서버 주소를 UDP bind 보다 먼저 해석한다 (control_plane.md 8.4 의 2번이
@@ -161,7 +160,7 @@ public:
     // 로비 명령(`host`, `join`, `leave`, `name`)을 넘길 곳 (architecture.md 3.5 로비 명령).
     //
     // 콘솔 줄은 control::parse_lobby_command 가 먼저 본다. 로비 명령이면 여기로 가고, 아니면
-    // quit, counters, raw 의 기존 경로다. 비워 두면 로비 명령도 기존 경로로 가서
+    // quit, counters, send 의 기존 경로다. 비워 두면 로비 명령도 기존 경로로 가서
     // unknown_command 가 된다.
     void set_lobby_command_handler(std::function<void(const control::LobbyCommand&)> handler) {
         on_lobby_command_ = std::move(handler);
@@ -279,7 +278,6 @@ private:
     // 두 큐는 작고 요청이 사람 속도다 (concurrency.md 3장).
     void drain_control();
     void handle_command(std::string_view line);
-    void send_raw(std::size_t length);
 
     network::UdpSocket socket_;
     Counters& counters_;

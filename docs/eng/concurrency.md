@@ -65,8 +65,7 @@ There are two reasons.
 
 - `[console]` exists only in the console build. `[loop]` cannot block on standard input, so a
   separate thread reads it and pushes to a queue. The table above is the console build's composition
-  - It stays after Phase 6 because it has to accept the lobby commands ([`architecture.md`](architecture.md) 3.5 Startup Inputs).
-    When to remove the test-only `--peer` and `raw` is not decided
+  - It stays after Phase 6 because it has to accept the lobby commands ([`architecture.md`](architecture.md) 3.5 Startup Inputs)
   - The thread composition of the GUI build is not decided yet. It is an open item left by ADR 0007
 - `[telemetry]` comes late because the place to upload to appears then. The telemetry service
   and the upload thread are deliverables of the same phase ([`roadmap.md`](roadmap.md))
@@ -354,9 +353,6 @@ in chapter 7 (1) is this path.
 out in one iteration but split the same way as `MAX_DRAIN`, so an iteration with backlog left must
 have `busy = true` for the next wait to return immediately with timeout 0. Otherwise the remaining
 sends stretch out by one timer interval each.
-
-`raw` does not belong here. It sends one datagram and finishes, so there is no such thing as backlog
-([`architecture.md`](architecture.md) 3.5 Startup Inputs).
 
 `drain_control` drains the results that `[control]` pushed to the response queue and applies
 them to session state (chapter 8 The `[control]` Thread). Both queues are small and requests arrive

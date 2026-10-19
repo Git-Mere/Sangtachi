@@ -13,7 +13,6 @@
 namespace sangtachi {
 namespace {
 
-using network::Endpoint;
 using network::parse_ipv4;
 using network::parse_port;
 
@@ -200,7 +199,7 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
 
         const bool takes_value =
             token == "--server" || token == "--room" ||
-            token == "--stun" || token == "--peer" || token == "--name";
+            token == "--stun" || token == "--name";
         if (!takes_value) {
             return fail(ArgError::UnknownOption, token);
         }
@@ -235,22 +234,6 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
                 return fail(ArgError::BadName, value);
             }
             args.name = std::string(value);
-        } else {  // --peer
-            // Endpoint::parse 를 쓰지 않는다. 그것은 성공과 실패만 돌려주므로 주소가
-            // 틀린 것인지 포트가 틀린 것인지를 오류 코드로 가를 수 없다.
-            const std::size_t colon = value.find(':');
-            if (colon == std::string_view::npos) {
-                return fail(ArgError::MissingPort, value);
-            }
-            const auto address = parse_ipv4(value.substr(0, colon));
-            if (!address) {
-                return fail(ArgError::BadHost, value);
-            }
-            const auto port = parse_port(value.substr(colon + 1));
-            if (!port || *port == 0) {
-                return fail(ArgError::BadPort, value);
-            }
-            args.peer = Endpoint(*address, *port);
         }
     }
 

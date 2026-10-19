@@ -1,13 +1,11 @@
 #include "sangtachi/loop.hpp"
 
-#include "sangtachi/hash.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/network/stun.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -17,7 +15,6 @@
 #include <memory>
 #include <optional>
 #include <utility>
-#include <vector>
 
 namespace sangtachi {
 namespace {
@@ -40,27 +37,6 @@ std::string_view trim(std::string_view text) noexcept {
     return text;
 }
 
-// architecture.md 3.5 기동 입력의 어휘는 `raw <바이트 수>` 하나다. 어휘 밖 낱말은
-// unknown_command 여야 하므로 접두만 보지 않는다. `raw` 다음이 줄 끝이거나 공백일 때만
-// 이 명령이다. `raw500` 과 `rawx` 는 다른 낱말이다.
-constexpr std::string_view kRawCommand = "raw";
-
-constexpr bool is_raw_command(std::string_view command) noexcept {
-    if (command.substr(0, kRawCommand.size()) != kRawCommand) {
-        return false;
-    }
-    return command.size() == kRawCommand.size() || is_space(command[kRawCommand.size()]);
-}
-
-// architecture.md 3.5 의 `raw` 가 정한 내용. 0x00 부터 1씩 증가한다.
-std::vector<std::byte> raw_pattern(std::size_t length) {
-    std::vector<std::byte> out(length);
-    for (std::size_t i = 0; i < length; ++i) {
-        out[i] = static_cast<std::byte>(i & 0xFF);
-    }
-    return out;
-}
-
 // protocol.md 7장 수신 분류가 보는 값들. 주소는 호스트 바이트 순서다.
 constexpr std::uint32_t kMulticastNetwork = 0xE0000000u;  // 224.0.0.0
 constexpr std::uint32_t kMulticastMask = 0xF0000000u;     // /4
@@ -78,16 +54,6 @@ constexpr std::uint8_t kClassTunnel = 0x40;
 [[nodiscard]] constexpr std::uint8_t byte_at(std::span<const std::byte> bytes,
                                              std::size_t offset) noexcept {
     return std::to_integer<std::uint8_t>(bytes[offset]);
-}
-
-void emit_rx_raw(const network::Endpoint& from, std::span<const std::byte> payload) {
-    const auto digest = sha256_short(payload);
-    const LogField fields[] = {
-        field("from", from.to_string()),
-        field("len", static_cast<std::uint64_t>(payload.size())),
-        field("sha256", digest ? std::string_view(*digest) : std::string_view("unavailable")),
-    };
-    emit(LogLevel::Info, "rx.raw", fields);
 }
 
 }  // namespace
@@ -285,11 +251,6 @@ bool EventLoop::inject_packet(std::span<const std::byte> packet) {
 
 void EventLoop::receive_datagram(const network::Endpoint& from,
                                  std::span<const std::byte> payload) {
-    // Phase 1 의 대조 수단이다 (architecture.md 3.5 기동 입력). 분류 앞에 둔다. 로그 한 줄은
-    // 회신이 아니라 진단이므로 출발지 위생이 막는 반사·증폭 경로에 들지 않고, 버려진
-    // 데이터그램도 진단에 남아야 한다. 시험용 `--peer`, `raw` 와 같이 지울지는 정하지 않았다 (architecture.md 3.5).
-    emit_rx_raw(from, payload);
-
     // 자기 서브넷 집합은 루프가 소유한 그것이다 (concurrency.md 5장). 빈 집합을 넘기면 7장
     // directed broadcast 행이 아무것도 막지 않는다. loop_test 의 출발지 위생 (b) 가 지킨다.
     switch (classify_datagram(from, payload, own_subnets_)) {
@@ -337,29 +298,6 @@ bool EventLoop::send_datagram_uncounted(const network::Endpoint& to,
     return true;
 }
 
-void EventLoop::send_raw(std::size_t length) {
-    if (!options_.peer) {
-        const LogField fields[] = {field("reason", std::string_view("no_peer"))};
-        emit(LogLevel::Warn, "console.rejected", fields);
-        return;
-    }
-    if (length < 1 || length > protocol::kMaxDatagram) {
-        const LogField fields[] = {
-            field("reason", std::string_view("length_out_of_range")),
-            field("len", static_cast<std::uint64_t>(length)),
-        };
-        emit(LogLevel::Warn, "console.rejected", fields);
-        return;
-    }
-
-    const auto payload = raw_pattern(length);
-    if (!send_datagram(*options_.peer, payload)) {
-        return;
-    }
-    // 송신 측도 같은 줄을 낸다. from 은 자신의 로컬 엔드포인트다 (architecture.md 3.5).
-    emit_rx_raw(socket_.local(), payload);
-}
-
 void EventLoop::handle_command(std::string_view line) {
     const std::string_view command = trim(line);
     if (command.empty()) {
@@ -391,21 +329,6 @@ void EventLoop::handle_command(std::string_view line) {
         on_send_(command.substr(4));  // 형식 검사와 WARN 은 받는 쪽이 한다
         return;
     }
-    if (is_raw_command(command)) {
-        const std::string_view rest = trim(command.substr(kRawCommand.size()));
-        std::size_t length = 0;
-        const auto* begin = rest.data();
-        const auto* end = begin + rest.size();
-        const auto parsed = std::from_chars(begin, end, length);
-        if (rest.empty() || parsed.ec != std::errc() || parsed.ptr != end) {
-            const LogField fields[] = {field("reason", std::string_view("bad_length"))};
-            emit(LogLevel::Warn, "console.rejected", fields);
-            return;
-        }
-        send_raw(length);
-        return;
-    }
-
     const LogField fields[] = {
         field("reason", std::string_view("unknown_command")),
         field("command", command),

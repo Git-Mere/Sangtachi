@@ -98,7 +98,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `counters` | The table of the chapter 9 `counter` event. The names come from [`protocol.md`](protocol.md) and `concurrency.md` | None |
 | `record` | Line format, file name, attempt numbers, and stopping after a write failure of the chapter 9 local record file. The write and the wall clock are injected and default to `platform/record_file` | None |
 | `args` | Startup argument parsing (3.5) | None |
-| `hash` | The SHA-256 carried by `rx.raw` | Windows CNG |
+| `hash` | SHA-256. Used by the `wintun.dll` hash check (chapter 7) and by `data.tx` and `data.rx` in the test build (chapter 9) | Windows CNG |
 | `network/stun` | STUN message construction and parsing. Includes `XOR-MAPPED-ADDRESS` decoding and holds pure functions only. RFC 5389 is implemented directly ([`protocol.md`](protocol.md) chapter 13 STUN Scope) | None |
 | `network/stun_client` | STUN retries and deadlines, server selection and replacement. The clock, socket, random source and name resolution are injected | None |
 | `platform/wait` | Monotonic clocks (milliseconds, and microseconds for RTT), event handles, waiting on several handles at once (`concurrency.md` chapters 2 and 4) | Win32 |
@@ -385,33 +385,16 @@ command regardless of the role.
 > **Why.** If the CLI and the console entered a room by different paths, the same failure would
 > end differently depending on the path it came in by. The rules are kept as one set.
 
-**Two test-only arguments in Phase 1~2.** The table above is the product path input. Phase 1
-confirms send and receive with "two known endpoints", without the control plane and without
-STUN (`roadmap.md` Phase 1), so it needs a place to take the remote address.
+**Console commands outside the lobby commands.**
 
-| Input | Argument | Value |
-|------|------|-----|
-| Remote endpoint | `--peer <IPv4>:<port>` | Phase 1~2 test only. Without it the client only receives and does not send. What this argument sends is a test byte string with no tunnel header, different from `DATA` in Phase 4 onward |
-| Raw send | Console command `raw <byte count>` | Sends 1 datagram of that length to the address given by `--peer`. The content is a byte string increasing by 1 from `0x00`, so the receiver can check it by computation. The length is 1 or more and `MAX_DATAGRAM` (1472) or less. Out of range, nothing is sent and a `WARN` is left |
-| Counter dump | Console command `counters` | Emits every counter at once. Chapter 9 fixes three points at which counters are emitted, and this is one of them |
-| Shutdown | Console command `quit` | Signals the shutdown event. `concurrency.md` chapter 3 One Loop Iteration owns that path |
+| Command | What it does |
+|------|---------|
+| `counters` | Emits every counter at once. Chapter 9 fixes three points at which counters are emitted, and this is one of them |
+| `quit` | Signals the shutdown event. `concurrency.md` chapter 3 One Loop Iteration owns that path |
 
-**The receiving side emits one `rx.raw` log line.** The fields are `from` (source
-`IPv4:port`), `len`, and `sha256` (the first 16 hex characters of the received byte string's
-hash). **This line goes out for every datagram received.** That includes what
-[`protocol.md`](protocol.md) chapter 7 Receive Classification drops, and from Phase 2 onward
-STUN responses are printed here too. What is dropped has to stay in diagnostics, and the log is
-not a reply, so it comes before classification. The byte string itself is not put in the log. **The sending side emits the same line.**
-If `len` and `sha256` match on both lines, the Phase 1 "matches byte for byte" holds.
-
-**On the sending side `from` is its own local endpoint.** The source of that datagram is
-itself. Since the bind is `INADDR_ANY`, the address part is `0.0.0.0` (`protocol.md` chapter 6).
-The decision reads `len` and `sha256`; `from` is what lets a person tell the two lines apart.
-
-> **Why.** A procedure that compares bytes by eye is not used, because it becomes a decision
-> that differs per person.
-
-**Both are test-only, and when to remove them is not decided.** The `[console]` thread stays in the console build, because it has to accept the lobby commands above (`concurrency.md` chapter 1 Threads).
+The contract of `send`, which sends synthetic packets as `DATA`, is owned by [`roadmap.md`](roadmap.md) Phase 4 Test Harness.
+The test-only inputs once used to confirm Phase 1 send and receive are not kept. The rationale is
+[ADR 0028](decisions/0028-remove-test-peer-raw.md).
 
 **What is not a startup input.** The local record file path is set by "Path" under chapter 9
 Local Record File. The telemetry service address is Phase 9. Neither is in the table above.
@@ -440,7 +423,6 @@ process still starts. But a value that is neither `host` nor `player` is a forma
 | `--name` | `control_plane.md` 2.7 `name`, its checks |
 | The port in `--server` | If omitted, `CONTROL_PORT` in `control_plane.md` 2.6 Constants |
 | Every port | 1~65535 |
-| The address in `--peer` | An IPv4 literal only. A name is not accepted |
 | The address in `--stun` | A name or an IPv4 literal. The port cannot be omitted |
 
 **The tests own the counterexample list.** The case tables for IPv4 literals, the port range,
@@ -1087,7 +1069,6 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `control.result` | `op`, `ok`, `error` (failure code string, `-` on success) | Phase 3 operation verification, `CONTROL_PLANE_EXCHANGE_FAILED` cause check. **Does not carry `room_id` or `peer_token`** (3.5) |
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (remote candidates as `ip:port` joined by commas) | `spec.md` M-3, Phase 3 `get_peers` verification |
 | `timer.tick` | `name`, `elapsed_ms` (milliseconds actually elapsed since the previous expiry) | Phase 1 drain budget, Phase 3 `[loop]` survival while the control plane is dead |
-| `rx.raw` | `from`, `len`, `sha256` | Phase 1 raw send/receive comparison (3.5) |
 | `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
 | `data.tx` | `to` (destination virtual IP), `len`, `sha256` (the inner packet just before encapsulation). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
@@ -1245,7 +1226,7 @@ The two language trees hold the same files. When editing a document, modify both
 | Wintun | Windows virtual network interface access only. Adapter creation, packet read/inject | **Approved** |
 | Windows IP Helper / NetIO API | IP address and route configuration of the virtual adapter. **Wintun does not provide this.** Interface enumeration and default route lookup for local candidates (`platform/interfaces`) | OS built-in |
 | Winsock2 | Windows standard socket API | OS built-in |
-| Windows CNG (`BCryptHash`) | The SHA-256 carried by chapter 9 `rx.raw` | OS built-in |
+| Windows CNG (`BCryptHash`) | The `wintun.dll` hash check and the SHA-256 of chapter 9 `data.tx` and `data.rx` | OS built-in |
 | Public STUN servers | Binding Response. The server is not implemented, only used | External public service |
 | Python standard library | `asyncio`, `json` | Standard library |
 | AWS SDK for Python (`boto3`) | DynamoDB access for the control server and the telemetry service | **Approved** |

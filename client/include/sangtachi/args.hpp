@@ -25,8 +25,6 @@
 // 하나다. 뒤에 값을 주면 그 값은 역할 자리의 위치 인자로 읽힌다. 한 가지 꼴만 받으면
 // 시험이 볼 경우의 수가 반으로 준다.
 
-#include "sangtachi/network/endpoint.hpp"
-
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -59,7 +57,6 @@ struct Args {
     std::optional<HostPort> server;
     std::optional<std::string> room;   // control_plane.md 2.1 대로 대문자로 정규화한 값
     std::vector<HostPort> stun;        // 비어 있으면 architecture.md 3.5 의 기본 목록
-    std::optional<network::Endpoint> peer;
     // 표시 이름. control_plane.md 2.7 의 형식을 지난 값이고 대소문자는 받은 그대로다.
     // 이 프로세스의 모든 방 만들기와 참가가 이 이름으로 시작한다. 로비 명령 name 이 바꾼다.
     std::optional<std::string> name;

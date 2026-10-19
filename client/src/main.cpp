@@ -213,7 +213,6 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     const std::uint16_t local_port = opened.socket->local().port();
 
     sangtachi::LoopOptions options;
-    options.peer = args.peer;
     options.shutdown_event = shutdown_event;
 #ifdef SANGTACHI_TEST_BUILD
     options.probe_timer = true;

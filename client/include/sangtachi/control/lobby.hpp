@@ -211,7 +211,7 @@ struct LobbyCommand {
 };
 
 // 콘솔 줄 하나. 첫 낱말이 정확히 `host`, `join`, `leave`, `name` 일 때만 값이 있다. 그 밖은 nullopt 이고
-// 다른 콘솔 명령(quit, counters, raw)의 몫이다. 낱말은 ASCII 공백과 탭으로 가른다.
+// 다른 콘솔 명령(quit, counters, send)의 몫이다. 낱말은 ASCII 공백과 탭으로 가른다.
 // 인자의 형식은 여기서 보지 않는다. Lobby::on_command 가 보고 WARN 을 낸다.
 [[nodiscard]] std::optional<LobbyCommand> parse_lobby_command(std::string_view line);
 

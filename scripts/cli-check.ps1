@@ -36,7 +36,6 @@ $cases = @(
     @{ args = @('--server', $srv, '--name', $nm);                                    expect = 0; contains = 'INFO wsa.init version=' }
     @{ args = @('host', '--server', $srv, '--name', $nm);                            expect = 0; contains = 'INFO wsa.init version=' }
     @{ args = @('player', '--server', $srv, '--room', 'abcdef', '--name', $nm);      expect = 0; contains = 'INFO wsa.init version=' }
-    @{ args = @('--server', $srv, '--name', $nm, '--peer', '192.0.2.5:30000');       expect = 0; contains = 'INFO wsa.init version=' }
     @{ args = @('--server', $srv, '--name', $nm, '--stun', 'a.example:3478');        expect = 0; contains = 'INFO wsa.init version=' }
     # 해석한 제어 서버 주소. IPv4 리터럴은 이름 해석을 거치지 않는다.
     @{ args = @('--server', $srv, '--name', $nm);                                    expect = 0; contains = 'INFO control.server host=127.0.0.1 resolved=127.0.0.1:9' }
@@ -44,10 +43,11 @@ $cases = @(
     @{ args = @('bogus');                      expect = 2; contains = 'ERROR args.invalid reason=bad_role arg=bogus' }
     @{ args = @('host', 'player');             expect = 2; contains = 'reason=extra_positional' }
     @{ args = @('--nope');                     expect = 2; contains = 'reason=unknown_option arg=--nope' }
-    @{ args = @('--peer');                     expect = 2; contains = 'reason=missing_value arg=--peer' }
+    @{ args = @('--server');                   expect = 2; contains = 'reason=missing_value arg=--server' }
     @{ args = @('--room', 'ABCDE0');           expect = 2; contains = 'reason=bad_room arg=ABCDE0' }
-    @{ args = @('--peer', '192.0.2.5:0');      expect = 2; contains = 'reason=bad_port' }
-    @{ args = @('--peer', 'a.example:3478');   expect = 2; contains = 'reason=bad_host' }
+    @{ args = @('--server', 'a.example:0');    expect = 2; contains = 'reason=bad_port' }
+    # Phase 1 의 시험용 입력은 없다 (ADR 0028).
+    @{ args = @('--peer', '192.0.2.5:30000');  expect = 2; contains = 'reason=unknown_option arg=--peer' }
     @{ args = @('--stun', 'a.example');        expect = 2; contains = 'reason=missing_port' }
     @{ args = @('--server', '999.999.999.999'); expect = 2; contains = 'reason=bad_host' }
     # 방 코드는 create_room 응답으로만 생긴다 (architecture.md 3.5).

@@ -38,7 +38,6 @@ TEST_CASE("args: only the server is needed and there is no role", "[args]") {
     REQUIRE(r.ok());
     REQUIRE(r.args->role == Role::None);
     REQUIRE(r.args->server.has_value());
-    REQUIRE_FALSE(r.args->peer.has_value());
     REQUIRE(r.args->stun.empty());
 }
 
@@ -80,27 +79,18 @@ TEST_CASE("args: room is rejected for the host role", "[args]") {
     REQUIRE(run({"player", "--server", "a.example", "--room", "ABCDEF", "--name", "Alice"}).ok());
 }
 
-TEST_CASE("args: peer is an IPv4 endpoint", "[args]") {
-    const auto r = run({"--server", "a.example", "--name", "Alice", "--peer", "192.0.2.10:30000"});
-    REQUIRE(r.ok());
-    REQUIRE(r.args->peer->to_string() == "192.0.2.10:30000");
-}
-
 TEST_CASE("args: stun accumulates and the rest is last wins", "[args]") {
     const auto r = run({"player", "--server", "a.example", "--name", "Alice",
                         "--stun", "a.example:3478",
                         "--stun", "b.example:19302",
                         "--room", "ABCDEF",
-                        "--room", "GHJKLM",
-                        "--peer", "192.0.2.1:1",
-                        "--peer", "192.0.2.2:2"});
+                        "--room", "GHJKLM"});
     REQUIRE(r.ok());
     REQUIRE(r.args->stun.size() == 2);
     REQUIRE(r.args->stun[0].host == "a.example");
     REQUIRE(r.args->stun[0].port == 3478);
     REQUIRE(r.args->stun[1].port == 19302);
     REQUIRE(*r.args->room == "GHJKLM");
-    REQUIRE(r.args->peer->to_string() == "192.0.2.2:2");
 }
 
 TEST_CASE("args: reject case table", "[args]") {
@@ -116,7 +106,7 @@ TEST_CASE("args: reject case table", "[args]") {
         {{"--server=x"}, ArgError::UnknownOption, "equals form is not accepted"},
         {{"-server", "x"}, ArgError::BadRole, "single dash is a positional, not a role"},
         {{"--server"}, ArgError::MissingValue, "option at the end without a value"},
-        {{"--peer"}, ArgError::MissingValue, "option at the end without a value"},
+        {{"--peer", "192.0.2.1:1"}, ArgError::UnknownOption, "the Phase 1 test input is gone (ADR 0028)"},
 
         // --room. control_plane.md 2.1
         {{"--room", "ABCDE"}, ArgError::BadRoom, "five characters"},
@@ -151,14 +141,6 @@ TEST_CASE("args: reject case table", "[args]") {
         {{"--server", "1.2.3.4.5"}, ArgError::BadHost, "five dotted numbers"},
         {{"--server", "12345"}, ArgError::BadHost, "all-numeric single label"},
         {{"--server", "a.123"}, ArgError::BadHost, "all-numeric last label"},
-
-        // --peer
-        {{"--peer", "a.example:3478"}, ArgError::BadHost, "peer takes an IPv4 literal only"},
-        {{"--peer", "192.0.2.1"}, ArgError::MissingPort, "no port"},
-        {{"--peer", "192.0.2.1:0"}, ArgError::BadPort, "port 0 is outside 1-65535"},
-        {{"--peer", "01.2.3.4:80"}, ArgError::BadHost, "leading zero octet"},
-        {{"--peer", "192.0.2.1:80:90"}, ArgError::BadPort, "the address parses; the colon lands in the port"},
-        {{"--peer", "[::1]:80"}, ArgError::BadHost, "IPv6 is out of scope"},
     };
 
     for (const auto& c : cases) {
@@ -192,7 +174,6 @@ TEST_CASE("args: required inputs from Phase 3 case table", "[args]") {
     const RejectCase cases[] = {
         {{}, ArgError::MissingServer, "no arguments: the server is required"},
         {{"host"}, ArgError::MissingServer, "host without a server"},
-        {{"--peer", "192.0.2.1:1"}, ArgError::MissingServer, "test inputs do not replace the server"},
         {{"player", "--server", "a.example"}, ArgError::MissingRoom, "player needs a room"},
         {{"player"}, ArgError::MissingRoom, "player without room or server reports the room"},
         {{"--room", "ABCDEF", "--server", "a.example"}, ArgError::RoomWithoutRole, "room without a role"},

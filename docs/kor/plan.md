@@ -19,9 +19,8 @@ Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖�
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 시험용 `--peer` 와 `raw` 를 지울지, 언제 지울지 정한다 | [`architecture.md`](architecture.md) 3.5 는 정하지 않았다고 적는다. `scripts/e2e-check.ps1` 이 그 둘로 Phase 1 검증을 돈다. 정하면 그 작업을 `roadmap.md` 에 건다. 저장소 소유자 결정 대기 |
-| 2 | 어댑터에서 읽은 패킷을 터널로, 받은 `DATA` 를 어댑터로 잇는다 | Phase 7 작업. 이음매는 `EventLoop::set_adapter_handler` 와 `inject_packet`, 터널의 페이로드 훅 칸이다 |
-| 3 | 두 기기 검증 | Phase 7 검증은 두 Windows 기기가 있어야 한다 |
+| 1 | 어댑터에서 읽은 패킷을 터널로, 받은 `DATA` 를 어댑터로 잇는다 | Phase 7 작업. 이음매는 `EventLoop::set_adapter_handler` 와 `inject_packet`, 터널의 페이로드 훅 칸이다 |
+| 2 | 두 기기 검증 | Phase 7 검증은 두 Windows 기기가 있어야 한다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.
@@ -38,8 +37,7 @@ Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖�
 | [`windows-prereq.md`](windows-prereq.md) 실물 검증의 나머지 | 2절 방화벽과 프로필, 3절 저장된 주소의 잔존 | Phase 7(방화벽), 8(시연) |
 | NFR-5 를 두 종류로 나눈 것의 교수 확인 | 확인 대상은 Catch2 승인이 아니라 요구를 제품 의존성과 시험 전용 의존성으로 나눈 것이다 | 제출 전 확인. 결과가 다르면 [ADR 0005](decisions/0005-시험-프레임워크-catch2.md)를 뒤집고 새 ADR 을 쓴다 |
 
-Phase 1 의 두 머신 실측은 따로 기다리지 않는다. `roadmap.md` Phase 1 검증은 한 기기의 두 프로세스도
-받고, 그것은 `scripts/e2e-check.ps1` 로 돌렸다. 실제 두 기기 사이의 송수신은 Phase 4 검증의 "같은 LAN 의
+Phase 1 의 두 머신 실측은 따로 기다리지 않는다. 실제 두 기기 사이의 송수신은 Phase 4 검증의 "같은 LAN 의
 두 PC 에서도 `CONNECTED` 에 도달한다" 가 대신 본다.
 
 ## 구현 때 같이 볼 자리

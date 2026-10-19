@@ -236,62 +236,6 @@ TEST_CASE("loop: the quit command asks for shutdown", "[loop]") {
     REQUIRE_FALSE(loop.run_once());  // 다음 바퀴가 종료 이벤트에서 돌아온다
 }
 
-TEST_CASE("loop: the raw command sends the documented pattern", "[loop]") {
-    const WsaContext wsa;
-    auto sender = open_udp_socket();
-    auto receiver = open_udp_socket();
-    REQUIRE(sender.ok());
-    REQUIRE(receiver.ok());
-
-    LoopOptions options;
-    options.peer = Endpoint(kLoopback, receiver.socket->local().port());
-
-    Counters counters;
-    auto session = sangtachi::ConsoleSession::create();
-    REQUIRE(session != nullptr);
-    ConsoleQueue& console = session->queue();
-    EventLoop loop(std::move(*sender.socket), counters, console, session->event(), options);
-    REQUIRE(console.try_push("raw 100"));
-    ::SetEvent(loop.console_event());
-    REQUIRE(loop.run_once());
-
-    std::array<std::byte, sangtachi::network::kRecvBufferSize> buffer{};
-    REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 2000) == WAIT_OBJECT_0);
-    REQUIRE(receiver.socket->enumerate_events());
-    const auto got = receiver.socket->recv_from(buffer);
-    REQUIRE(got.status == sangtachi::network::RecvStatus::Received);
-    REQUIRE(got.length == 100);
-    for (std::size_t i = 0; i < 100; ++i) {
-        INFO("byte " << i);
-        REQUIRE(buffer[i] == static_cast<std::byte>(i & 0xFF));
-    }
-}
-
-TEST_CASE("loop: a raw length outside the range sends nothing", "[loop]") {
-    const WsaContext wsa;
-    auto sender = open_udp_socket();
-    auto receiver = open_udp_socket();
-    REQUIRE(sender.ok());
-    REQUIRE(receiver.ok());
-
-    LoopOptions options;
-    options.peer = Endpoint(kLoopback, receiver.socket->local().port());
-
-    Counters counters;
-    auto session = sangtachi::ConsoleSession::create();
-    REQUIRE(session != nullptr);
-    ConsoleQueue& console = session->queue();
-    EventLoop loop(std::move(*sender.socket), counters, console, session->event(), options);
-    REQUIRE(console.try_push("raw 0"));
-    REQUIRE(console.try_push("raw 1473"));
-    REQUIRE(console.try_push("raw abc"));
-    ::SetEvent(loop.console_event());
-    REQUIRE(loop.run_once());
-
-    // 아무것도 오지 않아야 한다.
-    REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 200) == WAIT_TIMEOUT);
-}
-
 TEST_CASE("loop: the console drop counter reaches the table", "[loop]") {
     const WsaContext wsa;
     auto opened = open_udp_socket();
@@ -414,44 +358,6 @@ TEST_CASE("loop: an idle wheel waits instead of spinning", "[loop]") {
     INFO("the wheel returned without anything to do");
     REQUIRE_FALSE(returned_early);
     REQUIRE(returned.load(std::memory_order_acquire));  // 종료 신호로는 돌아온다
-}
-
-TEST_CASE("loop: a word that only starts with raw is not the raw command", "[loop]") {
-    // architecture.md 3.5 기동 입력의 어휘는 `raw <바이트 수>` 하나다. 접두만 보면
-    // raw500 이 500바이트를 보낸다. 그 낱말은 unknown_command 여야 한다.
-    const WsaContext wsa;
-    auto sender = open_udp_socket();
-    auto receiver = open_udp_socket();
-    REQUIRE(sender.ok());
-    REQUIRE(receiver.ok());
-
-    LoopOptions options;
-    options.peer = Endpoint(kLoopback, receiver.socket->local().port());
-
-    Counters counters;
-    auto session = sangtachi::ConsoleSession::create();
-    REQUIRE(session != nullptr);
-    ConsoleQueue& console = session->queue();
-    EventLoop loop(std::move(*sender.socket), counters, console, session->event(), options);
-    REQUIRE(console.try_push("raw500"));
-    REQUIRE(console.try_push("rawx"));
-    ::SetEvent(loop.console_event());
-    REQUIRE(loop.run_once());
-
-    // 어느 쪽도 보내지 않았다.
-    REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 200) == WAIT_TIMEOUT);
-
-    // 어휘 안의 낱말은 그대로 보낸다.
-    REQUIRE(console.try_push("raw 500"));
-    ::SetEvent(loop.console_event());
-    REQUIRE(loop.run_once());
-
-    std::array<std::byte, sangtachi::network::kRecvBufferSize> buffer{};
-    REQUIRE(::WaitForSingleObject(receiver.socket->read_event(), 2000) == WAIT_OBJECT_0);
-    REQUIRE(receiver.socket->enumerate_events());
-    const auto got = receiver.socket->recv_from(buffer);
-    REQUIRE(got.status == sangtachi::network::RecvStatus::Received);
-    REQUIRE(got.length == 500);
 }
 
 TEST_CASE("loop: a receive error raises rx_err_recv", "[loop]") {
@@ -714,12 +620,28 @@ TEST_CASE("loop: send_datagram counts and logs a failed send", "[loop]") {
     ConsoleQueue& console = session->queue();
     EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
 
+    sangtachi::testing::LogCapture logs;
     REQUIRE(loop.send_datagram(to, tunnel_pattern(32)));
     REQUIRE(counters.value(Counter::TxErrSend) == 0);
+    REQUIRE(logs.with_event("socket.error").empty());
 
     // SO_BROADCAST 를 켜지 않은 소켓에서 브로드캐스트로 보내면 실패가 결정적이다.
     REQUIRE_FALSE(loop.send_datagram(Endpoint(0xFFFFFFFFu, 9), tunnel_pattern(10)));
     REQUIRE(counters.value(Counter::TxErrSend) == 1);
+
+    // roadmap.md Phase 1 검증: 오류 코드를 로그에 남긴다 (architecture.md 9장 socket.error).
+    const auto errors = logs.with_event("socket.error");
+    REQUIRE(errors.size() == 1);
+    INFO(errors[0]);
+    REQUIRE(errors[0].find(" op=sendto ") != std::string::npos);
+    REQUIRE(errors[0].find(" code=0") == std::string::npos);
+    REQUIRE(errors[0].find(" code=") != std::string::npos);
+
+    // 그 뒤에도 루프가 콘솔 명령을 처리한다.
+    REQUIRE(console.try_push("counters"));
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());
+    REQUIRE_FALSE(logs.with_event("counter").empty());
 }
 
 TEST_CASE("loop: send goes to the send handler, a longer word does not", "[loop][send]") {

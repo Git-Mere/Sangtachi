@@ -50,13 +50,4 @@ std::optional<std::string> sha256_hex(std::span<const std::byte> data) {
     return out;
 }
 
-std::optional<std::string> sha256_short(std::span<const std::byte> data) {
-    auto full = sha256_hex(data);
-    if (!full) {
-        return std::nullopt;
-    }
-    full->resize(kShortHashChars);
-    return full;
-}
-
 }  // namespace sangtachi

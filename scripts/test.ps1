@@ -49,7 +49,7 @@ if (-not $Filter -and -not $Asan) {
     & (Join-Path $PSScriptRoot 'cli-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "cli check failed ($LASTEXITCODE)" }
 
-    # 프로세스 여럿이 실제로 데이터그램을 주고받는지 본다.
+    # 제어 서버 없이 두 프로세스의 기동, bind, 콘솔 명령, 종료를 본다.
     & (Join-Path $PSScriptRoot 'e2e-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "end-to-end check failed ($LASTEXITCODE)" }
 

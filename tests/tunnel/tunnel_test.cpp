@@ -668,7 +668,7 @@ TEST_CASE("tunnel: session.loss through the receive entry point", "[tunnel][loop
 
 namespace {
 
-// rx.raw 같은 진단 줄 10만 개를 내지 않는다. 판정은 카운터로 한다.
+// 진단 줄 10만 개를 내지 않는다. 판정은 카운터로 한다.
 class QuietLog final : public LogSink {
 public:
     QuietLog() noexcept : previous_(set_log_sink(this)) {}

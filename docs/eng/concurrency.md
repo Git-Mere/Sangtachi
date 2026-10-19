@@ -208,6 +208,13 @@ already left the socket queue by the time it is returned. Doing `return EMPTY` t
 iteration's drain after one item, so mixing in oversize datagrams alone would defeat batching.
 Drop it and keep draining. For other errors the cause is unknown, so end that iteration.
 
+**Bytes and datagrams sent and received are counted.** When `sendto` succeeds, the bytes sent are added
+to `tx_bytes` and 1 to `tx_datagrams`. When `recvfrom` succeeds, the bytes returned are added to `rx_bytes`
+and 1 to `rx_datagrams`. The bytes are the UDP payload including the tunnel header. Packet type and peer
+are not distinguished, and STUN is counted too. An oversize datagram is counted as the 1473 bytes
+`recvfrom` returned. A receive that failed with `WSAEMSGSIZE` has no returned value, so it is not counted.
+All four live only in the process table. The capture comparison of `roadmap.md` Phase 7 uses these values.
+
 **Every other receive error is counted by `rx_err_recv`.** With only a log line (`socket.error` of
 `architecture.md` chapter 9), why that iteration ended early would not be left in a full counter dump.
 It is the pair of `tx_err_send` on the send side. It is not split per error code. The code is carried by
@@ -251,6 +258,15 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
 **`route_and_send` is [`roadmap.md`](roadmap.md) Phase 7 work.** Until then a read packet is
 counted as `adapter_rx` and handed only to the test build's ICMP responder (`roadmap.md` Phase 6
 verification); the product build drops it.
+
+**Once `route_and_send` is connected, the test build's ICMP responder answers only destinations outside
+the routing range.** Those are echo requests whose destination is inside `10.100.0.0/24` with a last octet
+greater than `MAX_PEERS` and less than 255. A packet the responder answered does not go to
+`route_and_send`. Every other packet goes to `route_and_send` in both builds.
+
+> **Why.** Answering without looking at the destination would let the test build answer its own `ping`
+> to the peer's virtual IP and pass without going through the tunnel. The rationale and the rejected
+> alternatives are [ADR 0029](decisions/0029-decisions-before-phase-7.md).
 
 `WintunReleaseReceivePacket` is **attached as a scope guard.** If it is placed after
 `route_and_send` in call order, an early return or exception inside leaks the ring packet. Each
@@ -370,8 +386,8 @@ counter" (`roadmap.md`). The injection side does not count successes. Only failu
 by `drop_inject_ring_full` and `drop_inject_error`.
 
 **The counters in this section are at a different layer from the counters in `protocol.md`.**
-`drop_oversize_datagram`, `drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`, and
-`rx_err_adapter` count results
+`drop_oversize_datagram`, `drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`,
+`rx_err_adapter`, `tx_bytes`, `rx_bytes`, `tx_datagrams`, and `rx_datagrams` count results
 returned by the socket and adapter APIs, so this document defines them. The `drop_*` counters in
 `protocol.md` chapter 7 Receive Classification and chapter 8 Receive Validation Pipeline belong
 to wire classification and the validation pipeline. Do not mix the two sources when making a

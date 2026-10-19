@@ -1182,9 +1182,11 @@ logic is owned by the project.
 - Transmit over the direct UDP connection
 - Decapsulate received packets
 - Inject the original IP packet into Wintun
-- Inbound firewall rule for the virtual adapter ([`windows-prereq.md`](windows-prereq.md) 2). ICMP echo and TCP from the peer must come in through the adapter
+- Inbound firewall rule for the virtual adapter ([`windows-prereq.md`](windows-prereq.md) 2). ICMP echo and TCP from the peer must come in through the adapter. The client verifies the rules and creates them if missing
+- Narrow the test build's ICMP responder to destinations outside the routing range ([`concurrency.md`](concurrency.md) chapter 3)
 - Handle packet size limits and fix the MTU
-- Add counters and diagnostics
+- Add counters and diagnostics. `tx_drop_not_unicast` ([`protocol.md`](protocol.md) 8.5) and the sent/received byte and datagram counters (`concurrency.md` chapter 3)
+- The pre-start decisions are [ADR 0029](decisions/0029-decisions-before-phase-7.md)
 
 ### Deliverable
 
@@ -1192,9 +1194,12 @@ Two Windows machines communicate using virtual IPs only.
 
 ### Verification
 
+- The two-machine verification runs on the product build. The test build's ICMP responder does not get involved
+- Before starting, check on both machines that no other block rule stops TCP 25565 or ICMP echo requests.
+  The startup verification checks only our rules, not this (`windows-prereq.md` 2)
 - `ping` round trip to the peer's virtual IP succeeds
-- File transfer between virtual IPs (SMB or a temporary TCP server) succeeds with matching content.
-  **This item is the verdict for NFR-2**
+- File transfer between virtual IPs succeeds with matching content. Send it through a temporary TCP
+  server on 25565 and compare the SHA-256 on both sides. **This item is the verdict for NFR-2**
   - It shows that non-Minecraft traffic passes through the tunnel unchanged
   - One more pass condition is attached. Run this test and the Phase 8 Minecraft test with the same
     tunnel build. If the tunnel code had to be changed to switch applications, NFR-2 does not hold
@@ -1206,18 +1211,22 @@ Two Windows machines communicate using virtual IPs only.
   - The verdict does not look at the counter alone. Also check that the keepalive send interval is
     maintained during the interval where injection fails
   - An implementation that retries until space frees up is caught because that interval collapses
+  - The verdict is made by a unit test that makes the send ring full with a fake adapter
+    (`tests/adapter_loop_test.cpp`). The real ring depends on how fast the operating system drains it,
+    so it cannot be filled deterministically
 - Cross-check send/receive byte counters against a packet capture. **The pass criteria belong to the
   table below.**
 
 | Item | Definition |
 |------|------|
 | Counting basis | **UDP payload bytes including the tunnel header.** Ethernet, IP, and UDP headers are not counted |
-| Measurement point | The client counts the bytes returned by successful `sendto`/`recvfrom`. The capture filters only that socket's 5-tuple on the same machine |
-| Sample condition | **Generated traffic,** not game traffic. Only the interval that starts idle, sends a fixed count, and stops is inspected. Sizes are 20 / 576 / 1452 bytes from the Phase 5 boundary table |
+| Measurement point | The client counts the bytes returned by successful `sendto`/`recvfrom` (`tx_bytes`, `rx_bytes` of `concurrency.md` chapter 3). The capture filters by that socket's local UDP port on the same machine. The counters do not distinguish peers or packet types, so the capture does not either |
+| Sample condition | **Generated traffic,** not game traffic. Only the interval that starts idle, sends a fixed count, and stops is inspected. Sizes are 20 / 576 / 1452 bytes from the Phase 5 boundary table. These sizes are within `MAX_DATAGRAM`, so no receive fails with `WSAEMSGSIZE` |
+| Measurement boundary | **Still empty. Decide it when writing the comparison procedure and write it in this cell.** The counters accumulate from process start and keepalive and `PING` flow even when idle, so unless the counter difference and the capture are cut at the same boundary they differ by that much |
 | Count | **Still empty. Decide it at test time and write it in this cell.** Try 1,000 / 5,000 / 10,000 / 50,000 in order and pick the largest value for which capture loss is reported as 0. The ladder is only a search grid; the chosen value is what the verdict uses. It depends on the machine and capture setup and cannot be invented in advance |
-| Valid interval | Judge **only in an interval where the capture tool reports 0 loss.** Non-zero is not a failure; discard and measure again |
-| Pass condition | Byte sums match in the valid interval. If the capture sum is **greater** than the counter sum, it is a failure. Bytes were sent uncounted, so it is a counting bug |
-| Packet count | **Recorded for reference only.** With UDP segmentation offload on, the capture sees a different number of datagrams. The byte sum is still the same |
+| Valid interval | Judge **only in an interval where the capture tool reports 0 loss.** On the receive side the operating system's UDP receive error statistics (`netstat -s -p udp`) must not rise in that interval either. A datagram dropped from the socket buffer is in the capture but not in `recvfrom`. If either is non-zero, it is not a failure; discard and measure again |
+| Pass condition | Byte sums match in the valid interval. If the capture sum is **greater** than the counter sum, it is a failure. On the send side bytes were sent uncounted, and on the receive side the valid interval already excluded socket buffer drops, so bytes were received uncounted. It is a counting bug |
+| Packet count | **Recorded for reference only.** The counters are `tx_datagrams` and `rx_datagrams`. With UDP segmentation offload on, the capture sees a different number of datagrams. The byte sum is still the same |
 
   **What this test does not guarantee.** Accuracy in an interval where the capture experiences loss is
   not judged. This test says nothing about counting accuracy under high load

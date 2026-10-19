@@ -200,6 +200,12 @@ drain_udp(budget) -> {EMPTY, BUDGET}:
 비우기가 한 개에서 끝나므로, 과대 데이터그램을 섞어 보내는 것만으로 배칭이 무력화된다.
 버리고 계속 비운다. 다른 오류는 원인을 모르므로 그 바퀴를 끝낸다.
 
+**송수신한 바이트와 데이터그램을 센다.** `sendto` 가 성공하면 `tx_bytes` 에 보낸 바이트를,
+`tx_datagrams` 에 1 을 더한다. `recvfrom` 이 성공하면 `rx_bytes` 에 돌려준 바이트를, `rx_datagrams` 에 1 을
+더한다. 바이트는 UDP 페이로드이고 터널 헤더를 포함한다. 패킷 타입과 상대를 가리지 않고 STUN 도 센다.
+과대 데이터그램도 `recvfrom` 이 돌려준 1473바이트를 센다. `WSAEMSGSIZE` 로 실패한 수신은 돌려준 값이 없으므로
+세지 않는다. 넷 다 프로세스 표에만 있다. `roadmap.md` Phase 7 의 캡처 대조가 이 값을 쓴다.
+
 **그 밖의 수신 오류는 `rx_err_recv`로 센다.** 로그 한 줄(`architecture.md` 9장의
 `socket.error`)만 내면 그 바퀴가 왜 짧게 끝났는지가 카운터 전량 출력에 남지 않는다. 송신 쪽의
 `tx_err_send`와 짝이다. 오류 코드별로 나누지 않는다. 코드는 로그가 싣는다.
@@ -240,6 +246,13 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
 **`route_and_send` 는 [`roadmap.md`](roadmap.md) Phase 7 작업이다.** 그 전에는 읽은 패킷을
 `adapter_rx` 로 센 뒤 시험 빌드의 ICMP 응답기(`roadmap.md` Phase 6 검증)에만 넘기고, 제품 빌드는
 버린다.
+
+**`route_and_send` 가 이어진 뒤 시험 빌드의 ICMP 응답기는 라우팅 범위 밖의 목적지에만 답한다.** 목적지가
+`10.100.0.0/24` 안이고 마지막 옥텟이 `MAX_PEERS` 보다 크고 255 보다 작은 에코 요청이 그것이다. 응답기가 답한
+패킷은 `route_and_send` 로 가지 않는다. 그 밖의 패킷은 두 빌드 모두 `route_and_send` 로 간다.
+
+> **왜.** 목적지를 보지 않고 답하면 시험 빌드에서 상대의 가상 IP 로 보낸 `ping` 에 자기가 답해 터널을 지나지
+> 않고도 통과한다. 근거와 버린 대안은 [ADR 0029](decisions/0029-phase-7-착수-전-결정.md) 다.
 
 `WintunReleaseReceivePacket`은 **스코프 가드로 건다.** 호출 순서상 `route_and_send` 뒤에
 두면 그 안에서 조기 반환하거나 예외가 나갈 때 링 패킷이 샌다. 한 번 빠뜨릴 때마다 링 버퍼가
@@ -345,7 +358,8 @@ Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀�
 성공을 세지 않는다. 실패만 `drop_inject_ring_full`과 `drop_inject_error`로 센다.
 
 **이 절의 카운터는 `protocol.md`의 카운터와 계층이 다르다.** `drop_oversize_datagram`,
-`drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`, `rx_err_adapter`는 소켓과 어댑터 API가 낸 결과를 세는 것이라
+`drop_inject_ring_full`, `drop_inject_error`, `drop_no_sink`, `adapter_rx`, `rx_err_adapter`, `tx_bytes`, `rx_bytes`,
+`tx_datagrams`, `rx_datagrams`는 소켓과 어댑터 API가 낸 결과를 세는 것이라
 이 문서가 정의한다. `protocol.md` 7장 수신 분류와 8장 수신 검증 파이프라인의 `drop_*`는 와이어
 분류와 검증 파이프라인의 카운터다. 목록을 만들 때 두 출처를 섞지 않는다.
 

@@ -15,12 +15,14 @@
 
 ## 다음에 할 일
 
-Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖는다.
+Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖는다. 착수 전 결정은
+[ADR 0029](decisions/0029-phase-7-착수-전-결정.md) 로 닫았다.
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 어댑터에서 읽은 패킷을 터널로, 받은 `DATA` 를 어댑터로 잇는다 | Phase 7 작업. 이음매는 `EventLoop::set_adapter_handler` 와 `inject_packet`, 터널의 페이로드 훅 칸이다 |
-| 2 | 두 기기 검증 | Phase 7 검증은 두 Windows 기기가 있어야 한다 |
+| 1 | 어댑터에서 읽은 패킷을 터널로, 받은 `DATA` 를 어댑터로 잇는다. 시험 빌드 ICMP 응답기 범위, `tx_drop_not_unicast`, 송수신 바이트·데이터그램 카운터를 같이 한다 | Phase 7 작업. 이음매는 `EventLoop::set_adapter_handler` 와 `inject_packet`, 터널의 페이로드 훅 칸이다 |
+| 2 | 방화벽 규칙의 검증과 만들기 | `windows-prereq.md` 2절 클라이언트가 만드는 규칙. 실행 파일 옆 스크립트와 케이스 표, 기동 단계 연결. 관리자 셸에서 확인한다 |
+| 3 | 두 기기 검증 | Phase 7 검증은 두 Windows 기기가 있어야 한다. 두 번째 기기를 언제 쓸 수 있는지 저장소 소유자 답 대기 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.

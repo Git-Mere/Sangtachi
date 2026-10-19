@@ -697,9 +697,10 @@ does not configure addresses or routes.
 | Same | Check for subnet conflicts (same document, 7). Call `Test-SubnetOverlap.ps1` next to the executable with our adapter's GUID and name and judge by its exit code | Startup failure if not 0 |
 | Same | Compare the SHA-256 of `wintun.dll` with the expected value and load it (same document, 4) | Startup failure |
 | Same | Create the adapter. Its name and GUID are client constants (same document, 3). Set the interface MTU to the default of [`protocol.md`](protocol.md) chapter 12 and the IPv4 DAD transmit count to 0 (same document, 9), delete any remaining IPv4 addresses, then open the session | Startup failure |
+| Same | Verify the inbound firewall rules for our adapter. If they are missing, create them and verify again. The same document, 2, owns the rules and the checks | Startup failure |
 | `create_room`, `join_room` success response | Attach the received virtual IP as `/24`. Create the on-link route for that range only if this adapter does not have it (same document, 8). Wait until the address is `Preferred` (same document, 9) | One `ERROR` line, then signal the shutdown event |
 | Leaving the room ([`concurrency.md`](concurrency.md) chapter 7 Lobby) | Delete the attached address and any route created | One `WARN` line. The next room's address setup first deletes the same adapter's address |
-| Shutdown (steps 5 and 6 of `concurrency.md` chapter 7 Shutdown) | Close the session, delete the address and route, close the adapter. Wintun deletes the adapter on close | One `WARN` line if the address or route cannot be deleted. The adapter is closed anyway |
+| Shutdown (steps 5 and 6 of `concurrency.md` chapter 7 Shutdown) | Close the session, delete the address and route, close the adapter. Wintun deletes the adapter on close. The firewall rules are not removed (same document, 2) | One `WARN` line if the address or route cannot be deleted. The adapter is closed anyway |
 
 The exit code and `ERROR` line of a startup failure are the same as "Argument error behavior" in 3.5 Startup Inputs. The steps run in the order of the table above.
 

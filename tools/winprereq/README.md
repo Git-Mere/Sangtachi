@@ -32,6 +32,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Test-SubnetO
 자기 자신 때문에 차단이 나온다. 우리 어댑터는 `-OwnInterfaceGuid` 로만 뺀다. 이름은 소유의
 증거가 아니다.
 
+## Probe-FirewallRuleBinding.ps1
+
+`windows-prereq.md` 2절의 실측. 어댑터로 좁힌 규칙이 어댑터를 지웠다 다시 만든 뒤에도 그 어댑터에 묶이는지 본다.
+**위 둘과 달리 관리자 권한과 PowerShell 7(`pwsh`)이 필요하다.** 제품 빌드 클라이언트를 두 번 띄워 진짜 어댑터를
+만들고, 시험용 규칙(그룹 `SangtachiProbe`)을 만들었다가 끝에 지운다.
+
+```powershell
+pwsh -NoProfile -File tools\winprereq\Probe-FirewallRuleBinding.ps1 -ClientExe '<sangtachi_client.exe>' -LogPath '<로그 파일>'
+```
+
+판정하지 않는다. 세 시점(만든 직후, 어댑터가 없을 때, 다시 섰을 때)의 `InterfaceAlias` 와 레지스트리 규칙 원문을
+찍고, 사람이 읽는다. 아래 판정 표에 들지 않는다.
+
 ## 판정 읽는 법
 
 | 스크립트 | 마지막 줄 | 종료 코드 |

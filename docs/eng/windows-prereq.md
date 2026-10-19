@@ -90,8 +90,10 @@ needs them. The marginal cost is "one more rule with rights we already have".
 
 **Status: partly measured.** The default inbound policy and the profile classification of existing
 adapters were actually observed. Our newly created adapter being classified as `Public` was seen in
-`scripts/adapter-check.ps1`. **No inbound rule for that adapter has been created yet.** That is
-[`roadmap.md`](roadmap.md) Phase 7 work.
+`scripts/adapter-check.ps1`. That a rule scoped to the adapter stays bound to the adapter after it is
+deleted and recreated was also seen (Rules the client creates, below). **The client creating the rules
+is not implemented yet.** That is [`roadmap.md`](roadmap.md) Phase 7 work. Whether the rules actually let
+traffic through needs a peer machine, so the Phase 7 verification checks it.
 
 Windows Firewall is **inbound-block by default.** A newly created virtual adapter has no gateway,
 so it is classified as an "unidentified network", and that gets the Public profile. Under Public,
@@ -115,9 +117,9 @@ it to the firewall alone is confirmed when a peer exists and the inbound measure
 - The 6 cases here are a local policy query, while that one is a measurement across the network. A
   different path can have a different cause
 
-**Owner: client + person.** Profile classification and rule registration can be done by the client
-when it has administrator rights. The Minecraft (Java) exception has to be checked by a person
-because of section 12.
+**Owner: client + person.** The client creates and verifies the rules for our adapter (Rules the
+client creates, below). Removing them is a person's job. The Minecraft (Java) exception has to be
+checked by a person because of section 12.
 
 ### Checking the default policy
 
@@ -238,6 +240,69 @@ the result.**
 ```powershell
 Set-NetConnectionProfile -InterfaceAlias '<adapter name>' -NetworkCategory Private
 Get-NetConnectionProfile -InterfaceAlias '<adapter name>' | Select-Object NetworkCategory
+```
+
+### Rules the client creates
+
+**Right after creating the adapter, the client checks the two rules below and creates them if they are
+missing.** It does not remove them. The place is the startup stage of [`architecture.md`](architecture.md)
+chapter 7 Adapter lifetime. A `--no-adapter` run skips it.
+
+| Name | Group | What it opens |
+|------|-------|---------------|
+| `Sangtachi TCP 25565 In` | `Sangtachi` | Inbound allow, TCP, local port 25565 |
+| `Sangtachi ICMPv4 Echo In` | `Sangtachi` | Inbound allow, ICMPv4, echo request (type 8) |
+
+Both rules have the same shape as the `New-NetFirewallRule` example above. The profile is `Any` and the
+interface is our adapter alone. The host and the player use the same rules. One process can be both
+through the lobby.
+
+**Verify before use.** A rule that already existed and a rule just created go through the same
+verification. For each rule, everything below is checked. The principle is whether it has the shape it
+was created with.
+
+| Check | What it stops |
+|-------|---------------|
+| Exactly one rule has that name | One of several rules with the same name being wide |
+| The group is `Sangtachi` | A rule the removal command below does not catch |
+| It is enabled | Counting a disabled rule as coverage |
+| Direction is inbound and action is allow | A rule changed to block |
+| The interface is our adapter alone | A rule on every adapter, or a rule bound to another adapter |
+| Protocol, port and ICMP type match the table above | A port or type that is wider or different |
+| Profile, address, program and service are `Any` | A rule with conditions that keep it from applying, or a rule different from the one created |
+
+**It also checks that the firewall is not in `BlockInboundAlways` mode.** That mode ignores every allow
+rule (Checking the default policy, above). Other block rules on the same port are not checked. A person
+checks them, like the Java rules of section 12.
+
+**Startup fails if verification fails, cannot be decided, or a rule cannot be created.** Cannot be
+decided means a query failed (section 0). The `ERROR` line carries the check that did not match and the
+command that removes that rule by name (`Remove-NetFirewallRule -DisplayName '<name>'`), because a rule
+whose group was changed is not caught by the group command below. The client does not fix or remove an existing rule.
+
+> **Why.** A matching name alone is not a reason to delete someone else's policy. Using a rule that looks
+> different would mean trusting a widely open rule as ours.
+
+**A script next to the executable makes the decision.** Like the subnet overlap check in section 7, it is
+called with Windows PowerShell from `System32` and judged by the exit code. The case table lives inside
+the script.
+
+**A rule remembers its interface by GUID.** This was checked in an elevated shell by creating the rules
+with the adapter up, ending the client, and starting it again. The procedure is
+[`tools/winprereq/Probe-FirewallRuleBinding.ps1`](../../tools/winprereq/Probe-FirewallRuleBinding.ps1),
+which prints output for a person to read without a verdict.
+
+- The rule text in the registry had `IF={<adapter GUID>}`
+- While the adapter was gone, the rule's `InterfaceAlias` showed the GUID string. When an adapter with
+  the same GUID came back up, it returned to the name
+- The rules neither disappeared nor got disabled
+
+Our adapter's GUID is a constant (section 3), so a rule created once stays bound on the next run.
+
+**This is the removal command.** Run it in an elevated PowerShell.
+
+```powershell
+Remove-NetFirewallRule -Group 'Sangtachi'
 ```
 
 ## 3. Cleaning up leftover adapters, addresses and routes
@@ -987,7 +1052,7 @@ If the binary was changed right before the demo, run it once more with that file
 | # | Item | Who | When |
 |---|------|-----|------|
 | 1 | Administrator rights | person | every run |
-| 2 | Firewall profile and rules | client + person | right after adapter creation |
+| 2 | Firewall rules (the client creates and verifies, a person removes) | client + person | right after adapter creation |
 | 3 | Leftover cleanup | client | at start |
 | 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | build + client (check at run time) | when making the distribution and at run time |
 | 5 | `server.properties` | person | when first setting up the server |
@@ -1021,7 +1086,7 @@ To make the comparison explicit.
 | Router configuration | Required. The screen differs per model and it is impossible under CGNAT | None |
 | Administrator rights | Not required | **Required** |
 | Driver | Not required | **Required** (Wintun) |
-| Firewall | 1 exception for the server port | Server port exception + adapter profile |
+| Firewall | 1 exception for the server port | Server port exception (the client creates it on our adapter) + checking the Java rules (section 12) |
 | Burden on both sides | Server side only | **Both sides** |
 
 **Neither side is unilaterally easier.** Only in environments where the router cannot be touched

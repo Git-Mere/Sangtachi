@@ -75,11 +75,16 @@ COUNTERS_SOURCE = "client/src/counters.cpp"
 # **남겨 두면 결함이다.** 코드에 이미 있는 이름이 여기 있으면 `counter` 검사가 떨어진다.
 PENDING_COUNTERS = {
     "telemetry_upload_failed": "Phase 9",
+    "tx_drop_not_unicast": "Phase 7",
+    "tx_bytes": "Phase 7",
+    "rx_bytes": "Phase 7",
+    "tx_datagrams": "Phase 7",
+    "rx_datagrams": "Phase 7",
 }
 
 # 문서 본문 코드 스팬 가운데 카운터로 읽는 모양. 코드에서 문서로 갈 때는 이 모양을 보지 않고
 # 이름 그대로 찾으므로, 모양에 맞지 않는 새 이름도 문서에 없으면 걸린다.
-COUNTER_SHAPE = re.compile(r"(?:(?:drop|tx_drop|tx_err|rx_err)_[a-z0-9_]+|[a-z0-9_]+_(?:dropped|failed|learned|rx))")
+COUNTER_SHAPE = re.compile(r"(?:(?:drop|tx_drop|tx_err|rx_err)_[a-z0-9_]+|[a-z0-9_]+_(?:dropped|failed|learned|rx|bytes|datagrams))")
 # 코드 쪽은 이름의 모양을 거르지 않는다. 거르면 규칙 밖의 이름이 대조에서 조용히 빠진다.
 # 대신 파일의 `case` 를 모두 세어 이 모양으로 읽힌 수와 맞지 않으면 통과로 적지 않는다.
 COUNTER_CASE = re.compile(r"\bcase\b")

@@ -849,13 +849,20 @@ a Wintun read; before that it is a synthetic packet built by tests. The checks a
 | 2 | IP version nibble == 4 | `tx_drop_not_ipv4` |
 | 3 | Length <= `MAX_INNER` | `tx_drop_oversize` |
 | 4 | Source IP == our own virtual IP | `tx_drop_bad_src` |
-| 5 | Pick the session by destination IP. Fail if there is none | `tx_drop_no_route` |
-| 6 | The picked session is `CONNECTED` | `tx_drop_not_connected` |
+| 5 | The destination is unicast. Not multicast (`224.0.0.0/4`), not the limited broadcast (`255.255.255.255`), not the broadcast of the virtual range (`10.100.0.255`) | `tx_drop_not_unicast` |
+| 6 | Pick the session by destination IP. Fail if there is none | `tx_drop_no_route` |
+| 7 | The picked session is `CONNECTED` | `tx_drop_not_connected` |
 
 **The length check comes first.** Source and destination sit at offsets 12~20, so reading them before confirming the 20-byte lower bound
 reads outside the buffer. On the receive side, check 6 of 8.1 Common Checks guarantees the same lower bound, but the transmit side
 has no counterpart. Wintun rarely hands out fewer than 20 bytes, but a decision function does not leave rare
 cases as assumptions.
+
+**A destination that is not unicast is counted separately before the route lookup.** Once the adapter
+is up, the operating system sends multicast and broadcast on its own. If that mixes into
+`tx_drop_no_route`, a rise in that counter no longer tells whether there was unicast with no route. The
+tunnel does not carry broadcast, so these packets are dropped anyway. The rationale is
+[ADR 0029](decisions/0029-decisions-before-phase-7.md).
 
 **Picking the session comes before the state check.** With several sessions, "that state" does not
 belong to any session until the destination has picked one. The host holds at most `MAX_PEERS - 1`
@@ -874,13 +881,14 @@ virtual IP and the value is a session. Lookup has two steps.
 
 | Destination | Step 1 | Step 2 | Result |
 |--------|-------|-------|------|
-| `10.100.0.1` (host, session exists) | pass | session in the slot | go to check 6 |
+| `10.100.0.1` (host, session exists) | pass | session in the slot | go to the `tx_drop_not_connected` check |
 | `10.100.0.3` (nobody there yet) | pass | empty slot | `tx_drop_no_route` |
 | Our own virtual IP | pass | **permanently empty slot** | `tx_drop_no_route` |
 | Another player's virtual IP (sent by a player) | pass | empty slot | `tx_drop_no_route` |
 | `10.100.0.0` | blocked (octet 0) | not read | `tx_drop_no_route` |
-| `10.100.0.6` ~ `10.100.0.255` | blocked (out of range) | not read | `tx_drop_no_route` |
-| `8.8.8.8`, `224.0.0.1`, `255.255.255.255` | blocked (out of range) | not read | `tx_drop_no_route` |
+| `10.100.0.6` ~ `10.100.0.254` | blocked (out of range) | not read | `tx_drop_no_route` |
+| `8.8.8.8` | blocked (out of range) | not read | `tx_drop_no_route` |
+| `10.100.0.255`, `224.0.0.1`, `255.255.255.255` | not looked up | not read | `tx_drop_not_unicast` |
 
 - **Slot 0 is permanently empty.** `10.100.0.0` is the network address and is never assigned. Step 1
   already blocks it, but the slot is kept so there is no index arithmetic
@@ -905,8 +913,8 @@ terminal state it is `drop_terminal_state`; once deleted, `drop_unknown_peer` (5
 inner source check of `DATA` also compares against the new session's peer virtual IP, so even an
 identical value is already caught in the header.
 
-`tx_drop_no_route` is a global counter, not a per-session one. It covers the case where no session
-was picked, so there is no session to attribute it to.
+`tx_drop_no_route` and `tx_drop_not_unicast` are global counters, not per-session ones. They cover the
+case where no session was picked, so there is no session to attribute them to.
 
 **The check numbers of this table are not cited from other sections.** Point at it from outside by
 counter name instead (for example, "the `tx_drop_not_connected` check of 8.5"). Adding one check

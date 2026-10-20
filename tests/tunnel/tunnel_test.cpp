@@ -1130,14 +1130,33 @@ TEST_CASE("tunnel: the 8.5 routing case table", "[tunnel][route]") {
     TunnelFixture f;
     peer::Session* host = f.connect();  // 10.100.0.1
     REQUIRE(f.tunnel.route(kPeerVip) == host);
-    for (const std::uint32_t vip : {0x0A640003u, kLocalVip, 0x0A640000u, 0x0A640006u, 0x0A6400FFu,
-                                    0x08080808u, 0xE0000001u, 0xFFFFFFFFu}) {
+    // 경로 없는 유니캐스트. 223.255.255.255 와 240.0.0.0 은 멀티캐스트 대역의 바로 바깥이다.
+    for (const std::uint32_t vip : {0x0A640003u, kLocalVip, 0x0A640000u, 0x0A640006u, 0x0A6400FEu,
+                                    0x08080808u, 0xDFFFFFFFu, 0xF0000000u}) {
         INFO("vip=" << vip);
         REQUIRE(f.tunnel.route(vip) == nullptr);
         REQUIRE(f.tunnel.send_data(inner_to(vip)) == tunnel::TxOutcome::kDropped);
     }
     REQUIRE(f.count(Counter::TxDropNoRoute) == 8);
+    REQUIRE(f.count(Counter::TxDropNotUnicast) == 0);
+    // 유니캐스트가 아닌 목적지는 경로 조회 전에 따로 센다. 224.0.0.0/4 의 양 끝을 넣는다.
+    for (const std::uint32_t vip : {0x0A6400FFu, 0xE0000000u, 0xE00000FBu, 0xEFFFFFFFu, 0xFFFFFFFFu}) {
+        INFO("vip=" << vip);
+        REQUIRE(f.tunnel.send_data(inner_to(vip)) == tunnel::TxOutcome::kDropped);
+    }
+    REQUIRE(f.count(Counter::TxDropNotUnicast) == 5);
+    REQUIRE(f.count(Counter::TxDropNoRoute) == 8);
     REQUIRE(f.scount(Counter::TxDropNotConnected) == 0);
+    REQUIRE(data_count(f) == 0);
+}
+
+TEST_CASE("tunnel: the unicast check comes after the source check", "[tunnel][route]") {
+    // 8.5 의 순서. 출발지가 틀린 멀티캐스트는 tx_drop_bad_src 다.
+    TunnelFixture f;
+    (void)f.connect();
+    REQUIRE(f.tunnel.send_data(inner_to(0xE00000FBu, 0x0A640009u)) == tunnel::TxOutcome::kDropped);
+    REQUIRE(f.count(Counter::TxDropBadSrc) == 1);
+    REQUIRE(f.count(Counter::TxDropNotUnicast) == 0);
 }
 
 TEST_CASE("tunnel: a session is created only into an empty slot of its own", "[tunnel][route]") {

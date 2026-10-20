@@ -42,14 +42,17 @@ enum class RecvStatus {
 
 struct RecvResult {
     RecvStatus status = RecvStatus::Error;
-    std::size_t length = 0;  // Received 일 때만 뜻이 있다
+    // Received 면 받은 길이. Oversize 면 recvfrom 이 돌려준 길이(1473)이고, WSAEMSGSIZE 로 실패했으면
+    // 0 이다. concurrency.md 3장의 rx_bytes 가 이 값을 센다.
+    std::size_t length = 0;
     Endpoint from;           // Received 일 때만 뜻이 있다
     int error = 0;           // WSAGetLastError. Received / WouldBlock 이면 0
 };
 
 struct SendResult {
     bool ok = false;
-    int error = 0;  // ok 가 거짓일 때 WSAGetLastError
+    int error = 0;          // ok 가 거짓일 때 WSAGetLastError
+    std::size_t bytes = 0;  // ok 일 때 sendto 가 돌려준 길이 (concurrency.md 3장의 tx_bytes)
 };
 
 class UdpSocket {

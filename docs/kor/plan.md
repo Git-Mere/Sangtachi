@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 6 까지 끝났다. Phase 6 검증은 관리자 셸의 `scripts/adapter-check.ps1` 로 통과했다. Phase 4·5 에 남은 것은 두 번째 기기가 있어야 하는 실측이다(아래 실측 행). 아래 "다음에 할 일" 이 순서다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 7 의 구현까지 끝났다. Phase 6 검증과 Phase 7 의 한 기기 확인은 관리자 셸의 `scripts/adapter-check.ps1` 로 통과했다. Phase 7 의 두 기기 검증이 남았다. Phase 4·5 에 남은 것은 두 번째 기기가 있어야 하는 실측이다(아래 실측 행). 아래 "다음에 할 일" 이 순서다 |
 | 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 사람이 직접 하는 실측. 두 번째 기기나 시연 상대가 있어야 한다 |
 | 대기 | 이 파일 "대기 중인 것" | 실측 밖의 대기 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
@@ -18,11 +18,13 @@
 Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖는다. 착수 전 결정은
 [ADR 0029](decisions/0029-phase-7-착수-전-결정.md) 로 닫았다.
 
+Phase 7 의 구현은 끝났고 한 기기에서 되는 확인(`scripts/test.ps1`, 관리자 셸의 `scripts/adapter-check.ps1`)은 통과했다.
+남은 것은 두 기기가 있어야 하는 확인이다.
+
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 어댑터에서 읽은 패킷을 터널로, 받은 `DATA` 를 어댑터로 잇는다. 시험 빌드 ICMP 응답기 범위, `tx_drop_not_unicast`, 송수신 바이트·데이터그램 카운터를 같이 한다 | Phase 7 작업. 이음매는 `EventLoop::set_adapter_handler` 와 `inject_packet`, 터널의 페이로드 훅 칸이다 |
-| 2 | 방화벽 규칙의 검증과 만들기 | `windows-prereq.md` 2절 클라이언트가 만드는 규칙. 실행 파일 옆 스크립트와 케이스 표, 기동 단계 연결. 관리자 셸에서 확인한다 |
-| 3 | 두 기기 검증 | Phase 7 검증은 두 Windows 기기가 있어야 한다. 두 번째 기기를 언제 쓸 수 있는지 저장소 소유자 답 대기 |
+| 1 | 두 기기 검증 | `roadmap.md` Phase 7 검증. 저장소 소유자가 시점을 알려 준다. 그때 `field-test/required-test.md` 의 키트 태그(지금 `field-kit-p5`)를 새로 단다 |
+| 2 | 캡처 대조의 측정 경계 | `roadmap.md` Phase 7 캡처 대조 표의 "측정 경계" 가 비어 있다. 대조 절차를 쓸 때 정한다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.

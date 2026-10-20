@@ -26,13 +26,13 @@
 // | 4.3 등록 표의 첫 행과 5.1 시도 nonce 폐기 | **다음 `create_session` 때** 등록한다. 그때 남아 있는 종료 세션의 고정 상대 epoch 와, 끝난 시도의 nonce 다 | 4.3 "우리가 `IDLE`에서 새 시도를 시작할 때", 3장 "항목은 우리가 새 시도를 시작할 때만 생긴다". 지워진 세션의 epoch 는 4.3 대로 등록할 값이 없다 |
 // | 같은 `peer_id` 의 활성 세션이 있는데 또 만든다 | 만들지 않고 널 | 8.5 "비어 있지 않으면 구현 결함" 과 같은 종류다 |
 // | 상대 가상 IP 가 라우팅 칸으로 갈 수 없다 | 만들지 않고 널. `10.100.0.1`~`.5` 밖이거나, 자신의 가상 IP 이거나, 그 칸에 활성 세션이 있다 | 8.5 "자신의 칸도 비어 있다", "비어 있지 않으면 구현 결함이다" |
-// | 8.5 검사 4번의 자신의 가상 IP | 마지막으로 만든 세션의 `local_virtual_ip`. 방을 떠나면 잊는다. 모르면 출발지가 맞을 수 없으므로 `tx_drop_bad_src` | 한 방에서 자신의 가상 IP 는 하나다(control_plane.md 4장 연산) |
+// | 8.5 출발지 검사의 자신의 가상 IP | `create_room`, `join_room` 성공 응답의 가상 IP(`set_local_virtual_ip`). 세션을 만들 때도 그 요청의 값으로 덮는다. 방을 떠나면 잊는다. 모르면 출발지가 맞을 수 없으므로 `tx_drop_bad_src` | 한 방에서 자신의 가상 IP 는 하나다(control_plane.md 4장 연산). 세션을 기다리면 호스트 혼자인 동안 어댑터의 패킷이 전부 `tx_drop_bad_src` 다 |
 // | 송신 실패 | `sendto` 가 실패하면 `kSendFailed`. 학습 전이라 후보 전체로 나갈 때는 실패한 자리에서 멈춘다 | roadmap.md Phase 4 `send` "중간에 `sendto` 가 실패하면 거기서 멈춘다" |
 //
 // ## 송신 (8.5 송신 측 검증, 라우팅 표)
 //
-// `send_data` 가 내부 패킷 하나를 8.5 의 순서대로 본다. 1~5 의 폐기는 프로세스 표, 6 은 고른 세션의
-// 표다(세션을 고르기 전과 뒤, counters.hpp). 통과하면 송신 관찰 칸(시험 빌드의 `data.tx`)을 부르고 그
+// `send_data` 가 내부 패킷 하나를 8.5 의 순서대로 본다. 세션을 고르기 전의 폐기(유니캐스트 검사와 경로
+// 없음까지)는 프로세스 표, `tx_drop_not_connected` 는 고른 세션의 표다(counters.hpp). 통과하면 송신 관찰 칸(시험 빌드의 `data.tx`)을 부르고 그
 // 세션이 `DATA` 로 캡슐화해 보낸다(10.4 목적지).
 //
 // 라우팅 표(tunnel/router)의 칸은 세션을 만들 때 채우고 세션이 종료 상태에 닿으면 **기록 줄과
@@ -105,8 +105,9 @@ struct TunnelDeps {
     std::function<Millis()> clock;             // 타이머 시계 (platform::monotonic_ms)
     peer::MicrosFn rtt_clock_us;               // RTT 시계 (platform::monotonic_us)
     peer::RandomFn random;                     // epoch, 시도 nonce, 세션의 probe nonce. 비우면 platform::random_bytes (peer/epoch)
-    // concurrency.md 3장 페이로드 훅. **제품 경로는 비워 둔다.** 그러면 8.4 를 통과한 DATA 가
-    // drop_no_sink 로 끝난다. 시험 빌드의 M-5 비교와 에코 응답기(3차 H)가 여기에 붙는다.
+    // concurrency.md 3장 페이로드 훅. 어댑터가 있으면 두 빌드 모두 주입(EventLoop::inject_packet)을 건다.
+    // 어댑터가 없으면 제품 빌드는 비워 두고 8.4 를 통과한 DATA 가 drop_no_sink 로 끝난다. 시험 빌드는 그때
+    // M-5 비교와 에코 응답기(3차 H)를 붙인다.
     peer::DataSink data_sink;
 };
 
@@ -151,6 +152,8 @@ public:
     // 라우팅 칸이 있는 세션 가운데 CONNECTED 인 것들의 상대 가상 IP. 칸 순서다.
     [[nodiscard]] std::vector<std::uint32_t> connected_peers() const;
     [[nodiscard]] std::optional<std::uint32_t> local_virtual_ip() const noexcept { return local_vip_; }
+    // 방에 들었다. create_room, join_room 성공 응답의 가상 IP 다 (위 머리 표). leave_room 이 잊는다.
+    void set_local_virtual_ip(std::uint32_t virtual_ip) noexcept { local_vip_ = virtual_ip; }
 
     // 세션 타이머, 종료 세션 보존 마감, `ROSTER` 타이머 가운데 가장 이른 것 (concurrency.md 4장).
     [[nodiscard]] std::optional<Millis> earliest_deadline() const noexcept;

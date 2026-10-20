@@ -111,7 +111,7 @@ SendResult UdpSocket::send_to(const Endpoint& to, std::span<const std::byte> pay
         // protocol.md 6장: 타입과 무관하게 버리고 재전송하지 않는다. 카운터는 호출자가 올린다.
         return SendResult{false, ::WSAGetLastError()};
     }
-    return SendResult{true, 0};
+    return SendResult{true, 0, static_cast<std::size_t>(sent)};
 }
 
 RecvResult UdpSocket::recv_from(std::span<std::byte> buffer) noexcept {
@@ -146,8 +146,8 @@ RecvResult UdpSocket::recv_from(std::span<std::byte> buffer) noexcept {
 
     const auto length = static_cast<std::size_t>(received);
     if (length > protocol::kMaxDatagram) {
-        // 정확히 1473바이트가 왔다. 길이 비교가 판정이다.
-        return RecvResult{RecvStatus::Oversize, 0, Endpoint(), 0};
+        // 정확히 1473바이트가 왔다. 길이 비교가 판정이다. recvfrom 은 성공했으므로 길이를 돌려준다.
+        return RecvResult{RecvStatus::Oversize, length, Endpoint(), 0};
     }
     return RecvResult{RecvStatus::Received, length, from_sockaddr(addr), 0};
 }

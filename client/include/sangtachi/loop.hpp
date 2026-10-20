@@ -129,7 +129,8 @@ public:
     void attach_adapter(adapter::Port* port) noexcept { adapter_ = port; }
 
     // drain_wintun 이 읽은 패킷을 하나씩 넘길 곳. 받은 바이트열은 그 호출 안에서만 유효하다.
-    // 비워 두면 세고 버린다 (concurrency.md 3장 "route_and_send 는 Phase 7 작업이다").
+    // 제품 경로는 main.cpp 가 tunnel::Tunnel::send_data 에 잇는다 (concurrency.md 3장 route_and_send). 비워 두면
+    // 세고 버린다.
     void set_adapter_handler(std::function<void(std::span<const std::byte> packet)> handler) {
         on_adapter_packet_ = std::move(handler);
     }
@@ -278,6 +279,7 @@ private:
     // 두 큐는 작고 요청이 사람 속도다 (concurrency.md 3장).
     void drain_control();
     void handle_command(std::string_view line);
+    void count_received(std::size_t length) noexcept;
 
     network::UdpSocket socket_;
     Counters& counters_;

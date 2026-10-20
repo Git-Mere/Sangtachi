@@ -3,6 +3,7 @@
 #include "sangtachi/hash.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/network/endpoint.hpp"
+#include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/tunnel/data_sender.hpp"
 
 #include <algorithm>
@@ -124,6 +125,13 @@ std::optional<std::vector<std::byte>> make_icmp_echo_reply(std::span<const std::
         return std::nullopt;
     }
     if (internet_checksum(icmp) != 0) {
+        return std::nullopt;
+    }
+    // 라우팅 범위 밖의 목적지에만 답한다 (concurrency.md 3장). 범위 안이면 상대의 가상 IP 일 수 있고,
+    // 거기에 자기가 답하면 터널을 지나지 않고도 ping 이 통과한다. 255 는 브로드캐스트다.
+    const std::uint32_t destination = (std::uint32_t{read16(packet, 16)} << 16) | read16(packet, 18);
+    const std::uint32_t octet = destination & 0xFFu;
+    if ((destination & 0xFFFFFF00u) != 0x0A640000u || octet <= protocol::kMaxPeers || octet == 0xFFu) {
         return std::nullopt;
     }
 

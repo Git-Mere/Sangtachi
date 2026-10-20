@@ -154,6 +154,43 @@ int open_adapter(std::unique_ptr<sangtachi::platform::TunDevice>& tun) {
         field("mtu", static_cast<std::uint64_t>(sangtachi::protocol::kAdapterMtu)),
     };
     sangtachi::emit(LogLevel::Info, "adapter.open", fields);
+
+    // windows-prereq.md 2절 클라이언트가 만드는 규칙. 어댑터가 선 뒤에 부른다. 규칙이 그 어댑터에 묶여야
+    // 하기 때문이다. 판정은 스크립트의 종료 코드이고 unknown 은 통과가 아니다. 어긋나면 어댑터를 닫고
+    // 끝난다(부르는 쪽이 tun 을 버린다).
+    const auto firewall = sangtachi::platform::run_firewall_check();
+    const auto joined = [](const std::vector<std::string>& items) {
+        std::string out;
+        for (const auto& item : items) {
+            out += out.empty() ? "" : ",";
+            out += item;
+        }
+        return out.empty() ? std::string("-") : out;
+    };
+    const std::string failed = joined(firewall.failed);
+    const std::string unknown = joined(firewall.unknown);
+    if (firewall.verdict != sangtachi::platform::FirewallVerdict::kPass) {
+        const std::string_view verdict =
+            firewall.verdict == sangtachi::platform::FirewallVerdict::kFail ? "fail" : "unknown";
+        // 규칙은 그 이름으로 지운다(`Remove-NetFirewallRule -DisplayName '<이름>'`). 로그 값에는 공백을
+        // 싣지 않으므로 명령이 아니라 이름을 싣는다 (architecture.md 9장).
+        const sangtachi::LogField error_fields[] = {
+            field("reason", std::string_view("firewall")),
+            field("verdict", verdict),
+            field("exit_code", static_cast<std::uint64_t>(firewall.exit_code)),
+            field("failed", failed),
+            field("unknown", unknown),
+            field("op", firewall.failure.op.empty() ? std::string_view("-") : firewall.failure.op),
+            field("code", static_cast<std::uint64_t>(firewall.failure.code)),
+        };
+        sangtachi::emit(LogLevel::Error, "adapter.error", error_fields);
+        return kStartupFailure;
+    }
+    const sangtachi::LogField firewall_fields[] = {
+        field("verdict", std::string_view("pass")),
+        field("created", joined(firewall.created)),
+    };
+    sangtachi::emit(LogLevel::Info, "adapter.firewall", firewall_fields);
     return 0;
 }
 
@@ -251,14 +288,6 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
             emit_op_error("WintunGetReadWaitEvent", 0);
             return kStartupFailure;
         }
-#ifdef SANGTACHI_TEST_BUILD
-        // roadmap.md Phase 6 검증의 ICMP 응답기. 읽은 에코 요청에 응답을 만들어 주입한다.
-        loop.set_adapter_handler([&loop](std::span<const std::byte> packet) {
-            if (auto reply = sangtachi::testbuild::make_icmp_echo_reply(packet)) {
-                (void)loop.inject_packet(*reply);
-            }
-        });
-#endif
     }
 
     const auto& server = *args.server;
@@ -278,20 +307,26 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     // 8장 수신 검증 파이프라인과 세션 표 (tunnel/tunnel.hpp). 세션은 로비가 랑데부(10.2)에서 연다.
     // 실행기보다 먼저 만든다. 실행기가 이것을 가리킨다.
     //
-    // 페이로드 훅은 제품 빌드에서 비워 둔다. 8.4 를 통과한 DATA 는 drop_no_sink 다 (concurrency.md
-    // 3장). 시험 빌드는 그 칸에 `data.rx` 와 에코 응답기를 붙인다 (ADR 0023).
+    // 8.4 를 통과한 DATA 가 갈 곳 (concurrency.md 3장의 표). 어댑터가 있으면 두 빌드 모두 주입한다.
+    // 어댑터가 없으면 제품 빌드는 훅을 비워 drop_no_sink 이고, 시험 빌드는 그 칸에 `data.rx` 와 에코
+    // 응답기를 붙인다 (ADR 0023).
     sangtachi::tunnel::DataSender* sender_slot = nullptr;  // 훅이 에코를 넘길 곳. 아래에서 채운다
     sangtachi::tunnel::TunnelDeps tunnel_deps;
+    if (tun != nullptr) {
+        // 실패는 inject_packet 이 센다. 재시도하지 않는다 (concurrency.md 3장 주입 실패).
+        tunnel_deps.data_sink = [&loop](std::span<const std::byte> inner) { (void)loop.inject_packet(inner); };
+    } else {
 #ifdef SANGTACHI_TEST_BUILD
-    tunnel_deps.data_sink = [&sender_slot](std::span<const std::byte> inner) {
-        sangtachi::testbuild::emit_data_rx(inner);
-        sangtachi::testbuild::emit_echo_rtt(inner, sangtachi::platform::monotonic_us() / 1000);
-        // 수신 처리 중에 다시 보내지 않는다. 큐에 넣고 루프의 송신 몫에서 보낸다.
-        if (auto reply = sangtachi::testbuild::make_echo_reply(inner); reply && sender_slot) {
-            sender_slot->enqueue(std::move(*reply));
-        }
-    };
+        tunnel_deps.data_sink = [&sender_slot](std::span<const std::byte> inner) {
+            sangtachi::testbuild::emit_data_rx(inner);
+            sangtachi::testbuild::emit_echo_rtt(inner, sangtachi::platform::monotonic_us() / 1000);
+            // 수신 처리 중에 다시 보내지 않는다. 큐에 넣고 루프의 송신 몫에서 보낸다.
+            if (auto reply = sangtachi::testbuild::make_echo_reply(inner); reply && sender_slot) {
+                sender_slot->enqueue(std::move(*reply));
+            }
+        };
 #endif
+    }
     tunnel_deps.send = [&loop](const sangtachi::network::Endpoint& to,
                                std::span<const std::byte> payload) {
         // tx_err_send 는 세션이 자기 표에 센다 (counters.hpp 의 두 범위).
@@ -304,6 +339,23 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     tunnel.set_tx_observer(
         [](std::span<const std::byte> inner) { sangtachi::testbuild::emit_data_tx(inner); });
 #endif
+
+    // 어댑터에서 읽은 패킷 (concurrency.md 3장 drain_wintun 의 route_and_send). 8.5 를 거쳐 DATA 로
+    // 나간다. 시험 빌드는 라우팅 범위 밖으로 가는 ICMP 에코 요청에 먼저 답하고, 답한 것은 라우팅으로
+    // 보내지 않는다 (roadmap.md Phase 6 검증).
+    if (tun != nullptr) {
+        loop.set_adapter_handler([&loop, &tunnel](std::span<const std::byte> packet) {
+#ifdef SANGTACHI_TEST_BUILD
+            if (auto reply = sangtachi::testbuild::make_icmp_echo_reply(packet)) {
+                (void)loop.inject_packet(*reply);
+                return;
+            }
+#else
+            (void)loop;
+#endif
+            (void)tunnel.send_data(packet);
+        });
+    }
 
     // 로비와 그 행동 실행기 (control/runner.hpp). STUN 은 시도마다 새로 돈다
     // (control_plane.md 8.4: 2번 DNS 와 3번 bind 만 프로세스에 한 번이다). 그래서 기동 시

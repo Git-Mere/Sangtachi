@@ -1199,12 +1199,13 @@ Two Windows machines communicate using virtual IPs only.
   The startup verification checks only our rules, not this (`windows-prereq.md` 2)
 - `ping` round trip to the peer's virtual IP succeeds
 - File transfer between virtual IPs succeeds with matching content. Send it through a temporary TCP
-  server on 25565 and compare the SHA-256 on both sides. **This item is the verdict for NFR-2**
+  server on 25565 and compare the SHA-256 on both sides
+  ([`tools/transfer/Test-Transfer.ps1`](../../tools/transfer/Test-Transfer.ps1)). **This item is the verdict for NFR-2**
   - It shows that non-Minecraft traffic passes through the tunnel unchanged
   - One more pass condition is attached. Run this test and the Phase 8 Minecraft test with the same
     tunnel build. If the tunnel code had to be changed to switch applications, NFR-2 does not hold
 - Maximum-size packets are delivered without fragmentation (MTU value fixed by measurement)
-- Packets sent to a virtual IP with no routing target are discarded and the counter increments
+- Packets sent to a virtual IP with no routing target are discarded and the counter increments. It works on one machine, so `scripts/adapter-check.ps1` checks it
 - Injection failure handling ([`concurrency.md`](concurrency.md) chapter 3 One Loop Iteration).
   When the send ring is made full, that packet is discarded as `drop_inject_ring_full` and **the
   loop does not wait there**

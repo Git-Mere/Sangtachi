@@ -9,7 +9,8 @@
 //   protocol.md 13장         drop_stun_parse
 //   protocol.md 6장·7장·8장   tx_err_*, tx_drop_*, 나머지 drop_* 의 대부분
 //   concurrency.md 3장     drop_oversize_datagram, drop_inject_error, drop_inject_ring_full,
-//                          drop_no_sink, adapter_rx, rx_err_recv, rx_err_adapter
+//                          drop_no_sink, adapter_rx, rx_err_recv, rx_err_adapter,
+//                          tx_bytes, rx_bytes, tx_datagrams, rx_datagrams
 //   concurrency.md 6장·8장  telemetry_queue_dropped, console_queue_dropped, control_queue_dropped
 //   architecture.md 9장     record_write_failed
 //
@@ -83,13 +84,18 @@ enum class Counter : std::size_t {
     EndpointLearned,
     PathProbeFailed,
     RecordWriteFailed,
+    RxBytes,
+    RxDatagrams,
     RxErrAdapter,
     RxErrRecv,
     TelemetryQueueDropped,
+    TxBytes,
+    TxDatagrams,
     TxDropBadSrc,
     TxDropNoRoute,
     TxDropNotConnected,
     TxDropNotIpv4,
+    TxDropNotUnicast,
     TxDropOversize,
     TxDropShort,
     TxErrAck,
@@ -97,7 +103,7 @@ enum class Counter : std::size_t {
 };
 
 // 이름 순으로 적어 두었다. 값 자체에 의미를 두지 않는다.
-inline constexpr std::size_t kCounterCount = 57;
+inline constexpr std::size_t kCounterCount = 62;
 
 // architecture.md 9장의 `counter` 이벤트가 `name` 으로 싣는 문자열.
 [[nodiscard]] std::string_view to_token(Counter counter) noexcept;

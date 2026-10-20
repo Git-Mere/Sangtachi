@@ -28,6 +28,10 @@ namespace sangtachi::tunnel {
 // 1단계. 칸 인덱스. 범위 밖이면 비어 있다.
 [[nodiscard]] std::optional<std::size_t> route_index(std::uint32_t virtual_ip) noexcept;
 
+// 8.5 의 유니캐스트 검사. 경로 조회보다 먼저다. 멀티캐스트(224.0.0.0/4), 제한 브로드캐스트
+// (255.255.255.255), 가상 대역의 브로드캐스트(10.100.0.255)면 참이다.
+[[nodiscard]] bool is_not_unicast(std::uint32_t destination) noexcept;
+
 class Router {
 public:
     // 칸을 채운다. 1단계 밖이거나 칸이 차 있으면 아무것도 하지 않고 거짓이다(8.5 "비어 있지 않으면

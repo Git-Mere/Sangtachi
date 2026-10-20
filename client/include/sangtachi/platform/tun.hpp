@@ -3,9 +3,9 @@
 // Wintun 어댑터와 그 주변의 OS 호출 (architecture.md 7장 어댑터 수명).
 // 구현은 client/src/platform/win32/tun.cpp 다 (ADR 0010 이음새 3).
 //
-// **[loop] 가 부른다** (concurrency.md 5장 상태 소유). 기동 단계 셋은 [loop] 를 시작하기 전에 main 이
-// 부른다. 판정을 하나도 하지 않는다. 서브넷 충돌의 판정은 스크립트가 하고 여기서는 그 종료 코드를
-// 옮긴다 (windows-prereq.md 7절).
+// **[loop] 가 부른다** (concurrency.md 5장 상태 소유). 기동 단계는 [loop] 를 시작하기 전에 main 이
+// 부른다. 판정을 하나도 하지 않는다. 서브넷 충돌과 방화벽 규칙의 판정은 스크립트가 하고 여기서는 그
+// 종료 코드를 옮긴다 (windows-prereq.md 7절, 2절).
 
 #include "sangtachi/adapter.hpp"
 #include "sangtachi/platform/interfaces.hpp"
@@ -46,6 +46,27 @@ struct SubnetCheck {
 // 실행 파일 옆의 Test-SubnetOverlap.ps1 을 Windows PowerShell 로 돌린다. 30초 안에 끝나지 않으면
 // 프로세스를 끝내고 kUnknown 이다.
 [[nodiscard]] SubnetCheck run_subnet_check(std::string_view target);
+
+// 방화벽 규칙의 검증과 만들기 결과 (windows-prereq.md 2절 클라이언트가 만드는 규칙). 스크립트의 종료 코드
+// 0, 1, 2 와 같다.
+enum class FirewallVerdict {
+    kPass,     // 0
+    kFail,     // 1. 검사가 어긋났거나 만들지 못했다
+    kUnknown,  // 2, 그 밖의 코드, 또는 스크립트를 돌리지 못했다
+};
+
+struct FirewallCheck {
+    FirewallVerdict verdict = FirewallVerdict::kUnknown;
+    std::uint32_t exit_code = 0;
+    std::vector<std::string> failed;   // 스크립트 출력의 FAIL 줄. `<규칙 이름 또는 policy>:<검사>`
+    std::vector<std::string> unknown;  // 스크립트 출력의 UNKNOWN 줄. `<규칙 이름 또는 policy>:<무엇>`
+    std::vector<std::string> created;  // 스크립트 출력의 CREATED 줄. 이번에 만든 규칙 이름
+    OsFailure failure;                // 스크립트를 돌리지 못했으면 op 가 비지 않는다
+};
+
+// 실행 파일 옆의 Initialize-FirewallRules.ps1 을 Windows PowerShell 로 돌린다. 어댑터가 선 뒤에 부른다.
+// 60초 안에 끝나지 않으면 프로세스를 끝내고 kUnknown 이다.
+[[nodiscard]] FirewallCheck run_firewall_check();
 
 // 주소 하나를 붙인 결과.
 struct AddressResult {

@@ -88,7 +88,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `tunnel/data_sender` | The console `send`, synthetic inner packets, sending split across rounds ([`roadmap.md`](roadmap.md) Phase 4 console commands) | None |
 | `testbuild/instrument` | Test-build instrumentation. `data.tx`, `data.rx`, echo responder, the adapter ICMP responder (`roadmap.md` Phase 6 verification). The executable compiles it only in the test build ([ADR 0023](decisions/0023-decisions-before-round-3-h-and-i.md)) | None |
 | `adapter` | The adapter's name, GUID and subnet constants and the face the loop sees (read event, read, inject, session restart). A single header | None |
-| `platform/tun` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper), administrator check, running the subnet conflict script. Chapter 7 Adapter lifetime | **Wintun (approved)**, IP Helper |
+| `platform/tun` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper), administrator check, running the subnet conflict and firewall rule scripts. Chapter 7 Adapter lifetime | **Wintun (approved)**, IP Helper |
 | `telemetry/telemetry` | Metric collection, local buffering, transmission to the telemetry service | None |
 | `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
 | `loop` | One loop iteration, the wait set, the per-source drain budget, console command handling. `concurrency.md` chapters 2 and 3 own the structure | None |
@@ -1071,6 +1071,8 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (remote candidates as `ip:port` joined by commas) | `spec.md` M-3, Phase 3 `get_peers` verification |
 | `timer.tick` | `name`, `elapsed_ms` (milliseconds actually elapsed since the previous expiry) | Phase 1 drain budget, Phase 3 `[loop]` survival while the control plane is dead |
 | `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
+| `adapter.firewall` | `verdict` (`pass`), `created` (names of the rules created this time joined with commas, `-` if none) | Phase 7 creation and reuse of the firewall rules ([`windows-prereq.md`](windows-prereq.md) 2) |
+| `adapter.error` | `reason`. With `reason=firewall`: `verdict` (`fail` or `unknown`), `exit_code`, `failed` (`<rule name or policy>:<check>` joined with commas), `unknown` (undecidable items of the same shape), `op`, `code` | Phase 7 startup failure of firewall rule verification (same section) |
 | `data.tx` | `to` (destination virtual IP), `len`, `sha256` (the inner packet just before encapsulation). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.echo` | `rtt_ms` (from the send time at offset 32 of a returned echo to its arrival, in milliseconds). **Test build only** | Phase 4 RTT baseline |

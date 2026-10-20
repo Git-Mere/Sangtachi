@@ -217,6 +217,32 @@ TEST_CASE("loop: an oversize datagram does not break the batch", "[loop]") {
     REQUIRE(loop.run_once());
     REQUIRE(counters.value(Counter::DropOversizeDatagram) == 2);
     REQUIRE(seen == 3);  // 과대분 뒤의 정상 데이터그램도 같은 바퀴에 처리됐다
+
+    // concurrency.md 3장 송수신 바이트: recvfrom 이 돌려준 길이만 센다. (a) 의 1473 은 세고
+    // (b) 는 WSAEMSGSIZE 로 실패했으므로 세지 않는다.
+    REQUIRE(counters.value(Counter::RxBytes) == 3 * 32 + kMaxDatagram + 1);
+    REQUIRE(counters.value(Counter::RxDatagrams) == 4);
+}
+
+TEST_CASE("loop: a zero-length datagram is counted as one received datagram", "[loop]") {
+    // concurrency.md 3장 송수신 바이트: recvfrom 이 성공하면 센다. 길이 0 도 성공이다.
+    const WsaContext wsa;
+    auto sender = open_udp_socket();
+    auto receiver = open_udp_socket();
+    REQUIRE(sender.ok());
+    REQUIRE(receiver.ok());
+    const Endpoint to(kLoopback, receiver.socket->local().port());
+    REQUIRE(sender.socket->send_to(to, std::span<const std::byte>()).ok);
+    REQUIRE(sender.socket->send_to(to, tunnel_pattern(32)).ok);
+
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    EventLoop loop(std::move(*receiver.socket), counters, console, session->event(), LoopOptions{});
+    REQUIRE(loop.run_once());
+    REQUIRE(counters.value(Counter::RxDatagrams) == 2);
+    REQUIRE(counters.value(Counter::RxBytes) == 32);
 }
 
 TEST_CASE("loop: the quit command asks for shutdown", "[loop]") {
@@ -624,10 +650,15 @@ TEST_CASE("loop: send_datagram counts and logs a failed send", "[loop]") {
     REQUIRE(loop.send_datagram(to, tunnel_pattern(32)));
     REQUIRE(counters.value(Counter::TxErrSend) == 0);
     REQUIRE(logs.with_event("socket.error").empty());
+    // concurrency.md 3장 송수신 바이트: 성공한 sendto 만 센다.
+    REQUIRE(counters.value(Counter::TxBytes) == 32);
+    REQUIRE(counters.value(Counter::TxDatagrams) == 1);
 
     // SO_BROADCAST 를 켜지 않은 소켓에서 브로드캐스트로 보내면 실패가 결정적이다.
     REQUIRE_FALSE(loop.send_datagram(Endpoint(0xFFFFFFFFu, 9), tunnel_pattern(10)));
     REQUIRE(counters.value(Counter::TxErrSend) == 1);
+    REQUIRE(counters.value(Counter::TxBytes) == 32);
+    REQUIRE(counters.value(Counter::TxDatagrams) == 1);
 
     // roadmap.md Phase 1 검증: 오류 코드를 로그에 남긴다 (architecture.md 9장 socket.error).
     const auto errors = logs.with_event("socket.error");

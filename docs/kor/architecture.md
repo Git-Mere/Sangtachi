@@ -86,7 +86,7 @@
 | `tunnel/data_sender` | 콘솔 `send` 와 합성 내부 패킷, 바퀴마다 나눠 보내기 ([`roadmap.md`](roadmap.md) Phase 4 콘솔 명령) | 없음 |
 | `testbuild/instrument` | 시험 빌드 장치. `data.tx`, `data.rx`, 에코 응답기, 어댑터의 ICMP 응답기(`roadmap.md` Phase 6 검증). 실행 파일은 시험 빌드에서만 컴파일한다 ([ADR 0023](decisions/0023-3차-h-i-착수-전-결정.md)) | 없음 |
 | `adapter` | 어댑터의 이름, GUID, 대역 상수와 루프가 보는 면(읽기 이벤트, read, inject, 세션 재시작). 헤더 하나다 | 없음 |
-| `platform/tun` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper), 관리자 권한 확인, 서브넷 충돌 스크립트 실행. 7장 어댑터 수명 | **Wintun (승인 완료)**, IP Helper |
+| `platform/tun` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper), 관리자 권한 확인, 서브넷 충돌과 방화벽 규칙 스크립트 실행. 7장 어댑터 수명 | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
 | `loop` | 이벤트 루프 한 바퀴, 대기 집합, 소스별 비우기 예산, 콘솔 명령 처리. 구조는 `concurrency.md` 2·3장 | 없음 |
@@ -957,6 +957,8 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (상대 후보 `ip:port` 를 쉼표로 이어 붙인 것) | `spec.md` M-3, Phase 3 `get_peers` 검증 |
 | `timer.tick` | `name`, `elapsed_ms` (직전 만료로부터 실제로 흐른 밀리초) | Phase 1 drain 예산, Phase 3 제어 평면 사망 중 `[loop]` 생존 |
 | `record.open` | `file` (로컬 기록 파일의 이름. 폴더를 빼고) | Phase 4 기록 확인, `spec.md` M-6 |
+| `adapter.firewall` | `verdict` (`pass`), `created` (이번에 만든 규칙 이름을 쉼표로 이은 것. 없으면 `-`) | Phase 7 방화벽 규칙의 만들기와 재사용 ([`windows-prereq.md`](windows-prereq.md) 2절) |
+| `adapter.error` | `reason`. `reason=firewall` 이면 `verdict` (`fail` 또는 `unknown`), `exit_code`, `failed` (`<규칙 이름 또는 policy>:<검사>` 를 쉼표로 이은 것), `unknown` (같은 모양의 판정 불가), `op`, `code` | Phase 7 방화벽 규칙 검증의 기동 실패 (같은 절) |
 | `data.tx` | `to` (목적지 가상 IP), `len`, `sha256` (캡슐화 직전의 내부 패킷). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.rx` | `from` (상대 가상 IP), `len`, `sha256` (페이로드 훅이 받은 바이트열). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.echo` | `rtt_ms` (되돌아온 에코의 오프셋 32 송신 시각에서 받은 시각까지. 밀리초). **시험 빌드에만 있다** | Phase 4 RTT 기준선 |

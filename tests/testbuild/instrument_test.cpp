@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -123,8 +124,9 @@ void put16(std::vector<std::byte>& p, std::size_t at, std::uint16_t v) {
     p[at + 1] = static_cast<std::byte>(v & 0xFF);
 }
 
-// Windows ping 이 내는 모양의 에코 요청. 10.100.0.1 -> 10.100.0.9, 식별자 1, 순번 seq.
-std::vector<std::byte> echo_request(std::size_t data_len, std::uint16_t seq = 7) {
+// Windows ping 이 내는 모양의 에코 요청. 10.100.0.1 -> dst(기본 10.100.0.9), 식별자 1, 순번 seq.
+std::vector<std::byte> echo_request(std::size_t data_len, std::uint16_t seq = 7,
+                                    std::array<std::uint8_t, 4> dst = {10, 100, 0, 9}) {
     std::vector<std::byte> p(20 + 8 + data_len);
     p[0] = std::byte{0x45};
     put16(p, 2, static_cast<std::uint16_t>(p.size()));
@@ -132,7 +134,6 @@ std::vector<std::byte> echo_request(std::size_t data_len, std::uint16_t seq = 7)
     p[8] = std::byte{128};
     p[9] = std::byte{1};
     const std::uint8_t src[] = {10, 100, 0, 1};
-    const std::uint8_t dst[] = {10, 100, 0, 9};
     for (std::size_t i = 0; i < 4; ++i) {
         p[12 + i] = static_cast<std::byte>(src[i]);
         p[16 + i] = static_cast<std::byte>(dst[i]);
@@ -183,6 +184,29 @@ TEST_CASE("icmp: an echo request comes back as a valid echo reply", "[testbuild]
         for (std::size_t i = 24; i < request.size(); ++i) {
             REQUIRE((*reply)[i] == request[i]);
         }
+    }
+}
+
+TEST_CASE("icmp: only destinations outside the routing range get a reply", "[testbuild]") {
+    // concurrency.md 3장. 라우팅 범위(10.100.0.1 ~ MAX_PEERS) 안이면 상대의 가상 IP 일 수 있다.
+    struct Row {
+        std::array<std::uint8_t, 4> dst;
+        bool reply;
+    };
+    const Row rows[] = {
+        {{10, 100, 0, 6}, true},    // MAX_PEERS 바로 위
+        {{10, 100, 0, 9}, true},    // roadmap.md Phase 6 검증의 주소
+        {{10, 100, 0, 254}, true},  // 브로드캐스트 바로 아래
+        {{10, 100, 0, 1}, false},   // 호스트
+        {{10, 100, 0, 5}, false},   // MAX_PEERS
+        {{10, 100, 0, 0}, false},   // 네트워크 주소
+        {{10, 100, 0, 255}, false}, // 가상 대역의 브로드캐스트
+        {{10, 101, 0, 9}, false},   // 대역 밖
+        {{8, 8, 8, 8}, false},
+    };
+    for (const auto& row : rows) {
+        INFO("dst=" << int(row.dst[0]) << '.' << int(row.dst[1]) << '.' << int(row.dst[2]) << '.' << int(row.dst[3]));
+        REQUIRE(testbuild::make_icmp_echo_reply(echo_request(32, 7, row.dst)).has_value() == row.reply);
     }
 }
 

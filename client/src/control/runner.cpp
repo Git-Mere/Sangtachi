@@ -267,6 +267,11 @@ void ControlRunner::execute(LobbyAction& action) {
                     deps_.clear_address();
                 }
             } else if constexpr (std::is_same_v<T, AssignAddress>) {
+                // 8.5 의 자신의 가상 IP 는 방에 든 때부터 안다. 세션을 기다리면 호스트 혼자인 동안 어댑터에서 읽은
+                // 패킷이 모두 tx_drop_bad_src 로 잘못 세진다.
+                if (deps_.tunnel != nullptr) {
+                    deps_.tunnel->set_local_virtual_ip(a.virtual_ip);
+                }
                 if (deps_.assign_address) {
                     deps_.assign_address(a.virtual_ip);
                 }

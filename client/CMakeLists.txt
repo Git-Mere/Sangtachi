@@ -67,11 +67,13 @@ target_link_libraries(sangtachi_client
     PRIVATE sangtachi_warnings
 )
 
-# 실행 파일 옆에 두는 것 둘 (architecture.md 7장 어댑터 수명). 클라이언트는 wintun.dll 을 실행 파일의
-# 폴더에서만 불러오고, 서브넷 충돌 검사는 같은 폴더의 스크립트를 부른다.
+# 실행 파일 옆에 두는 것 셋 (architecture.md 7장 어댑터 수명). 클라이언트는 wintun.dll 을 실행 파일의
+# 폴더에서만 불러오고, 서브넷 충돌 검사와 방화벽 규칙은 같은 폴더의 스크립트를 부른다.
 #
 # configure_file 로 둔다. 원본이 바뀌면 CMake 가 다시 설정하면서 다시 복사한다. 링크 뒤에 복사하면
 # 스크립트만 고친 빌드가 낡은 판정을 실행 파일 옆에 남긴다. 실행 파일은 Ninja 에서 이 폴더에 생긴다.
 configure_file("${SANGTACHI_WINTUN_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/wintun.dll" COPYONLY)
 configure_file("${PROJECT_SOURCE_DIR}/tools/winprereq/Test-SubnetOverlap.ps1"
                "${CMAKE_CURRENT_BINARY_DIR}/Test-SubnetOverlap.ps1" COPYONLY)
+configure_file("${PROJECT_SOURCE_DIR}/tools/winprereq/Initialize-FirewallRules.ps1"
+               "${CMAKE_CURRENT_BINARY_DIR}/Initialize-FirewallRules.ps1" COPYONLY)

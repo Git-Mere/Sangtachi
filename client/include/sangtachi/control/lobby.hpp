@@ -21,7 +21,7 @@
 // | `OpenSession` | `Tunnel::create_session(request)`. 널이면 곧바로 `on_session_open_failed(peer_id)`. 만들었으면 그 세션의 기록 줄을 맡는다(아래 "기록 줄") |
 // | `StartPunch` | 그 상대의 세션이 있으면 `Session::start_punch(now)` (protocol.md 10.2 의 6번). 없으면 아무것도 하지 않는다 |
 // | `LeaveRoom` | `Tunnel::leave_room(now)`. 활성 세션을 닫고 남긴 세션까지 지운다 (protocol.md 5.6, concurrency.md 7장 로비). 어댑터에 붙인 주소도 뗀다 (architecture.md 7장 어댑터 수명) |
-// | `AssignAddress` | 받은 가상 IP 를 어댑터에 붙인다 (architecture.md 7장 어댑터 수명). 어댑터가 없으면 아무것도 하지 않는다 |
+// | `AssignAddress` | 받은 가상 IP 를 터널의 자신의 가상 IP 로 두고(protocol.md 8.5 출발지 검사) 어댑터에 붙인다 (architecture.md 7장 어댑터 수명). 어댑터가 없으면 붙이지 않는다 |
 // | `StartRoster` / `SetRosterPeers` | `Tunnel::start_roster` / `Tunnel::set_roster_peers` (protocol.md 5.7) |
 // | `RecordAttempt` | 세션 없이 끝난 시도의 수립 줄 하나 (architecture.md 9장 로컬 기록 파일) |
 //

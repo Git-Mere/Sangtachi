@@ -3,7 +3,7 @@
 `docs/kor/windows-prereq.md` 의 판정식을 뺀 스크립트다. 문서에 산문으로 두면 아무도 돌려
 보지 않고, 반례가 나올 때마다 문서를 고쳐야 한다.
 
-Windows PowerShell 에서 돈다. 관리자 권한은 필요 없다.
+Windows PowerShell 에서 돈다. 관리자 권한이 필요한 것은 아래에 따로 적는다.
 
 ## Test-FirewallPolicy.ps1
 
@@ -32,6 +32,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Test-SubnetO
 자기 자신 때문에 차단이 나온다. 우리 어댑터는 `-OwnInterfaceGuid` 로만 뺀다. 이름은 소유의
 증거가 아니다.
 
+## Initialize-FirewallRules.ps1
+
+`windows-prereq.md` 2절 클라이언트가 만드는 규칙. 우리 어댑터의 인바운드 규칙 둘을 검증하고, 없으면 만든다.
+**클라이언트가 기동 때 실행 파일 옆의 사본을 부른다.** 만들기에는 관리자 권한이 필요하다. `-SelfTest` 는 권한이
+필요 없고 방화벽을 조회하지도 바꾸지도 않는다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Initialize-FirewallRules.ps1 -InterfaceAlias Sangtachi
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Initialize-FirewallRules.ps1 -SelfTest
+```
+
+이미 있는 규칙은 고치거나 지우지 않는다. 출력 줄의 모양은 스크립트 머리에 있다.
+
 ## Probe-FirewallRuleBinding.ps1
 
 `windows-prereq.md` 2절의 실측. 어댑터로 좁힌 규칙이 어댑터를 지웠다 다시 만든 뒤에도 그 어댑터에 묶이는지 본다.
@@ -51,9 +64,10 @@ pwsh -NoProfile -File tools\winprereq\Probe-FirewallRuleBinding.ps1 -ClientExe '
 |----------|-----------|-----------|
 | `Test-FirewallPolicy` | `VERDICT: pass` / `fail` / `unknown` | 0 / 1 / 2 |
 | `Test-SubnetOverlap` | `VERDICT: proceed` / `pick another range` / `unknown` | 0 / 1 / 2 |
+| `Initialize-FirewallRules` | `VERDICT: pass` / `fail` / `unknown` | 0 / 1 / 2 |
 
 **`unknown` 은 통과가 아니라 판정 불가다.** 확인된 결함이 하나라도 있으면 판정 불가가 같이
 있어도 실패로 낸다. 결함은 이미 사실이고 모르는 항목이 그것을 덮지 못한다.
 
-`-SelfTest` 는 케이스 표 전체를 돌리고 `SELFTEST: pass` 또는 `fail` 을 낸다. 각각 225건과
-85건이다. 케이스 표는 스크립트 안에 있고 구현보다 먼저 쓴다.
+`-SelfTest` 는 케이스 표 전체를 돌리고 `SELFTEST: pass` 또는 `fail` 을 낸다. 각각 225건, 85건,
+46건이다. 케이스 표는 스크립트 안에 있고 구현보다 먼저 쓴다.

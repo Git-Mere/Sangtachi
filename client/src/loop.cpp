@@ -148,6 +148,9 @@ DrainOutcome EventLoop::drain_udp() {
                 // 과대 데이터그램에서 비우기를 멈추지 않는다 (concurrency.md 3장).
                 // 멈추면 과대분을 섞어 보내는 것만으로 배칭이 무력화된다.
                 counters_.increment(Counter::DropOversizeDatagram);
+                if (result.length > 0) {  // WSAEMSGSIZE 로 실패했으면 0 이다. 돌려준 값이 없으므로 세지 않는다
+                    count_received(result.length);
+                }
                 continue;
             case network::RecvStatus::Error: {
                 // 원인을 모르므로 그 바퀴를 끝낸다. 소켓은 계속 쓴다.
@@ -164,12 +167,19 @@ DrainOutcome EventLoop::drain_udp() {
                 return DrainOutcome::Empty;
             }
             case network::RecvStatus::Received:
+                count_received(result.length);
                 receive_datagram(result.from,
                                  std::span<const std::byte>(buffer.data(), result.length));
                 break;
         }
     }
     return DrainOutcome::Budget;
+}
+
+void EventLoop::count_received(std::size_t length) noexcept {
+    // recvfrom 이 성공해 돌려준 길이다 (concurrency.md 3장 송수신 바이트). 0바이트 데이터그램도 하나로 센다.
+    counters_.add(Counter::RxBytes, length);
+    counters_.increment(Counter::RxDatagrams);
 }
 
 DrainOutcome EventLoop::drain_wintun() {
@@ -295,6 +305,9 @@ bool EventLoop::send_datagram_uncounted(const network::Endpoint& to,
         emit(LogLevel::Warn, "socket.error", fields);
         return false;
     }
+    // 패킷 타입과 상대를 가리지 않는다 (concurrency.md 3장). 캡처 대조가 이 값을 읽는다.
+    counters_.add(Counter::TxBytes, sent.bytes);
+    counters_.increment(Counter::TxDatagrams);
     return true;
 }
 

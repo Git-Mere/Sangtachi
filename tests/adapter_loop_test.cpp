@@ -275,6 +275,50 @@ TEST_CASE("adapter loop: inject failures go to their own counters", "[loop][adap
     REQUIRE(rig.counters.value(Counter::DropInjectError) == 1);
 }
 
+TEST_CASE("adapter loop: a full send ring drops without waiting and timers keep their interval",
+          "[loop][adapter][slow]") {
+    // roadmap.md Phase 7 검증의 주입 실패 처리. 판정은 이 가짜 어댑터 시험이 한다. 송신 링이 늘 차 있는 동안
+    // 바퀴마다 예산만큼 읽고 그만큼 주입을 시도한다. 주입은 한 번씩만 시도되고(재시도 없음), 전부
+    // drop_inject_ring_full 로 세고, 그 구간에도 100ms 주기 타이머가 간격을 지킨다 (concurrency.md 3장).
+    Rig rig;
+    rig.port.next_inject = InjectResult{InjectStatus::kRingFull, 0};
+    std::size_t attempts = 0;
+    rig.loop->set_adapter_handler([&rig, &attempts](std::span<const std::byte> packet) {
+        ++attempts;
+        (void)rig.loop->inject_packet(packet);
+    });
+    std::vector<std::uint64_t> ticks;
+    const auto start = sangtachi::platform::monotonic_ms();
+    REQUIRE(rig.loop->timers().add_periodic("keepalive", 100, static_cast<sangtachi::Millis>(start)));
+    rig.loop->set_tick_handler([&ticks](const sangtachi::TimerTick& tick) {
+        if (tick.name == "keepalive") {
+            ticks.push_back(sangtachi::platform::monotonic_ms());
+        }
+    });
+
+    std::size_t injected = 0;
+    while (sangtachi::platform::monotonic_ms() - start < 1000) {
+        rig.port.push_packets(kMaxDrain);
+        rig.port.signal();
+        REQUIRE(rig.loop->run_once());
+        // 놓아준 패킷과 주입 사본을 쌓아 두지 않는다. 바퀴가 많아 메모리가 커진다.
+        rig.port.packets.clear();
+        injected += rig.port.injected.size();
+        rig.port.injected.clear();
+    }
+
+    REQUIRE(attempts > 0);
+    REQUIRE(injected == attempts);
+    REQUIRE(rig.counters.value(Counter::DropInjectRingFull) == attempts);
+    REQUIRE(rig.counters.value(Counter::DropInjectError) == 0);
+    REQUIRE(ticks.size() >= 8);
+    for (std::size_t i = 1; i < ticks.size(); ++i) {
+        INFO("tick " << i << " gap " << (ticks[i] - ticks[i - 1]) << " ms");
+        // 타이머 시계의 해상도가 약 15ms 다. 간격 100ms 에 50ms 를 더 준다.
+        REQUIRE(ticks[i] - ticks[i - 1] <= 150);
+    }
+}
+
 TEST_CASE("adapter loop: inject without an adapter is an inject error", "[loop][adapter]") {
     const WsaContext wsa;
     auto opened = open_udp_socket();

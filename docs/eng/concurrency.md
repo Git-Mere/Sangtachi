@@ -255,11 +255,10 @@ drain_wintun(budget) -> {EMPTY, BUDGET, RESTART}:
 **Other receive errors are counted as `rx_err_adapter`.** It is the counterpart of `rx_err_recv` in
 `drain_udp`. The log carries the error code.
 
-**`route_and_send` is [`roadmap.md`](roadmap.md) Phase 7 work.** Until then a read packet is
-counted as `adapter_rx` and handed only to the test build's ICMP responder (`roadmap.md` Phase 6
-verification); the product build drops it.
+**`route_and_send` counts a read packet as `adapter_rx` and hands it to [`protocol.md`](protocol.md) 8.5
+Transmit-Side Validation.** If it passes, the picked session sends it as `DATA`.
 
-**Once `route_and_send` is connected, the test build's ICMP responder answers only destinations outside
+**The test build's ICMP responder (`roadmap.md` Phase 6 verification) answers only destinations outside
 the routing range.** Those are echo requests whose destination is inside `10.100.0.0/24` with a last octet
 greater than `MAX_PEERS` and less than 255. A packet the responder answered does not go to
 `route_and_send`. Every other packet goes to `route_and_send` in both builds.
@@ -334,16 +333,14 @@ distinguish the inner protocol (NFR-2), so this is not written as "always just a
 the counter for its cause, do not retry, and do not stop the loop. All four are independent of the
 cause.
 
-**Where a `DATA` that passed 8.4 DATA Inner Validation goes in a run that does not inject is
-also decided here.** Phase 4~6 and `--no-adapter` runs are such runs. The next step that section
-points to with "just before Wintun injection" is empty. Connecting `DATA` to the injection path
-is [`roadmap.md`](roadmap.md) Phase 7 work.
+**Where a `DATA` that passed 8.4 DATA Inner Validation goes is also decided here.** In a run without
+the adapter (`--no-adapter`), the next step that section points to with "just before Wintun injection" is empty.
 
 | Run | `DATA` that passed 8.4 |
 |------|------------------|
-| Injects (Phase 7 onward, adapter present) | the injection path above |
-| Does not inject, test build | handed to the **payload hook**. The hook is a single function that takes the extracted payload bytes and length as they are, and the `data.rx` used by the M-5 comparison and the echo responder of [`roadmap.md`](roadmap.md) Phase 4 attach at that point |
-| Does not inject, product build | dropped, and `drop_no_sink` is incremented |
+| Adapter present, both builds | the injection path above |
+| No adapter, test build | handed to the **payload hook**. The hook is a single function that takes the extracted payload bytes and length as they are, and the `data.rx` used by the M-5 comparison and the echo responder of [`roadmap.md`](roadmap.md) Phase 4 attach at that point |
+| No adapter, product build | dropped, and `drop_no_sink` is incremented |
 
 **The hook is not written as a test-only path.** It has to hang at the same point after 8.1~8.4
 validation so that the test exercises the real receive path. This is the same reason
@@ -351,10 +348,10 @@ validation so that the test exercises the real receive path. This is the same re
 the source hygiene test, and this is the symmetric exit. `drop_no_sink` is a diagnosis in
 itself, because a non-zero value in a product build means the design has drifted.
 
-**The hook slot lives in core and the product build leaves it empty.** The code that attaches to the slot,
-that is the `data.rx` line of the M-5 comparison and the echo responder, is compiled only under the
-test-build CMake option. The product binary has no code to attach to the slot. The slot itself is not
-split by test build because in Phase 7 the same place leads to the injection path above.
+**The hook slot lives in core.** With the adapter, both builds attach injection to the slot. Without the
+adapter, the product build leaves the slot empty. The `data.rx` line of the M-5 comparison and the echo
+responder are compiled only under the test-build CMake option. The slot itself is not split by test build
+because the same place leads to the injection path above.
 
 `drain_console` drains the command lines that `[console]` pushed to the queue. The event is auto
 reset, so no separate reset call is needed. In the console build it stays after Phase 6 (chapter 1

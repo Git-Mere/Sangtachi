@@ -75,11 +75,6 @@ COUNTERS_SOURCE = "client/src/counters.cpp"
 # **남겨 두면 결함이다.** 코드에 이미 있는 이름이 여기 있으면 `counter` 검사가 떨어진다.
 PENDING_COUNTERS = {
     "telemetry_upload_failed": "Phase 9",
-    "tx_drop_not_unicast": "Phase 7",
-    "tx_bytes": "Phase 7",
-    "rx_bytes": "Phase 7",
-    "tx_datagrams": "Phase 7",
-    "rx_datagrams": "Phase 7",
 }
 
 # 문서 본문 코드 스팬 가운데 카운터로 읽는 모양. 코드에서 문서로 갈 때는 이 모양을 보지 않고

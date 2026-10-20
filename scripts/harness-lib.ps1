@@ -228,10 +228,11 @@ function Get-FreeTcpPort {
 function Build-TestClient([string]$Config, [string]$BuildDir, [string]$TestBuildDir) {
     if (-not $TestBuildDir) { $TestBuildDir = $BuildDir.TrimEnd('\', '/') + '-testbuild' }
     . (Join-Path $PSScriptRoot 'vsdevshell.ps1')
-    cmake -S $script:repoRoot -B $TestBuildDir -G Ninja "-DCMAKE_BUILD_TYPE=$Config" -DSANGTACHI_TEST_BUILD=ON -DSANGTACHI_BUILD_TESTS=OFF | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "test-build configure failed ($LASTEXITCODE)" }
-    cmake --build $TestBuildDir --target sangtachi_client | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "test-build build failed ($LASTEXITCODE)" }
+    # 실패하면 마지막 줄들을 보인다. 버리면 무엇이 실패했는지 다시 지어 봐야 안다.
+    $out = cmake -S $script:repoRoot -B $TestBuildDir -G Ninja "-DCMAKE_BUILD_TYPE=$Config" -DSANGTACHI_TEST_BUILD=ON -DSANGTACHI_BUILD_TESTS=OFF 2>&1
+    if ($LASTEXITCODE -ne 0) { $out | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }; throw "test-build configure failed ($LASTEXITCODE)" }
+    $out = cmake --build $TestBuildDir --target sangtachi_client 2>&1
+    if ($LASTEXITCODE -ne 0) { $out | Select-Object -Last 40 | ForEach-Object { Write-Host $_ }; throw "test-build build failed ($LASTEXITCODE)" }
     return (Join-Path $TestBuildDir 'client\sangtachi_client.exe')
 }
 

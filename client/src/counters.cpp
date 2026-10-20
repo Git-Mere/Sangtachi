@@ -67,13 +67,18 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::EndpointLearned: return "endpoint_learned";
         case Counter::PathProbeFailed: return "path_probe_failed";
         case Counter::RecordWriteFailed: return "record_write_failed";
+        case Counter::RxBytes: return "rx_bytes";
+        case Counter::RxDatagrams: return "rx_datagrams";
         case Counter::RxErrAdapter: return "rx_err_adapter";
         case Counter::RxErrRecv: return "rx_err_recv";
         case Counter::TelemetryQueueDropped: return "telemetry_queue_dropped";
+        case Counter::TxBytes: return "tx_bytes";
+        case Counter::TxDatagrams: return "tx_datagrams";
         case Counter::TxDropBadSrc: return "tx_drop_bad_src";
         case Counter::TxDropNoRoute: return "tx_drop_no_route";
         case Counter::TxDropNotConnected: return "tx_drop_not_connected";
         case Counter::TxDropNotIpv4: return "tx_drop_not_ipv4";
+        case Counter::TxDropNotUnicast: return "tx_drop_not_unicast";
         case Counter::TxDropOversize: return "tx_drop_oversize";
         case Counter::TxDropShort: return "tx_drop_short";
         case Counter::TxErrAck: return "tx_err_ack";

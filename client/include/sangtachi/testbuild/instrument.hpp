@@ -32,7 +32,8 @@ void emit_echo_rtt(std::span<const std::byte> inner, std::uint64_t now_ms);
 // 아니다), 표시가 요청이 아니면 비어 있다. `0x5A` 에 응답하지 않으므로 양쪽이 켜져 있어도 끝없이 오가지 않는다.
 [[nodiscard]] std::optional<std::vector<std::byte>> make_echo_reply(std::span<const std::byte> inner);
 
-// roadmap.md Phase 6 검증의 ICMP 응답기. 어댑터에서 읽은 패킷이 ICMP 에코 요청이면 그 응답을 만든다.
+// roadmap.md Phase 6 검증의 ICMP 응답기. 어댑터에서 읽은 패킷이 라우팅 범위 밖으로 가는 ICMP 에코 요청이면
+// 그 응답을 만든다. 응답이 없는 패킷은 부르는 쪽이 라우팅으로 보낸다 (concurrency.md 3장).
 // 출발지와 목적지를 뒤집고, TTL 을 64 로, ICMP 형식을 0(에코 응답)으로 바꾸고, ICMP 체크섬과 IPv4 헤더
 // 체크섬을 다시 채운다. 식별자, 순번, 데이터는 그대로다. 받은 것을 되돌리는 장치라 위 에코 응답기와 같은
 // 시험 빌드에만 있다.
@@ -45,6 +46,7 @@ void emit_echo_rtt(std::span<const std::byte> inner, std::uint64_t now_ms);
 // | 조각(MF 가 섰거나 조각 오프셋이 0 이 아님) | 없음. 조각 하나로는 ICMP 체크섬을 볼 수 없다 |
 // | 프로토콜이 1 이 아님, 형식이 8 이 아니거나 코드가 0 이 아님 | 없음. 응답(형식 0)에 다시 응답하지 않는다 |
 // | ICMP 체크섬이 틀림 | 없음 |
+// | 목적지가 `10.100.0.0/24` 밖이거나, 마지막 옥텟이 `MAX_PEERS` 이하이거나 255 | 없음. 상대의 가상 IP 와 브로드캐스트에 답하지 않는다 |
 [[nodiscard]] std::optional<std::vector<std::byte>> make_icmp_echo_reply(std::span<const std::byte> packet);
 
 }  // namespace sangtachi::testbuild

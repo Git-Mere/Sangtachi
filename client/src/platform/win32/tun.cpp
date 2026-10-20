@@ -48,6 +48,9 @@ constexpr DWORD kPreferredPollMs = 50;
 // 서브넷 충돌 스크립트의 상한. 이 기기에서 한 번에 1~4초가 걸렸다.
 constexpr DWORD kSubnetCheckCapMs = 30000;
 
+// 방화벽 규칙 스크립트의 상한. 규칙마다 필터 조회 다섯이 있어 서브넷 검사보다 길게 둔다.
+constexpr DWORD kFirewallCheckCapMs = 60000;
+
 // 가상 LAN 의 접두사 길이 (architecture.md 7장 가상 네트워크 설계의 /24).
 constexpr std::uint8_t kPrefixLength = 24;
 
@@ -274,8 +277,20 @@ bool is_elevated() noexcept {
     return ok != 0 && elevation.TokenIsElevated != 0;
 }
 
-SubnetCheck run_subnet_check(std::string_view target) {
-    SubnetCheck result;
+namespace {
+
+// 실행 파일 옆의 PowerShell 스크립트 하나를 `System32` 의 Windows PowerShell 로 돌린 결과.
+struct ScriptRun {
+    bool ran = false;          // 끝까지 돌았고 종료 코드를 읽었다
+    std::uint32_t exit_code = 0;
+    std::string output;        // 표준 출력과 표준 오류. 진단에만 쓴다
+    OsFailure failure;         // ran 이 거짓이면 원인
+};
+
+// 서브넷 충돌 검사(windows-prereq.md 7절)와 방화벽 규칙(2절)이 같은 방식으로 부른다. cap_ms 안에 끝나지
+// 않으면 프로세스를 끝내고 ran 이 거짓이다. arguments 는 스크립트 경로 뒤에 그대로 붙는다.
+ScriptRun run_script(std::wstring_view script, std::wstring_view arguments, DWORD cap_ms) {
+    ScriptRun result;
     const std::wstring dir = exe_dir();
     if (dir.empty()) {
         result.failure = os_failure("GetModuleFileNameW", ::GetLastError());
@@ -291,9 +306,7 @@ SubnetCheck run_subnet_check(std::string_view target) {
     const std::wstring powershell = std::wstring(system_dir) + L"\\WindowsPowerShell\\v1.0\\powershell.exe";
     std::wstring command = L"\"" + powershell +
                            L"\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + dir +
-                           L"Test-SubnetOverlap.ps1\" -Target " + widen_ascii(target) +
-                           L" -OwnInterfaceGuid " + widen_ascii(adapter::kGuidText) + L" -OwnAlias " +
-                           widen_ascii(adapter::kName);
+                           std::wstring(script) + L"\" " + std::wstring(arguments);
 
     // 출력은 지울 임시 파일로 받는다. 파이프는 버퍼가 차면 자식이 멈추고 그러면 상한까지 기다린다.
     wchar_t temp_dir[MAX_PATH + 1] = {};
@@ -357,7 +370,7 @@ SubnetCheck run_subnet_check(std::string_view target) {
     HandleCloser process_handle{process.hProcess};
     HandleCloser thread_handle{process.hThread};
 
-    if (::WaitForSingleObject(process.hProcess, kSubnetCheckCapMs) != WAIT_OBJECT_0) {
+    if (::WaitForSingleObject(process.hProcess, cap_ms) != WAIT_OBJECT_0) {
         ::TerminateProcess(process.hProcess, 1);
         ::WaitForSingleObject(process.hProcess, 5000);
         result.failure = os_failure("WaitForSingleObject", WAIT_TIMEOUT);
@@ -368,20 +381,83 @@ SubnetCheck run_subnet_check(std::string_view target) {
         result.failure = os_failure("GetExitCodeProcess", ::GetLastError());
         return result;
     }
+    result.ran = true;
     result.exit_code = static_cast<std::uint32_t>(code);
-    result.verdict = code == 0 ? SubnetVerdict::kProceed
-                     : code == 1 ? SubnetVerdict::kBlock
-                                 : SubnetVerdict::kUnknown;
 
-    // 출력은 진단에만 쓴다. 판정은 위의 종료 코드다.
-    std::string text;
     ::SetFilePointer(output.handle, 0, nullptr, FILE_BEGIN);
     char buffer[4096];
     DWORD read = 0;
     while (::ReadFile(output.handle, buffer, sizeof(buffer), &read, nullptr) != 0 && read > 0) {
-        text.append(buffer, read);
+        result.output.append(buffer, read);
     }
-    result.blocks = block_prefixes(text);
+    return result;
+}
+
+// 방화벽 스크립트 출력에서 `<prefix><대상> <검사>` 줄을 `<대상>:<검사>` 로, `<prefix><대상>` 줄을 `<대상>` 으로
+// 뽑는다. 스크립트가 ASCII 로 낸다. 로그 값에 공백을 싣지 않으므로 쌍점으로 잇는다 (architecture.md 9장).
+std::vector<std::string> firewall_lines(const std::string& output, std::string_view prefix) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start < output.size()) {
+        std::size_t end = output.find('\n', start);
+        if (end == std::string::npos) {
+            end = output.size();
+        }
+        std::string_view line(output.data() + start, end - start);
+        start = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+            line.remove_suffix(1);
+        }
+        if (line.substr(0, prefix.size()) != prefix) {
+            continue;
+        }
+        std::string item(line.substr(prefix.size()));
+        if (const auto space = item.find(' '); space != std::string::npos) {
+            item[space] = ':';
+        }
+        out.push_back(std::move(item));
+    }
+    return out;
+}
+
+}  // namespace
+
+SubnetCheck run_subnet_check(std::string_view target) {
+    SubnetCheck result;
+    const ScriptRun run = run_script(L"Test-SubnetOverlap.ps1",
+                                     L"-Target " + widen_ascii(target) + L" -OwnInterfaceGuid " +
+                                         widen_ascii(adapter::kGuidText) + L" -OwnAlias " +
+                                         widen_ascii(adapter::kName),
+                                     kSubnetCheckCapMs);
+    if (!run.ran) {
+        result.failure = run.failure;
+        return result;
+    }
+    result.exit_code = run.exit_code;
+    result.verdict = run.exit_code == 0 ? SubnetVerdict::kProceed
+                     : run.exit_code == 1 ? SubnetVerdict::kBlock
+                                          : SubnetVerdict::kUnknown;
+    // 출력은 진단에만 쓴다. 판정은 위의 종료 코드다.
+    result.blocks = block_prefixes(run.output);
+    return result;
+}
+
+FirewallCheck run_firewall_check() {
+    FirewallCheck result;
+    const ScriptRun run = run_script(L"Initialize-FirewallRules.ps1",
+                                     L"-InterfaceAlias " + widen_ascii(adapter::kName), kFirewallCheckCapMs);
+    if (!run.ran) {
+        result.failure = run.failure;
+        return result;
+    }
+    result.exit_code = run.exit_code;
+    result.verdict = run.exit_code == 0 ? FirewallVerdict::kPass
+                     : run.exit_code == 1 ? FirewallVerdict::kFail
+                                          : FirewallVerdict::kUnknown;
+    // 출력은 진단에만 쓴다. 판정은 위의 종료 코드다.
+    result.failed = firewall_lines(run.output, "FAIL ");
+    result.unknown = firewall_lines(run.output, "UNKNOWN ");
+    result.created = firewall_lines(run.output, "CREATED ");
     return result;
 }
 

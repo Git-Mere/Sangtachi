@@ -390,7 +390,11 @@ TxOutcome Tunnel::send_data(std::span<const std::byte> inner) {
     if (!local_vip_ || be32_at(inner, 12) != *local_vip_) {
         return drop(Counter::TxDropBadSrc);
     }
-    peer::Session* session = route(be32_at(inner, 16));
+    const std::uint32_t destination = be32_at(inner, 16);
+    if (is_not_unicast(destination)) {
+        return drop(Counter::TxDropNotUnicast);  // 운영체제의 멀티캐스트와 브로드캐스트. 전역이다
+    }
+    peer::Session* session = route(destination);
     if (session == nullptr) {
         return drop(Counter::TxDropNoRoute);  // 세션을 고르지 못했다. 전역이다
     }

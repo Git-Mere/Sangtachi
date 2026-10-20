@@ -9,9 +9,11 @@
 #   pwsh -NoProfile -File scripts/adapter-check.ps1
 #
 # 장면
-#   up         호스트로 방을 세우면 어댑터, 주소, 경로, MTU 가 서고, 미할당 가상 IP 로 ping 이 응답을 받는다
+#   up         호스트로 방을 세우면 어댑터, 방화벽 규칙, 주소, 경로, MTU 가 서고, 미할당 가상 IP 로 ping 이 응답을
+#              받고, 라우팅 범위 안의 빈 가상 IP 로 보낸 ping 은 tx_drop_no_route 다
 #   leave      leave 하면 주소가 떨어지고 어댑터는 남는다
 #   quit       quit 하면 어댑터와 경로가 남지 않는다
+#   firewall   있던 방화벽 규칙은 검증하고 쓰고, 끈 규칙은 기동 실패다 (windows-prereq.md 2절)
 #   second     어댑터를 든 프로세스가 있으면 두 번째 프로세스는 기동 실패다
 #   crash      강제로 끝낸 뒤 다시 띄우면 어댑터가 다시 생기고 ping 이 다시 된다
 
@@ -68,6 +70,9 @@ function Invoke-NetQuerySafe([scriptblock]$Query) {
         throw
     }
 }
+
+# 클라이언트가 만드는 방화벽 규칙의 이름. 출처는 tools/winprereq/Initialize-FirewallRules.ps1 이다 (windows-prereq.md 2절).
+$firewallRules = @('Sangtachi-TCP-25565-In', 'Sangtachi-ICMPv4-Echo-In')
 
 # 우리 GUID 의 어댑터. 이름으로 찾지 않는다.
 function Get-OurAdapter {
@@ -127,6 +132,11 @@ function Quit-Client($c) {
 function Scenario-UpLeaveQuit {
     $h = Start-Client 'ad-host' @() $script:testExe -Adapter
     Check 'up: the client logs adapter.open with our GUID' ((Read-Log $h.err) -match "INFO adapter\.open name=$adapterName guid=$([regex]::Escape($adapterGuid)) ")
+    # windows-prereq.md 2절 클라이언트가 만드는 규칙. 처음이면 만들고, 있으면 검증하고 쓴다.
+    Check 'up: the client logs adapter.firewall verdict=pass' ((Read-Log $h.err) -match 'INFO adapter\.firewall verdict=pass ')
+    foreach ($rule in $firewallRules) {
+        Check "up: exactly one rule named $rule" ((@(Invoke-NetQuerySafe { Get-NetFirewallRule -DisplayName $rule -ErrorAction Stop })).Count -eq 1)
+    }
     $ours = Get-OurAdapter
     Check 'up: exactly one adapter has our GUID' ($ours.Count -eq 1)
     if ($ours.Count -ne 1) { return }
@@ -176,9 +186,32 @@ function Scenario-UpLeaveQuit {
     Check "subnet: with our GUID the live adapter is excluded and the verdict is proceed (exit $withGuidCode)" ($withGuidCode -eq 0)
     Check "subnet: without our GUID the same machine blocks (exit $withoutGuidCode)" ($withoutGuidCode -eq 1)
 
-    # windows-prereq.md 2절. 새 어댑터의 네트워크 프로필은 관측으로만 남긴다. 판정은 Phase 7 의 방화벽 작업이다.
+    # windows-prereq.md 2절. 새 어댑터의 네트워크 프로필은 관측으로만 남긴다. 규칙이 프로필과 무관하게 걸린다.
     $profile = @(Invoke-NetQuerySafe { Get-NetConnectionProfile -InterfaceIndex $ifIndex -ErrorAction Stop })
     Write-Host ("note  up: network category of our adapter: {0}" -f (($profile | ForEach-Object { "$($_.NetworkCategory)" }) -join ','))
+
+    # 같은 절의 판정 스크립트가 클라이언트가 만든 규칙을 따로 판정한다. 범위가 우리 어댑터와 기대 엔드포인트로
+    # 좁혀졌는지 본다.
+    $policyScript = Join-Path $repoRoot 'tools\winprereq\Test-FirewallPolicy.ps1'
+    $savedModulePath = $env:PSModulePath
+    Remove-Item Env:PSModulePath
+    try {
+        $policy = & powershell -NoProfile -ExecutionPolicy Bypass -File $policyScript -InterfaceAlias $adapterName
+        $policyCode = $LASTEXITCODE
+    } finally {
+        $env:PSModulePath = $savedModulePath
+    }
+    Set-Content -LiteralPath (Join-Path $work 'firewall-policy.txt') -Value $policy -Encoding UTF8
+    Check "up: Test-FirewallPolicy passes for our adapter (exit $policyCode)" ($policyCode -eq 0)
+
+    # roadmap.md Phase 7: 라우팅 대상이 없는 가상 IP 로 보낸 패킷은 폐기되고 카운터가 오른다. 10.100.0.3 은
+    # 라우팅 범위 안이라 시험 빌드의 ICMP 응답기가 답하지 않는다 (concurrency.md 3장).
+    $before = Get-Counter $h 'tx_drop_no_route'
+    $replies = Test-Echo '10.100.0.3' 2
+    $after = Get-Counter $h 'tx_drop_no_route'
+    Check "route: ping 10.100.0.3 gets no reply (got $replies)" ($replies -eq 0)
+    Check "route: tx_drop_no_route grew by at least 2 ($before -> $after)" ($null -ne $before -and $null -ne $after -and $after - $before -ge 2)
+    Write-Host ("note  route: tx_drop_not_unicast so far: {0}" -f (Get-Counter $h 'tx_drop_not_unicast'))
 
     # 미할당 가상 IP 로 ping. 어댑터가 읽고(adapter_rx) 시험 빌드의 ICMP 응답기가 응답을 주입한다.
     $before = Get-Counter $h 'adapter_rx'
@@ -222,6 +255,38 @@ function Scenario-Second {
     Check 'second: the adapter is gone after the first quits' (Wait-Until { (Get-OurAdapter).Count -eq 0 })
 }
 
+function Scenario-Firewall {
+    # windows-prereq.md 2절. 앞 장면이 규칙을 만들었다. 이번 실행은 있던 규칙을 검증하고 그대로 쓴다.
+    $a = Start-Client 'fw-existing' @() $script:testExe -Adapter
+    Check 'firewall: an existing rule set is verified and used (created=-)' ((Read-Log $a.err) -match '(?m)^INFO adapter\.firewall verdict=pass created=-\r?$')
+    Quit-Client $a
+    Check 'firewall: the adapter is gone after quit' (Wait-Until { (Get-OurAdapter).Count -eq 0 })
+
+    # 규칙 하나를 끄면 검증이 어긋나 기동 실패다. 클라이언트는 그 규칙을 고치지 않는다. 끝에 다시 켠다.
+    $rule = $firewallRules[0]
+    Disable-NetFirewallRule -DisplayName $rule -ErrorAction Stop
+    try {
+        $b = Start-Logged 'fw-disabled' $script:testExe ("--server 127.0.0.1:$script:cpPort --name fwoff --stun 127.0.0.1:$($script:stunPorts[0]) --stun 127.0.0.1:$($script:stunPorts[1])") $script:repoRoot
+        $script:clients += $b
+        $exited = $b.proc.WaitForExit(90000)
+        Check 'firewall: a disabled rule makes startup fail' $exited
+        if ($exited) {
+            Check 'firewall: with the startup failure code 2' ($b.proc.ExitCode -eq 2)
+            Check "firewall: it logs adapter.error reason=firewall with $($rule):enabled" ((Read-Log $b.err) -match "ERROR adapter\.error reason=firewall verdict=fail exit_code=1 failed=$([regex]::Escape($rule)):enabled ")
+        }
+        Check 'firewall: the client left the rule disabled' ("$((Get-NetFirewallRule -DisplayName $rule -ErrorAction Stop).Enabled)" -eq 'False')
+        Check 'firewall: no adapter after the failed start' (Wait-Until { (Get-OurAdapter).Count -eq 0 } 15000)
+    } finally {
+        # 지속되는 규칙이다. 되돌리지 못하면 숨기지 않고 실패로 적는다.
+        try {
+            Enable-NetFirewallRule -DisplayName $rule -ErrorAction Stop
+            Check 'firewall: the rule is enabled again after the scenario' ("$((Get-NetFirewallRule -DisplayName $rule -ErrorAction Stop).Enabled)" -eq 'True')
+        } catch {
+            Check "firewall: re-enabling $rule failed: $_" $false
+        }
+    }
+}
+
 function Scenario-Crash {
     $a = Start-Client 'ad-crash' @() $script:testExe -Adapter
     $null = Start-Room $a
@@ -250,7 +315,7 @@ try {
     }
     $script:testExe = Build-TestClient $Config $BuildDir $TestBuildDir
     if (-not (Start-Harness $Ddb)) { exit 1 }
-    foreach ($s in @('Scenario-UpLeaveQuit', 'Scenario-Second', 'Scenario-Crash')) {
+    foreach ($s in @('Scenario-UpLeaveQuit', 'Scenario-Firewall', 'Scenario-Second', 'Scenario-Crash')) {
         Write-Host "--- $s"
         try { & $s } catch {
             Write-Host ("FAIL  {0} threw: {1}" -f $s, $_)

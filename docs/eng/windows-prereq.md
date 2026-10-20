@@ -53,8 +53,8 @@ section states its criterion.
 
 End-to-end verification on a freshly reset PC belongs to Phase 8 demo preparation and is not the
 completion condition of this document. Among the automatic handling by the client, that
-of sections 1, 3, 4, 7, 8 and 9 is implemented. The firewall rules of section 2 are still a **design
-split**, not confirmed behaviour. The Qt bundling of section 4 is not done yet either.
+of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. Whether the firewall rules of section 2 let traffic
+through has not been seen yet. The Qt bundling of section 4 is not done yet either.
 
 ## 1. Administrator rights
 
@@ -91,9 +91,10 @@ needs them. The marginal cost is "one more rule with rights we already have".
 **Status: partly measured.** The default inbound policy and the profile classification of existing
 adapters were actually observed. Our newly created adapter being classified as `Public` was seen in
 `scripts/adapter-check.ps1`. That a rule scoped to the adapter stays bound to the adapter after it is
-deleted and recreated was also seen (Rules the client creates, below). **The client creating the rules
-is not implemented yet.** That is [`roadmap.md`](roadmap.md) Phase 7 work. Whether the rules actually let
-traffic through needs a peer machine, so the Phase 7 verification checks it.
+deleted and recreated was also seen (Rules the client creates, below). That the client creates and
+verifies the rules is checked by `scripts/adapter-check.ps1` in an elevated shell. **Whether the rules
+actually let traffic through has not been seen yet.** It needs a peer machine, so the
+[`roadmap.md`](roadmap.md) Phase 7 verification checks it.
 
 Windows Firewall is **inbound-block by default.** A newly created virtual adapter has no gateway,
 so it is classified as an "unidentified network", and that gets the Public profile. Under Public,
@@ -250,8 +251,8 @@ chapter 7 Adapter lifetime. A `--no-adapter` run skips it.
 
 | Name | Group | What it opens |
 |------|-------|---------------|
-| `Sangtachi TCP 25565 In` | `Sangtachi` | Inbound allow, TCP, local port 25565 |
-| `Sangtachi ICMPv4 Echo In` | `Sangtachi` | Inbound allow, ICMPv4, echo request (type 8) |
+| `Sangtachi-TCP-25565-In` | `Sangtachi` | Inbound allow, TCP, local port 25565 |
+| `Sangtachi-ICMPv4-Echo-In` | `Sangtachi` | Inbound allow, ICMPv4, echo request (type 8) |
 
 Both rules have the same shape as the `New-NetFirewallRule` example above. The profile is `Any` and the
 interface is our adapter alone. The host and the player use the same rules. One process can be both
@@ -276,16 +277,19 @@ rule (Checking the default policy, above). Other block rules on the same port ar
 checks them, like the Java rules of section 12.
 
 **Startup fails if verification fails, cannot be decided, or a rule cannot be created.** Cannot be
-decided means a query failed (section 0). The `ERROR` line carries the check that did not match and the
-command that removes that rule by name (`Remove-NetFirewallRule -DisplayName '<name>'`), because a rule
-whose group was changed is not caught by the group command below. The client does not fix or remove an existing rule.
+decided means a query failed (section 0). The `ERROR` line carries the name of the rule that did not
+match and the check. That rule is removed by name (`Remove-NetFirewallRule -DisplayName '<name>'`), because
+a rule whose group was changed is not caught by the group command below. The client does not fix or remove
+an existing rule.
 
 > **Why.** A matching name alone is not a reason to delete someone else's policy. Using a rule that looks
 > different would mean trusting a widely open rule as ours.
 
-**A script next to the executable makes the decision.** Like the subnet overlap check in section 7, it is
-called with Windows PowerShell from `System32` and judged by the exit code. The case table lives inside
-the script.
+**[`Initialize-FirewallRules.ps1`](../../tools/winprereq/Initialize-FirewallRules.ps1) next to the
+executable makes the decision.** Like the subnet overlap check in section 7, it is called with Windows
+PowerShell from `System32` and judged by the exit code. The case table lives inside the script and runs with
+`-SelfTest`. The rule names have no spaces because a name is carried as a value of the `ERROR` line
+([`architecture.md`](architecture.md) chapter 9 Log Output).
 
 **A rule remembers its interface by GUID.** This was checked in an elevated shell by creating the rules
 with the adapter up, ending the client, and starting it again. The procedure is
@@ -1065,8 +1069,8 @@ If the binary was changed right before the demo, run it once more with that file
 | 12 | Java path exception | person | after updating Java |
 | 13 | SmartScreen bypass | person | first run on the demo PC |
 
-**Of the items the client owns, item 2 and the Qt bundling of item 4 are not implemented yet.** Qt
-comes in at the time section 4 states. The row of item 2 is a design split. The "Who" of each row copies the `Owner:` line of that
+**Of the items the client owns, the Qt bundling of item 4 is not implemented yet.** Qt
+comes in at the time section 4 states. The "Who" of each row copies the `Owner:` line of that
 section.
 
 ## 15. Usability limits

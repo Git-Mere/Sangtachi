@@ -12,6 +12,7 @@
 #include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/timer.hpp"
+#include "sangtachi/tunnel/data_sender.hpp"
 #include "sangtachi/tunnel/tunnel.hpp"
 
 #include "../session_fixture.hpp"
@@ -264,6 +265,28 @@ TEST_CASE("control_runner: a create_room reply prints ROOM and starts a fresh ST
     REQUIRE(rig.runner->stun() != nullptr);
     REQUIRE(rig.sent.size() == 2);
     REQUIRE(rig.timers.contains("stun.deadline.0"));
+}
+
+TEST_CASE("control_runner: the tunnel knows its own virtual IP from create_room, before any session",
+          "[control][runner]") {
+    // protocol.md 8.5 출발지 검사. 호스트 혼자인 동안에도 어댑터에서 읽은 패킷의 출발지를 가른다. 모르면 전부
+    // tx_drop_bad_src 가 되어 경로 없는 유니캐스트(tx_drop_no_route)와 운영체제 잡음(tx_drop_not_unicast)을
+    // 셀 수 없다. adapter-check.ps1 의 route 장면이 이것으로 처음 떨어졌다.
+    Rig rig;
+    rig.command(LobbyCommandKind::kHost);
+    REQUIRE_FALSE(rig.tunnel->local_virtual_ip().has_value());
+    rig.reply(Op::kCreateRoom, respond(kIssued));
+    REQUIRE(rig.tunnel->session_count() == 0);
+    REQUIRE(rig.tunnel->local_virtual_ip() == 0x0A640001u);
+
+    const auto to_empty_slot = sangtachi::tunnel::make_synthetic(100, 0x0A640001u, 0x0A640003u, 0, 0);
+    REQUIRE(rig.tunnel->send_data(to_empty_slot) == sangtachi::tunnel::TxOutcome::kDropped);
+    REQUIRE(rig.counters.value(Counter::TxDropNoRoute) == 1);
+    REQUIRE(rig.counters.value(Counter::TxDropBadSrc) == 0);
+
+    // 방을 떠나면 잊는다.
+    rig.command(LobbyCommandKind::kLeave);
+    REQUIRE_FALSE(rig.tunnel->local_virtual_ip().has_value());
 }
 
 TEST_CASE("control_runner: a transport failure is interpreted as one and the retry timer is armed",

@@ -23,8 +23,7 @@ Phase 7 의 구현은 끝났고 한 기기에서 되는 확인(`scripts/test.ps1
 
 | 순서 | 무엇 | 왜 |
 |:--:|------|-----|
-| 1 | 두 기기 검증 | `roadmap.md` Phase 7 검증. 저장소 소유자가 시점을 알려 준다. 그때 `field-test/required-test.md` 의 키트 태그(지금 `field-kit-p5`)를 새로 단다 |
-| 2 | 캡처 대조의 측정 경계 | `roadmap.md` Phase 7 캡처 대조 표의 "측정 경계" 가 비어 있다. 대조 절차를 쓸 때 정한다 |
+| 1 | 두 기기 검증 | `roadmap.md` Phase 7 검증. 절차는 `field-test/README.md` 시험 6 이고 남은 Phase 4~5 실측(시험 1, 5)과 같은 날 키트 `field-kit-p7` 하나로 돈다(`field-test/required-test.md`). 저장소 소유자가 시점을 알려 준다. 6-5 의 카운터와 캡처 대조는 아직 돌려 보지 않았다 |
 
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.

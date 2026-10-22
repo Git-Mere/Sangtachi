@@ -17,6 +17,7 @@
 // | `ArmTimer` | `TimerSet::add_once(name, delay_ms, now)`. 만료하면 `on_timer(name)` |
 // | `CancelTimer` | `TimerSet::cancel(name)` |
 // | `PrintLine` | 표준 출력에 그 줄과 줄바꿈 (architecture.md 3.5 의 `ROOM`, `FAIL`) |
+// | `GuideLine` | 사람에게 보이는 안내 한 줄. 표준 출력이 콘솔일 때만 낸다 (architecture.md 3.5 로비 안내) |
 // | `LogLine` | `emit(level, event, fields)` (architecture.md 9장 로그 출력) |
 // | `OpenSession` | `Tunnel::create_session(request)`. 널이면 곧바로 `on_session_open_failed(peer_id)`. 만들었으면 그 세션의 기록 줄을 맡는다(아래 "기록 줄") |
 // | `StartPunch` | 그 상대의 세션이 있으면 `Session::start_punch(now)` (protocol.md 10.2 의 6번). 없으면 아무것도 하지 않는다 |
@@ -127,7 +128,7 @@
 // | `control.peers` | INFO | peer_id, virtual_ip, candidates (architecture.md 9장) | 8.4 의 Phase 3 규칙 |
 // | `control.candidates_rejected` | WARN | rejected | register_candidate 응답의 rejected 가 0 이 아님 (4.4) |
 // | `session.failed` | ERROR | code, 쌍이면 peer_id | `FAIL CONTROL_PLANE_EXCHANGE_FAILED` 를 낼 때. STUN 실패의 줄은 StunClient 가, 세션 실패의 줄은 세션이 이미 낸다 |
-// | `console.rejected` | WARN | reason, command | 받지 않는 명령 (architecture.md 3.5 로비 명령) |
+// | `console.rejected` | WARN | reason, command | 받지 않는 명령 (architecture.md 3.5 로비 명령). 같은 사유의 안내 한 줄도 낸다 |
 // | `attempt.start` | INFO | role | host 나 join 을 받았다 |
 // | `lobby.name` | INFO | name | name 명령을 받아 이름을 바꿨다. 이름은 비밀이 아니다 (control_plane.md 2.7) |
 // | `attempt.end` | INFO | reason (`leave`, `failed`, `closed`, `room_ended`, `shutdown`) | 로비로 간다 |
@@ -202,6 +203,7 @@ enum class LobbyCommandKind : std::uint8_t {
     kJoin,
     kLeave,
     kName,
+    kHelp,
 };
 
 struct LobbyCommand {
@@ -210,7 +212,7 @@ struct LobbyCommand {
     bool extra = false;    // 받을 인자 뒤에 낱말이 더 있었다
 };
 
-// 콘솔 줄 하나. 첫 낱말이 정확히 `host`, `join`, `leave`, `name` 일 때만 값이 있다. 그 밖은 nullopt 이고
+// 콘솔 줄 하나. 첫 낱말이 정확히 `host`, `join`, `leave`, `name`, `help` 일 때만 값이 있다. 그 밖은 nullopt 이고
 // 다른 콘솔 명령(quit, counters, send)의 몫이다. 낱말은 ASCII 공백과 탭으로 가른다.
 // 인자의 형식은 여기서 보지 않는다. Lobby::on_command 가 보고 WARN 을 낸다.
 [[nodiscard]] std::optional<LobbyCommand> parse_lobby_command(std::string_view line);
@@ -260,6 +262,16 @@ struct PrintLine {
     std::string text;  // 줄바꿈 없음
 };
 
+// 사람에게 보이는 안내 한 줄 (architecture.md 3.5 로비 안내). `ROOM`, `FAIL` 줄과 달리 기계가 읽는 계약이
+// 아니다. 표준 출력이 리다이렉트되면 실행기가 버린다.
+struct GuideLine {
+    std::string text;  // 줄바꿈 없음
+};
+
+// 로비 명령이 아니고 quit, counters, send 도 아닌 줄을 받았을 때의 안내.
+inline constexpr std::string_view kUnknownCommandGuide =
+    "  Unknown command. Type help to see the commands.";
+
 struct LogLine {
     LogLevel level = LogLevel::Info;
     std::string_view event;  // 문자열 상수
@@ -301,7 +313,7 @@ struct RecordAttempt {
 };
 
 using LobbyAction = std::variant<SubmitRequest, StartStun, CancelStun, ArmTimer, CancelTimer,
-                                 PrintLine, LogLine, OpenSession, StartPunch, LeaveRoom, AssignAddress,
+                                 PrintLine, GuideLine, LogLine, OpenSession, StartPunch, LeaveRoom, AssignAddress,
                                  StartRoster, SetRosterPeers, RecordAttempt>;
 using LobbyActions = std::vector<LobbyAction>;
 
@@ -346,6 +358,9 @@ public:
     // clock 이 비면 수립 시간의 기점이 0 이다. collect 가 비면 반사 후보만 등록한다(위 경계 표).
     Lobby(NonceSource nonce, std::string name, LobbyClock clock = {},
           CandidateCollector collect = {});
+
+    // 역할 없이 기동했을 때 로비 안내를 낸다. 역할을 줬으면 부르지 않는다. 바로 시도가 시작되기 때문이다.
+    [[nodiscard]] LobbyActions on_start();
 
     // 로비 명령 하나 (architecture.md 3.5 로비 명령 표).
     [[nodiscard]] LobbyActions on_command(const LobbyCommand& command);
@@ -403,6 +418,12 @@ private:
 
     void start_attempt(Batch& out, LobbyRole role, std::string_view room);
     void on_name(Batch& out, const LobbyCommand& command);
+    // console.rejected 한 줄과 같은 사유의 안내 한 줄.
+    void reject(Batch& out, std::string_view reason, LobbyCommandKind kind);
+    // 로비 안내 (architecture.md 3.5 로비 안내). 로비에 들어올 때와 help 에 낸다.
+    void show_lobby_guide(Batch& out) const;
+    // 방 안내. 방에 있을 때의 help 에 낸다.
+    void show_room_guide(Batch& out) const;
     void submit(Batch& out, http::Op op, std::string body, std::vector<std::uint32_t> departed = {});
     void send_or_defer_request(Batch& out);
     void send_host_report(Batch& out);

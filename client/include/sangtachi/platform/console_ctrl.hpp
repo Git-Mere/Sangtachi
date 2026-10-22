@@ -89,4 +89,12 @@ struct CtrlHandlerInstall {
 // 설치 전이면 아무것도 하지 않고 거짓을 돌려준다.
 bool signal_cleanup_done() noexcept;
 
+// 표준 입력이 콘솔이고 그 콘솔에 붙은 프로세스가 이 프로세스 하나뿐이면 참이다. 탐색기에서 더블클릭해 Windows 가
+// 새 창을 열어 준 경우다. cmd 나 PowerShell 에서 띄우면 셸도 그 콘솔에 붙어 있으므로 거짓이다. 콘솔이 없거나 표준
+// 입력이 리다이렉트됐으면 거짓이다 (architecture.md 3.5 기동 실패의 창).
+[[nodiscard]] bool console_is_own() noexcept;
+
+// 표준 입력에서 한 줄을 읽고 버린다. 끝(EOF)이나 오류면 바로 돌아온다.
+void wait_for_enter() noexcept;
+
 }  // namespace sangtachi::platform

@@ -1,4 +1,5 @@
 #include "sangtachi/args.hpp"
+#include "sangtachi/default_server.hpp"
 #include "sangtachi/console.hpp"
 #include "sangtachi/control/channel.hpp"
 #include "sangtachi/control/http.hpp"
@@ -14,6 +15,7 @@
 #include "sangtachi/network/wsa.hpp"
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/platform/console_ctrl.hpp"
+#include "sangtachi/platform/random.hpp"
 #include "sangtachi/platform/record_file.hpp"
 #include "sangtachi/platform/resolve.hpp"
 #include "sangtachi/platform/stdout.hpp"
@@ -49,6 +51,12 @@ constexpr int kStartupFailure = 2;
 // join 상한. `[telemetry]` 와 `[control]` 을 합쳐 2초다 (concurrency.md 7장 종료).
 // `[telemetry]` 는 Phase 9 이므로 지금은 `[control]` 하나가 이 상한을 다 쓴다.
 constexpr std::uint32_t kJoinCapMs = 2000;
+
+// 로그 파일 이름. 기동 실패의 창이 안내에 싣는다. 열기 전이면 비어 있다.
+std::string g_log_name;
+// 로그의 받는 곳. 루프가 시작할 때 기동이 끝났다고 알린다. 열기 전이면 널이다.
+sangtachi::FileLogSink* g_log_sink = nullptr;
+
 
 sangtachi::Millis now_ms() noexcept {
     return static_cast<sangtachi::Millis>(sangtachi::platform::monotonic_ms());
@@ -360,11 +368,20 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     // 로비와 그 행동 실행기 (control/runner.hpp). STUN 은 시도마다 새로 돈다
     // (control_plane.md 8.4: 2번 DNS 와 3번 bind 만 프로세스에 한 번이다). 그래서 기동 시
     // 여기서 STUN 을 돌리지 않는다. 해석한 서버 목록만 넘긴다.
+    // 입력 자리 표시 (console.hpp ConsolePrompt). 실행기보다 먼저 만든다. 실행기의 출력 함수가 이것을 붙든다.
+    const bool guide_visible =
+        sangtachi::platform::is_console(sangtachi::platform::stdout_handle());
+    sangtachi::ConsolePrompt prompt([](std::string_view text, bool newline) {
+        const auto out = sangtachi::platform::stdout_handle();
+        (void)(newline ? sangtachi::platform::write_line(out, text)
+                       : sangtachi::platform::write_text(out, text));
+    });
+
     sangtachi::control::RunnerDeps deps;
     deps.host_header = std::move(*host_header);
     deps.stun_servers = std::move(stun_servers);
     deps.nonce = [] { return sangtachi::control::generate_client_nonce(); };
-    // 처음 표시 이름 (architecture.md 3.5 --name). 인자 검사가 Phase 4 이후 필수로 받아 둔 값이다.
+    // 처음 표시 이름 (architecture.md 3.5). --name 이거나 main 이 만든 기본 이름이다.
     deps.name = *args.name;
     deps.submit = [&control](sangtachi::control::ControlRequest request) {
         return control.submit(std::move(request));
@@ -378,6 +395,13 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
         // architecture.md 3.5: 리다이렉트면 UTF-8 과 LF, 콘솔이면 유니코드 쓰기.
         (void)sangtachi::platform::write_stdout_line(line);
     };
+    // 안내 줄과 입력 자리 표시는 사람에게만 보인다 (architecture.md 3.5 로비 안내). 표준 출력이 리다이렉트되면
+    // 내지 않는다. 그 출력을 읽는 것은 스크립트이고, 스크립트는 ROOM 과 FAIL 줄만 읽는다. 콘솔이면 ROOM 과 FAIL
+    // 줄도 입력 자리 표시를 거친다.
+    if (guide_visible) {
+        deps.print = [&prompt](std::string_view line) { prompt.line(line); };
+        deps.print_guide = [&prompt](std::string_view line) { prompt.line(line); };
+    }
     deps.clock = [] { return now_ms(); };
     // 받은 후보 위생의 자기 서브넷 행 (protocol.md 10.1). 집합은 루프가 소유한다 (concurrency.md 5장).
     deps.own_subnets = [&loop]() -> const sangtachi::peer::OwnSubnets& { return loop.own_subnets(); };
@@ -481,11 +505,23 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.set_send_handler([&sender](std::string_view rest) { sender.on_command(rest); });
     loop.set_work_source([&sender](std::size_t budget) { return sender.pump(budget); });
 
+    if (guide_visible) {
+        loop.set_unknown_command_handler(
+            [&prompt] { prompt.line(sangtachi::control::kUnknownCommandGuide); });
+        loop.set_console_line_hooks([&prompt] { prompt.input(); }, [&prompt] { prompt.show(); });
+    }
+
     // CLI 역할은 기동 직후의 로비 명령이다 (architecture.md 3.5). 역할이 없으면 아무
-    // 요청도 STUN 도 나가지 않고 로비에서 기다린다.
+    // 요청도 STUN 도 나가지 않고 로비 안내를 낸 뒤 기다린다.
     if (const auto command =
             sangtachi::control::startup_command(args.role, args.room)) {
         runner.on_command(*command);
+    } else {
+        runner.start();
+    }
+    // 역할 인자로 시작하면 응답이 올 때까지 표준 출력이 비어 있다. 그동안에도 입력 자리를 띄운다.
+    if (guide_visible) {
+        prompt.show();
     }
 
     // `[console]` 은 join 하지 않는다 (concurrency.md 7장 종료). 표준 입력 읽기를
@@ -496,8 +532,13 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     // 스스로 수명을 붙들게 한다. `main` 이 먼저 빠져나가도 해제된 것을 건드리지 않는다.
     std::thread(sangtachi::run_console_reader, session).detach();
 
+    // 기동이 끝났다. 콘솔 창에는 이제 안내와 ROOM, FAIL 줄만 나온다 (architecture.md 9장 로그 출력).
+    if (g_log_sink != nullptr) {
+        g_log_sink->end_startup();
+    }
     loop.run();
     session->request_stop();
+    prompt.close();
 
     // concurrency.md 7장 종료의 (2)와 (3). 세션 없이 진행 중이던 시도의 기록 줄을 먼저 쓰고 시도를
     // 끝낸다(요청을 더 내지 않는다). 그 뒤 5.6 이 정한 대상 세션마다 CLOSE 1회를 보내고, 그 전이가
@@ -518,6 +559,8 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.set_tunnel_handler(nullptr);
     loop.set_deadline_source({});
     loop.set_counter_dump_handler(nullptr);
+    loop.set_unknown_command_handler(nullptr);
+    loop.set_console_line_hooks(nullptr, nullptr);
     loop.set_send_handler(nullptr);
     loop.set_work_source(nullptr);
     loop.set_adapter_handler(nullptr);
@@ -528,14 +571,17 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int run_main(int argc, char** argv) {
     std::vector<std::string_view> raw;
     raw.reserve(argc > 0 ? static_cast<std::size_t>(argc - 1) : 0);
     for (int i = 1; i < argc; ++i) {
         raw.emplace_back(argv[i]);
     }
 
-    const auto parsed = sangtachi::parse_args(std::span<const std::string_view>(raw));
+    // 빌드에 넣은 제어 서버 주소가 --server 의 기본값이다 (architecture.md 3.5, CMake 의
+    // SANGTACHI_DEFAULT_SERVER). 비어 있으면 --server 가 필수다.
+    const auto parsed = sangtachi::parse_args(std::span<const std::string_view>(raw),
+                                              sangtachi::kDefaultServer);
     if (!parsed.ok()) {
         const sangtachi::LogField fields[] = {
             sangtachi::field("reason", sangtachi::to_token(parsed.error)),
@@ -543,6 +589,13 @@ int main(int argc, char** argv) {
         };
         sangtachi::emit(sangtachi::LogLevel::Error, "args.invalid", fields);
         return kStartupFailure;
+    }
+    sangtachi::Args args = *parsed.args;
+
+    // 기동 안내 (architecture.md 3.5 로비 안내). 로그 파일, 서버 주소 해석, 어댑터와 방화벽 규칙까지 몇 초가
+    // 걸린다. 그동안 창이 비어 있지 않게 한 줄을 낸다. 안내 줄과 같이 표준 출력이 콘솔일 때만 낸다.
+    if (sangtachi::platform::is_console(sangtachi::platform::stdout_handle())) {
+        (void)sangtachi::platform::write_stdout_line("Loading...");
     }
 
     sangtachi::Counters counters;
@@ -556,6 +609,39 @@ int main(int argc, char** argv) {
         emit_op_error(record_file.failed_op, record_file.error);
         return kStartupFailure;
     }
+
+    // 로그 파일 (architecture.md 9장 로그 출력). 기록 파일과 같은 이름으로 실행 파일 옆 logs\ 에 연다. 열지
+    // 못하면 기동 실패다. 이 줄 앞의 로그는 표준 오류로만 나간다. 받는 곳과 파일은 프로세스 수명이다. 해제하지
+    // 않는다. `[console]` 처럼 join 하지 않는 스레드가 main 뒤에도 emit 할 수 있다.
+    {
+        auto log_file = sangtachi::platform::open_log_file(record_name);
+        if (!log_file.ok()) {
+            emit_op_error(log_file.failed_op, log_file.error);
+            return kStartupFailure;
+        }
+        auto* file = new sangtachi::platform::RecordFile(std::move(log_file.file));
+        const bool screen_all =
+            !sangtachi::platform::is_console(sangtachi::platform::stderr_handle());
+        g_log_sink = new sangtachi::FileLogSink(
+            [file](std::string_view line) { (void)file->write(line); },
+            [](std::string_view line) { sangtachi::write_stderr(line); }, screen_all);
+        (void)sangtachi::set_log_sink(g_log_sink);
+        g_log_name = record_name;
+    }
+
+    // `--name` 이 없으면 기본 이름을 만든다 (architecture.md 3.5). 난수원이 실패하면 기동 실패다.
+    // 예측 가능한 값으로 대신하면 같은 방의 두 프로세스가 같은 이름을 받는다.
+    if (!args.name) {
+        args.name = sangtachi::make_default_name(
+            [](std::span<std::byte> out) { return sangtachi::platform::random_bytes(out); });
+        if (!args.name) {
+            emit_op_error("random_bytes", 0);
+            return kStartupFailure;
+        }
+        const sangtachi::LogField fields[] = {sangtachi::field("name", std::string_view(*args.name))};
+        sangtachi::emit(sangtachi::LogLevel::Info, "lobby.name", fields);
+    }
+
     {
         const sangtachi::LogField fields[] = {
             sangtachi::field("file", record_name),
@@ -576,7 +662,7 @@ int main(int argc, char** argv) {
     // **`--stun` 목록이 한 개면 기동 시 WARN 한 줄을 남긴다** (architecture.md 3.5 기동
     // 입력). 그 목록으로는 서로 다른 두 서버의 응답을 얻을 수 없어 5초를 기다린 뒤
     // STUN_DISCOVERY_FAILED 로 끝난다. 기다리기 전에 알린다.
-    if (parsed.args->stun.size() == 1) {
+    if (args.stun.size() == 1) {
         const sangtachi::LogField fields[] = {
             sangtachi::field("reason", std::string_view("single_server")),
         };
@@ -620,7 +706,7 @@ int main(int argc, char** argv) {
         //
         // **해석 실패는 기동 실패다. 재시도하지 않는다.** FR-13 의 실패 코드가 아니다.
         // ERROR 한 줄과 0 이 아닌 종료 코드로 끝난다 (control_plane.md 8.2).
-        const auto& server = *parsed.args->server;
+        const auto& server = *args.server;
         control = sangtachi::control::ControlChannel::start(server.host, server.port,
                                                             shutdown_event.get(), counters);
         if (!control) {
@@ -655,14 +741,14 @@ int main(int argc, char** argv) {
         // 가상 어댑터 (architecture.md 7장 어댑터 수명의 기동 단계). **이 블록이 닫힐 때 닫힌다.**
         // 그 자리가 concurrency.md 7장 종료의 (5)(6) 이다. 카운터 전량(4) 뒤, 정리 완료(7) 앞이다.
         std::unique_ptr<sangtachi::platform::TunDevice> tun;
-        if (!stopped_during_startup && !parsed.args->no_adapter) {
+        if (!stopped_during_startup && !args.no_adapter) {
             if (const int code = open_adapter(tun); code != 0) {
                 return code;
             }
         }
         if (!stopped_during_startup) {
             const int code =
-                run_client(*parsed.args, counters, shutdown_event.get(), *control, records, tun.get());
+                run_client(args, counters, shutdown_event.get(), *control, records, tun.get());
             if (code != 0) {
                 return code;
             }
@@ -719,4 +805,23 @@ int main(int argc, char** argv) {
     control.reset();
 
     return 0;
+}
+
+int main(int argc, char** argv) {
+    const int code = run_main(argc, argv);
+    // 기동 실패의 창 (architecture.md 3.5). 탐색기에서 더블클릭해 이 프로세스 혼자 쓰는 창이면, 끝나는 순간 창이
+    // 닫혀 ERROR 줄을 읽을 수 없다. 그래서 안내 두 줄을 내고 Enter 를 기다린다. 안내는 다른 안내 줄처럼 표준 출력이
+    // 콘솔일 때만 낸다. 정리는 run_main 안에서 이미 끝났다. 셸에서 띄운 실행과 시험은 창을 셸과 나눠 쓰므로 여기서
+    // 멈추지 않는다.
+    if (code != 0 && sangtachi::platform::is_console(sangtachi::platform::stdout_handle()) &&
+        sangtachi::platform::console_is_own()) {
+        std::string message = "  Could not start. The ERROR line above says why.";
+        if (!g_log_name.empty()) {
+            message += " Full log: logs\\" + g_log_name;
+        }
+        (void)sangtachi::platform::write_stdout_line(message);
+        (void)sangtachi::platform::write_stdout_line("  Press Enter to close this window.");
+        sangtachi::platform::wait_for_enter();
+    }
+    return code;
 }

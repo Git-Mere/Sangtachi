@@ -3,6 +3,7 @@
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/tunnel/packet.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -165,12 +166,11 @@ std::string_view to_token(ArgError error) noexcept {
         case ArgError::MissingRoom:     return "missing_room";
         case ArgError::RoomWithoutRole: return "room_without_role";
         case ArgError::BadName:         return "bad_name";
-        case ArgError::MissingName:     return "missing_name";
     }
     return "unknown";
 }
 
-ParseResult parse_args(std::span<const std::string_view> argv) {
+ParseResult parse_args(std::span<const std::string_view> argv, std::string_view default_server) {
     Args args;
     bool saw_positional = false;
 
@@ -253,20 +253,49 @@ ParseResult parse_args(std::span<const std::string_view> argv) {
         return fail(ArgError::MissingRoom, "--room");
     }
     // 제어 서버 주소는 Phase 3 이후 필수다. 역할이 없어도 그렇다. DNS 해석이 기동 시
-    // 한 번이고 역할 인자가 없어도 한다 (control_plane.md 8.4 의 2번).
+    // 한 번이고 역할 인자가 없어도 한다 (control_plane.md 8.4 의 2번). 빌드에 넣은 기본 주소가
+    // 있으면 그것이 --server 를 대신한다. 형식 검사는 --server 와 같다.
+    if (!args.server && !default_server.empty()) {
+        auto parsed = parse_host_port(default_server, kControlPort, false);
+        if (!parsed.value) {
+            return fail(parsed.error, default_server);
+        }
+        args.server = std::move(*parsed.value);
+    }
     if (!args.server) {
         return fail(ArgError::MissingServer, "--server");
-    }
-    // 표시 이름은 Phase 4 이후 필수다 (architecture.md 3.5 의 "필수" 열). 기본값을 지어내지 않는다.
-    // 지어낸 이름은 같은 방의 다른 프로세스와 겹쳐 name_taken 이 되고, 사람이 정하지 않은 이름이
-    // FAIL 줄의 <상대> 에 나간다 (spec.md FR-16).
-    if (!args.name) {
-        return fail(ArgError::MissingName, "--name");
     }
 
     ParseResult result;
     result.args = std::move(args);
     return result;
+}
+
+std::optional<std::string> make_default_name(const NameRandomFn& random) {
+    constexpr std::string_view kAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+    constexpr unsigned kLimit = 252;  // 36 * 7. 이 값 이상은 버린다
+
+    // 버리는 바이트는 4/256 이다. 채우기 16번이면 256바이트에서 8자를 못 얻을 일이 사실상 없다. 상한은
+    // 난수원이 늘 같은 값을 주는 고장에서 멈추지 않으려는 것이다.
+    constexpr int kMaxRefills = 16;
+
+    std::string name(kDefaultNamePrefix);
+    std::array<std::byte, 16> pool{};
+    std::size_t used = pool.size();
+    int refills = 0;
+    while (name.size() < kDefaultNamePrefix.size() + kDefaultNameSuffixLength) {
+        if (used == pool.size()) {
+            if (refills++ == kMaxRefills || !random || !random(pool)) {
+                return std::nullopt;
+            }
+            used = 0;
+        }
+        const auto value = std::to_integer<unsigned>(pool[used++]);
+        if (value < kLimit) {
+            name.push_back(kAlphabet[value % kAlphabet.size()]);
+        }
+    }
+    return name;
 }
 
 }  // namespace sangtachi

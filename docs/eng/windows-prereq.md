@@ -70,6 +70,12 @@ on that error shape; it checks the rights before creating the adapter and blocks
 
 **Owner: person.** The client can elevate itself (UAC relaunch), but the user has to consent.
 
+**Release builds put a manifest that requires administrator rights into the executable.** It is the CMake option `SANGTACHI_REQUIRE_ADMIN`.
+Double-clicking it in Explorer brings up the UAC consent prompt, and launching it from a non-elevated shell makes Windows refuse to create the
+process. That build needs an elevated shell even when launched with `--no-adapter`. Test builds do not include it. Tests launch from a
+non-elevated shell with `--no-adapter`, and look at the startup failure of the criterion below. On this machine, launching that build from a
+non-elevated shell was seen to be refused. The decision is [ADR 0030](decisions/0030-startup-input-and-console-screen.md).
+
 ```powershell
 ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
   [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -415,8 +421,9 @@ Two runtimes ship with the distribution: Wintun, which opens the virtual adapter
 draws the GUI.
 
 **The process must be able to write to the distribution folder.** The local record file is
-created in a `records` folder next to the executable, and failing to create it is a startup
-failure ([`architecture.md`](architecture.md) chapter 9 Local Record File). Placing it under
+created in a `records` folder next to the executable and the log file in a `logs` folder, and
+failing to create them is a startup failure ([`architecture.md`](architecture.md) chapter 9 Local
+Record File, Log Output). Placing it under
 `Program Files` breaks this condition when run without administrator rights. On this machine,
 `icacls "C:\Program Files"` gives `BUILTIN\Users` only `(RX)` and `(GR,GE)` on child items, with
 no write permission.
@@ -1055,7 +1062,7 @@ If the binary was changed right before the demo, run it once more with that file
 
 | # | Item | Who | When |
 |---|------|-----|------|
-| 1 | Administrator rights | person | every run |
+| 1 | Administrator rights. Release builds have the manifest ask for UAC consent | person | every run |
 | 2 | Firewall rules (the client creates and verifies, a person removes) | client + person | right after adapter creation |
 | 3 | Leftover cleanup | client | at start |
 | 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | build + client (check at run time) | when making the distribution and at run time |

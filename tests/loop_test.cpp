@@ -696,6 +696,28 @@ TEST_CASE("loop: send goes to the send handler, a longer word does not", "[loop]
     REQUIRE(logs.with_event("console.rejected").size() == 1);  // sendx 는 unknown_command
 }
 
+TEST_CASE("loop: an unknown command is logged without the typed text", "[loop]") {
+    // 틀리게 친 join 에는 방 코드가 들어 있다. 로그는 로그 파일에 남는다 (architecture.md 3.5, 9장 로그 출력).
+    const WsaContext wsa;
+    auto opened = open_udp_socket();
+    REQUIRE(opened.ok());
+    Counters counters;
+    auto session = sangtachi::ConsoleSession::create();
+    REQUIRE(session != nullptr);
+    ConsoleQueue& console = session->queue();
+    EventLoop loop(std::move(*opened.socket), counters, console, session->event(), LoopOptions{});
+    int unknown = 0;
+    loop.set_unknown_command_handler([&unknown] { ++unknown; });
+    sangtachi::testing::LogCapture logs;
+    REQUIRE(console.try_push("Join K7PQ2M"));
+    ::SetEvent(loop.console_event());
+    REQUIRE(loop.run_once());
+    const auto rejected = logs.with_event("console.rejected");
+    REQUIRE(rejected.size() == 1);
+    CHECK(rejected[0] == "WARN console.rejected reason=unknown_command");
+    CHECK(unknown == 1);
+}
+
 TEST_CASE("loop: leftover send work keeps the next wait at zero", "[loop][send][slow]") {
     // concurrency.md 3장: 콘솔이 만든 송신 잔량은 busy 에 포함한다. 아니면 남은 송신이 다음 마감까지
     // 늘어진다. 여기서는 마감이 2초 간격의 주기 타이머뿐이다. 주기라서 busy 를 잃은 구현도 매달리지

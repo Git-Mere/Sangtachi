@@ -61,6 +61,12 @@ Wintun 어댑터 생성, IP 할당, 라우트 추가는 전부 관리자 권한�
 
 **분류: 사람.** 클라이언트가 스스로 권한을 올릴 수는 있으나(UAC 재실행) 사용자가 동의해야 한다.
 
+**배포 빌드는 실행 파일에 관리자 권한을 요구하는 매니페스트를 넣는다.** CMake 옵션 `SANGTACHI_REQUIRE_ADMIN` 이다.
+탐색기에서 더블클릭하면 UAC 동의 창이 뜨고, 관리자가 아닌 셸에서 띄우면 Windows 가 프로세스를 만들지 않는다. 그
+빌드는 `--no-adapter` 로 띄울 때도 관리자 셸이 필요하다. 시험 빌드는 넣지 않는다. 시험이 관리자가 아닌 셸에서
+`--no-adapter` 로 띄우고, 아래 판정의 기동 실패를 본다. 이 기기에서 관리자가 아닌 셸로 그 빌드를 띄워 거부되는 것을
+봤다. 결정은 [ADR 0030](decisions/0030-기동-입력과-콘솔-화면.md) 이다.
+
 ```powershell
 ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
   [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -378,8 +384,9 @@ function Invoke-NetQuerySafe([scriptblock]$Query) {
 
 배포물에 함께 넣는 런타임은 둘이다. 가상 어댑터를 여는 Wintun 과 GUI 를 그리는 Qt 다.
 
-**배포물 폴더에 그 프로세스가 쓸 수 있어야 한다.** 로컬 기록 파일이 실행 파일 옆 `records` 폴더에
-생기고, 만들지 못하면 기동 실패다([`architecture.md`](architecture.md) 9장 로컬 기록 파일). 관리자
+**배포물 폴더에 그 프로세스가 쓸 수 있어야 한다.** 로컬 기록 파일이 실행 파일 옆 `records` 폴더에,
+로그 파일이 `logs` 폴더에 생기고, 만들지 못하면 기동 실패다([`architecture.md`](architecture.md) 9장 로컬 기록 파일,
+로그 출력). 관리자
 권한 없이 실행하는 경우 `Program Files` 아래에 두면 이 조건이 깨진다. 이 기기의 `icacls "C:\Program Files"`
 에서 `BUILTIN\Users` 는 `(RX)` 와 하위 항목의 `(GR,GE)` 뿐이고 쓰기 권한이 없다.
 
@@ -981,7 +988,7 @@ NTFS 기능이므로 FAT32·exFAT 매체 위의 파일에는 애초에 없다. �
 
 | # | 항목 | 누가 | 언제 |
 |---|------|------|------|
-| 1 | 관리자 권한 | 사람 | 실행할 때마다 |
+| 1 | 관리자 권한. 배포 빌드는 매니페스트가 UAC 동의를 묻는다 | 사람 | 실행할 때마다 |
 | 2 | 방화벽 규칙(만들기와 검증은 클라이언트, 지우기는 사람) | 클라이언트 + 사람 | 어댑터 생성 직후 |
 | 3 | 잔존물 정리 | 클라이언트 | 시작할 때 |
 | 4 | Wintun 과 Qt 런타임 동봉. Wintun 서명 확인 | 빌드 + 클라이언트(실행 시 확인) | 배포물을 만들 때와 실행할 때 |

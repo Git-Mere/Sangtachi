@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <span>
 #include <string>
 #include <string_view>
@@ -166,7 +167,6 @@ TEST_CASE("args: error tokens are stable", "[args]") {
     REQUIRE(sangtachi::to_token(ArgError::MissingRoom) == "missing_room");
     REQUIRE(sangtachi::to_token(ArgError::RoomWithoutRole) == "room_without_role");
     REQUIRE(sangtachi::to_token(ArgError::BadName) == "bad_name");
-    REQUIRE(sangtachi::to_token(ArgError::MissingName) == "missing_name");
 }
 
 TEST_CASE("args: required inputs from Phase 3 case table", "[args]") {
@@ -188,7 +188,7 @@ TEST_CASE("args: required inputs from Phase 3 case table", "[args]") {
         REQUIRE(r.error == c.error);
     }
 
-    // 필수 입력이 다 있으면 통과한다. --name 은 Phase 4 이후 필수다.
+    // 필수 입력이 다 있으면 통과한다. --name 은 필수가 아니다.
     REQUIRE(run({"--server", "a.example", "--name", "Alice"}).ok());
     REQUIRE(run({"host", "--server", "a.example", "--name", "Alice"}).ok());
     REQUIRE(run({"player", "--server", "a.example", "--room", "ABCDEF", "--name", "Alice"}).ok());
@@ -198,7 +198,6 @@ TEST_CASE("args: the missing input is named in offending", "[args]") {
     REQUIRE(run({}).offending == "--server");
     REQUIRE(run({"player", "--server", "a.example"}).offending == "--room");
     REQUIRE(run({"--server", "a.example", "--room", "ABCDEF"}).offending == "--room");
-    REQUIRE(run({"--server", "a.example"}).offending == "--name");
 }
 
 TEST_CASE("args: the offending argument is reported", "[args]") {
@@ -307,15 +306,19 @@ TEST_CASE("args: name reject table", "[args]") {
     }
 }
 
-TEST_CASE("args: name is required from Phase 4", "[args]") {
-    // architecture.md 3.5 의 "필수" 열. --name 은 Phase 4 이후 예다. 앞의 필수 판정과 형식 검사가 먼저다.
+TEST_CASE("args: name is optional", "[args]") {
+    // architecture.md 3.5 의 "필수" 열. --name 이 없으면 값이 비고, 기본 이름은 main 이 make_default_name 으로
+    // 만든다. 준 값의 형식 검사와 다른 필수 판정은 그대로다.
+    for (const auto& argv : {std::vector<std::string_view>{"--server", "a.example"},
+                             std::vector<std::string_view>{"host", "--server", "a.example"},
+                             std::vector<std::string_view>{"player", "--server", "a.example", "--room", "ABCDEF"}}) {
+        const auto r = parse_args(std::span<const std::string_view>(argv));
+        REQUIRE(r.ok());
+        REQUIRE_FALSE(r.args->name.has_value());
+    }
     const RejectCase cases[] = {
-        {{"--server", "a.example"}, ArgError::MissingName, "no role, no name"},
-        {{"host", "--server", "a.example"}, ArgError::MissingName, "host without a name"},
-        {{"player", "--server", "a.example", "--room", "ABCDEF"}, ArgError::MissingName, "player without a name"},
         {{"--name", "Alice"}, ArgError::MissingServer, "a name does not replace the server"},
-        {{}, ArgError::MissingServer, "the server check stays first"},
-        {{"player", "--server", "a.example", "--name", "Alice"}, ArgError::MissingRoom, "the room check stays before"},
+        {{"player", "--server", "a.example", "--name", "Alice"}, ArgError::MissingRoom, "the room check stays"},
         {{"--server", "a.example", "--name"}, ArgError::MissingValue, "option at the end without a value"},
         {{"--name", "a b"}, ArgError::BadName, "format errors come before required checks"},
         {{"--server", "a.example", "--name", "Alice", "--name", "a-b"}, ArgError::BadName,
@@ -327,6 +330,80 @@ TEST_CASE("args: name is required from Phase 4", "[args]") {
         REQUIRE_FALSE(r.ok());
         REQUIRE(r.error == c.error);
     }
+}
+
+TEST_CASE("args: the compiled-in server stands in for --server", "[args]") {
+    // architecture.md 3.5. 빌드에 넣은 주소는 --server 가 없을 때만 쓰고 --server 와 같은 형식 검사를 한다.
+    const auto with_default = [](std::vector<std::string_view> argv, std::string_view server) {
+        return parse_args(std::span<const std::string_view>(argv), server);
+    };
+
+    const auto plain = with_default({}, "203.0.113.7");
+    REQUIRE(plain.ok());
+    REQUIRE(plain.args->server->host == "203.0.113.7");
+    REQUIRE(plain.args->server->port == sangtachi::kControlPort);
+
+    const auto with_port = with_default({"host"}, "control.example.com:9000");
+    REQUIRE(with_port.ok());
+    REQUIRE(with_port.args->server->host == "control.example.com");
+    REQUIRE(with_port.args->server->port == 9000);
+
+    const auto overridden = with_default({"--server", "127.0.0.1:8001"}, "203.0.113.7");
+    REQUIRE(overridden.ok());
+    REQUIRE(overridden.args->server->host == "127.0.0.1");
+    REQUIRE(overridden.args->server->port == 8001);
+
+    // 덮어쓰는 --server 가 있으면 틀린 기본값을 보지 않는다. 쓰지 않는 값이다.
+    REQUIRE(with_default({"--server", "127.0.0.1"}, "bad host").ok());
+
+    // 틀린 기본값은 기동 실패다. offending 은 그 값이다.
+    REQUIRE(with_default({}, "bad host").error == ArgError::BadHost);
+    REQUIRE(with_default({}, "bad host").offending == "bad host");
+    REQUIRE(with_default({"host"}, "a.example:0").error == ArgError::BadPort);
+    // 빈 기본값은 기본값이 없는 것이다.
+    REQUIRE(with_default({}, "").error == ArgError::MissingServer);
+    // 기본값이 있어도 다른 필수 판정은 그대로다.
+    REQUIRE(with_default({"player"}, "a.example").error == ArgError::MissingRoom);
+}
+
+TEST_CASE("args: the default name is user_ and eight lowercase letters or digits", "[args]") {
+    using sangtachi::make_default_name;
+    // 바이트 값 v 는 v % 36 번째 글자다. 252 이상은 버린다.
+    const auto from = [](std::vector<unsigned> values) {
+        return [values, at = std::size_t{0}](std::span<std::byte> out) mutable {
+            for (auto& b : out) {
+                b = static_cast<std::byte>(at < values.size() ? values[at] : 0);
+                ++at;
+            }
+            return true;
+        };
+    };
+    REQUIRE(make_default_name(from({0, 1, 25, 26, 35, 36, 251, 71})) == "user_abz09a99");
+    // 252~255 를 건너뛰고 다음 바이트를 쓴다.
+    REQUIRE(make_default_name(from({252, 253, 254, 255, 0, 1, 2, 3, 4, 5, 6, 7})) == "user_abcdefgh");
+
+    // 실제 난수원의 결과도 control_plane.md 2.7 의 형식을 지난다. 형식 검사는 --name 과 같은 함수다.
+    const auto real = make_default_name([](std::span<std::byte> out) {
+        for (std::size_t i = 0; i < out.size(); ++i) {
+            out[i] = static_cast<std::byte>(i * 37 + 11);
+        }
+        return true;
+    });
+    REQUIRE(real.has_value());
+    const std::vector<std::string_view> argv{"--server", "a.example", "--name", *real};
+    REQUIRE(parse_args(std::span<const std::string_view>(argv)).ok());
+    REQUIRE(real->size() == 13);
+
+    // 난수원이 실패하면 값이 없다. 예측 가능한 값으로 대신하지 않는다.
+    REQUIRE_FALSE(make_default_name([](std::span<std::byte>) { return false; }).has_value());
+    REQUIRE_FALSE(make_default_name({}).has_value());
+    // 늘 버리는 값만 주는 고장에서도 멈추지 않는다.
+    REQUIRE_FALSE(make_default_name([](std::span<std::byte> out) {
+        for (auto& b : out) {
+            b = std::byte{0xFF};
+        }
+        return true;
+    }).has_value());
 }
 
 TEST_CASE("args: name is last wins", "[args]") {

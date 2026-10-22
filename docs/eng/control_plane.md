@@ -394,7 +394,7 @@ Connection: close\r\n
 | Byte-exact match | The request line is `POST <path> HTTP/1.1` and the separator is a single space. Two spaces, a tab, the absolute form (`POST http://host/v1/op`), a trailing `/`, and percent encoding (`%5F`) are all rejected. The path is case-sensitive. The grammar is below the table |
 | `Content-Length` value | Only `^[0-9]+$` is accepted. `+17`, `1_7`, surrounding whitespace, and full-width digits are rejected. Do not leave this to the language's integer conversion function. Python `int()` accepts the first three |
 | Header folding (obs-fold) | Reject a header line that starts with a space or a tab. Do not join it to the previous line |
-| `Host`, `Content-Type` | **Not checked.** The client always sends them (the format above) but the server does not look at the values. There is no virtual hosting and no content negotiation. The `<server address>` the client sends is the `--server` name or IPv4 joined with the port by `:` ([`architecture.md`](architecture.md) 3.5 Startup Inputs) |
+| `Host`, `Content-Type` | **Not checked.** The client always sends them (the format above) but the server does not look at the values. There is no virtual hosting and no content negotiation. The `<server address>` the client sends is the name or IPv4 of `--server` or of the built-in default, joined with the port by `:` ([`architecture.md`](architecture.md) 3.5 Startup Inputs) |
 | Body longer than `Content-Length` | Read only the leading `Content-Length` bytes, respond, then close the connection. The remaining bytes are not read. One request per connection, so those bytes cannot become a second request |
 
 **Request line grammar.** The bytes before the first CRLF have to fully match

@@ -229,6 +229,19 @@ public:
         on_counter_dump_ = std::move(handler);
     }
 
+    // 알 수 없는 콘솔 명령을 받은 뒤 부르는 곳. `console.rejected reason=unknown_command` 줄은 그대로
+    // 나가고 이것이 더 불린다. 제품 경로는 안내 한 줄을 낸다 (architecture.md 3.5 로비 안내).
+    void set_unknown_command_handler(std::function<void()> handler) {
+        on_unknown_command_ = std::move(handler);
+    }
+
+    // 콘솔 줄 하나를 처리하기 전과 뒤에 부르는 곳. 빈 줄도 한 줄이다. 제품 경로는 입력 자리 표시 `> ` 를
+    // 다시 낸다 (architecture.md 3.5 로비 안내).
+    void set_console_line_hooks(std::function<void()> before, std::function<void()> after) {
+        on_console_before_ = std::move(before);
+        on_console_after_ = std::move(after);
+    }
+
     // 타이머 만료를 함께 보는 곳. 로그 줄은 그대로 나가고 이것이 더 불린다.
     //
     // 시험이 timer.tick 의 elapsed_ms 를 표준 오류에서 긁지 않고 프로세스 안에서 판정할
@@ -289,6 +302,9 @@ private:
     DatagramHandler on_tunnel_;
     DeadlineSource deadlines_;
     std::function<void()> on_counter_dump_;
+    std::function<void()> on_unknown_command_;
+    std::function<void()> on_console_before_;
+    std::function<void()> on_console_after_;
     DatagramHandler on_stun_;
     std::function<void(const TimerTick&)> on_tick_;
     std::function<void(control::ControlResponse)> on_control_;

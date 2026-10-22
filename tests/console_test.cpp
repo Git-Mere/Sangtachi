@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <string_view>
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 
@@ -74,3 +75,56 @@ TEST_CASE("console: the queue wraps around", "[console]") {
     }
     REQUIRE(q.dropped() == 5);
 }
+
+// ---------------------------------------------------------------- 입력 자리 표시 (architecture.md 3.5 로비 안내)
+
+namespace {
+
+// 쓴 것을 그대로 이어 붙인다. 줄바꿈은 "\n" 이다.
+struct Screen {
+    std::string text;
+    sangtachi::ConsolePrompt prompt{[this](std::string_view t, bool newline) {
+        text += t;
+        if (newline) {
+            text += '\n';
+        }
+    }};
+};
+
+}  // namespace
+
+TEST_CASE("prompt: every line overwrites the prompt and puts it back", "[console]") {
+    Screen s;
+    s.prompt.line("a");
+    s.prompt.line("b");
+    CHECK(s.text == "\ra\n> \rb\n> ");
+}
+
+TEST_CASE("prompt: after input a command without output gets one prompt", "[console]") {
+    Screen s;
+    s.prompt.line("a");
+    s.text.clear();
+    s.prompt.show();  // 이미 떠 있다
+    CHECK(s.text.empty());
+    s.prompt.input();  // Enter 로 커서가 다음 줄로 갔다
+    s.prompt.show();
+    s.prompt.show();
+    CHECK(s.text == "> ");
+}
+
+TEST_CASE("prompt: close erases the prompt and stops showing it", "[console]") {
+    Screen s;
+    s.prompt.line("a");
+    s.text.clear();
+    s.prompt.close();
+    CHECK(s.text == "\r  \r");
+    s.text.clear();
+    s.prompt.line("b");
+    s.prompt.show();
+    CHECK(s.text == "\rb\n");
+    // 떠 있지 않으면 지울 것이 없다.
+    Screen t;
+    t.prompt.close();
+    CHECK(t.text.empty());
+}
+

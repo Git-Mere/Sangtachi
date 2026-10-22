@@ -1263,17 +1263,19 @@ Two Windows machines communicate using virtual IPs only.
   loop and the `[loop]` main thread rule of [`concurrency.md`](concurrency.md) chapter 1 Threads
   is the main thread, and write it in `concurrency.md`. [ADR 0007](decisions/0007-gui-core-scope-qt.md)
   left it open
-- **Decide the startup input path the GUI uses.** Today the only input is CLI arguments
-  ([`architecture.md`](architecture.md) 3.5 Startup Inputs) and the room code and the failure line
-  go to standard output
+- **Decide the startup input path the GUI uses.** The built-in default control server address, the
+  default name, and the console lobby guide were decided by [ADR 0030](decisions/0030-startup-input-and-console-screen.md)
+  ([`architecture.md`](architecture.md) 3.5 Startup Inputs). What remains is how the window takes
+  those values and commands, and how it shows the room code and the failure line on standard output
 - **Before starting, fix the relation between GUI operation and the control plane rate limit.** When
   a person clicks buttons quickly, calls pile up from the same source. Today the limit is owned by
   [`control_plane.md`](control_plane.md) 6.4 Rate Limit and that document does not cover the GUI.
   Decide whether the window blocks it or shows the error it got, and write it in that place
 - **Before starting, fix when privilege elevation and leftover cleanup happen in the GUI.**
   [`windows-prereq.md`](windows-prereq.md) 14 Automatic and manual puts administrator rights on the
-  person every time they run it and leftover cleanup on the client at startup. Whether that is before
-  or after the window appears, and what the window shows when elevation is refused, is missing
+  person every time they run it and leftover cleanup on the client at startup. In release builds the
+  manifest asks for elevation before the run (ADR 0030). What the window shows when elevation is
+  refused, and whether leftover cleanup is before or after the window appears, is missing
 - **Before starting, check the distribution form of the Qt runtime.** After confirming what gets
   attached to the distribution and how much the execution premise grows, fix
   [`windows-prereq.md`](windows-prereq.md) 4 Distribution packaging (ADR 0007)

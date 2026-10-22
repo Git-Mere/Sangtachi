@@ -15,9 +15,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace sangtachi {
 
@@ -86,6 +88,32 @@ private:
     ConsoleQueue queue_;
     std::atomic<bool> stop_{false};
     void* event_ = nullptr;
+};
+
+// 입력 자리 표시 `> ` (architecture.md 3.5 로비 안내). 표준 출력이 콘솔일 때만 쓴다. `[loop]` 만 부른다.
+//
+// 표준 출력의 줄은 전부 line 으로 낸다. 줄마다 `\r` 로 시작해 앞에 떠 있던 `> ` 를 덮어쓰고, 줄 뒤에 `> ` 를
+// 다시 낸다. 그래서 응답처럼 아무 때나 오는 줄도 입력 자리 위에 겹치지 않는다. 사용자가 Enter 를 치면 커서가
+// 다음 줄로 가므로 input 으로 알린다. 출력이 없던 명령 뒤에는 show 가 `> ` 를 다시 낸다.
+//
+// 표준 오류의 로그 줄은 이 객체를 거치지 않는다. 로그가 같은 창에 나오면 `> ` 뒤에 붙을 수 있다.
+class ConsolePrompt {
+public:
+    // text 를 쓴다. newline 이 참이면 줄바꿈 하나를 붙인다.
+    using WriteFn = std::function<void(std::string_view text, bool newline)>;
+
+    explicit ConsolePrompt(WriteFn write) : write_(std::move(write)) {}
+
+    void line(std::string_view text);
+    void input() noexcept { showing_ = false; }
+    void show();
+    // `> ` 를 지우고 그 뒤로는 내지 않는다. 프로세스가 끝나기 전에 부른다. 셸의 프롬프트가 `> ` 뒤에 붙지 않게 한다.
+    void close();
+
+private:
+    WriteFn write_;
+    bool showing_ = false;
+    bool closed_ = false;
 };
 
 }  // namespace sangtachi

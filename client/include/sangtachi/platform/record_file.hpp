@@ -74,4 +74,7 @@ struct RecordFileOpen {
 // `<실행 파일 폴더>\records\<file_name>` 을 새로 만든다. file_name 은 ASCII 다 (record::file_name).
 [[nodiscard]] RecordFileOpen open_record_file(std::string_view file_name) noexcept;
 
+// `<실행 파일 폴더>\logs\<file_name>` 을 같은 규칙으로 새로 만든다 (architecture.md 9장 로그 출력). 로그 파일이다.
+[[nodiscard]] RecordFileOpen open_log_file(std::string_view file_name) noexcept;
+
 }  // namespace sangtachi::platform

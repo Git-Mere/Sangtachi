@@ -23,11 +23,20 @@ using OutputHandle = void*;
 // 이 프로세스의 표준 출력 핸들. 없으면 널이다.
 [[nodiscard]] OutputHandle stdout_handle() noexcept;
 
+// 이 프로세스의 표준 오류 핸들. 없으면 널이다. 로그를 화면에 얼마나 낼지 가르는 데만 쓴다 (log.hpp FileLogSink).
+[[nodiscard]] OutputHandle stderr_handle() noexcept;
+
+// handle 이 콘솔이면 참이다. 리다이렉트된 핸들(파일, 파이프)과 널은 거짓이다. write_line 이 쓰는 것과 같은 판정이다.
+[[nodiscard]] bool is_console(OutputHandle handle) noexcept;
+
 // utf8_line 과 줄바꿈 하나를 쓴다. 다 썼으면 참이다. utf8_line 에 줄바꿈을 넣지 않는다.
 //
 // handle 이 콘솔이면 UTF-16 으로 바꿔 콘솔 쓰기로, 아니면(파일, 파이프) 바이트 그대로 쓴다.
 // 시험이 파이프 핸들을 넘겨 리다이렉트 경로를 본다.
 bool write_line(OutputHandle handle, std::string_view utf8_line) noexcept;
+
+// write_line 과 같되 줄바꿈을 붙이지 않는다. 입력 자리 표시 `> ` 가 쓴다 (architecture.md 3.5 로비 안내).
+bool write_text(OutputHandle handle, std::string_view utf8_text) noexcept;
 
 // write_line(stdout_handle(), utf8_line).
 bool write_stdout_line(std::string_view utf8_line) noexcept;

@@ -80,4 +80,20 @@ void emit(LogLevel level, std::string_view event, std::span<const LogField> fiel
     std::fwrite(line.data(), 1, line.size(), stderr);
 }
 
+void FileLogSink::write(std::string_view line) {
+    std::string out(line);
+    out.push_back('\n');
+    if (file_) {
+        file_(out);
+    }
+    const bool startup_error = startup_.load(std::memory_order_relaxed) && line.starts_with("ERROR ");
+    if (screen_ && (screen_all_ || startup_error)) {
+        screen_(out);
+    }
+}
+
+void write_stderr(std::string_view line_with_newline) {
+    std::fwrite(line_with_newline.data(), 1, line_with_newline.size(), stderr);
+}
+
 }  // namespace sangtachi

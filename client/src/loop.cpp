@@ -316,7 +316,7 @@ void EventLoop::handle_command(std::string_view line) {
     if (command.empty()) {
         return;
     }
-    // 로비 명령이 먼저다. 첫 낱말이 정확히 host, join, leave, name 일 때만 값이 있다
+    // 로비 명령이 먼저다. 첫 낱말이 정확히 host, join, leave, name, help 일 때만 값이 있다
     // (control/lobby.hpp 의 parse_lobby_command). 형식 검사와 WARN 은 로비가 한다.
     if (on_lobby_command_) {
         if (const auto lobby_command = control::parse_lobby_command(command)) {
@@ -342,11 +342,15 @@ void EventLoop::handle_command(std::string_view line) {
         on_send_(command.substr(4));  // 형식 검사와 WARN 은 받는 쪽이 한다
         return;
     }
+    // 친 문자열은 싣지 않는다. 틀리게 친 join 이면 방 코드가 들어 있다 (architecture.md 3.5 "방 코드도 표준 출력이다").
+    // 로그는 로그 파일에 남는다.
     const LogField fields[] = {
         field("reason", std::string_view("unknown_command")),
-        field("command", command),
     };
     emit(LogLevel::Warn, "console.rejected", fields);
+    if (on_unknown_command_) {
+        on_unknown_command_();
+    }
 }
 
 void EventLoop::sync_console_drop_counter() noexcept {
@@ -359,7 +363,13 @@ void EventLoop::drain_console() {
     sync_console_drop_counter();
 
     while (auto line = console_.try_pop()) {
+        if (on_console_before_) {
+            on_console_before_();
+        }
         handle_command(*line);
+        if (on_console_after_) {
+            on_console_after_();
+        }
     }
 }
 

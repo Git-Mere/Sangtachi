@@ -111,4 +111,27 @@ bool signal_cleanup_done() noexcept {
     return ::SetEvent(cleanup) != 0;
 }
 
+bool console_is_own() noexcept {
+    // 표준 입력이 그 콘솔이어야 Enter 를 받을 수 있다. 콘솔 없는 부모가 입력을 파이프로 돌려 띄우면 Windows 가 새
+    // 콘솔을 만들어 혼자 쓰게 되지만, 그때 기다리면 아무도 닫지 않는 파이프에서 멈춘다.
+    DWORD mode = 0;
+    if (::GetConsoleMode(::GetStdHandle(STD_INPUT_HANDLE), &mode) == 0) {
+        return false;
+    }
+    // 두 칸이면 충분하다. 돌려받는 수가 1 인지만 본다. 둘 이상이면 칸보다 큰 수가 돌아오고 그것도 거짓이다.
+    DWORD ids[2] = {};
+    return ::GetConsoleProcessList(ids, 2) == 1;
+}
+
+void wait_for_enter() noexcept {
+    HANDLE input = ::GetStdHandle(STD_INPUT_HANDLE);
+    if (input == nullptr || input == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    // 콘솔 입력은 줄 단위라 Enter 를 칠 때 ReadFile 이 돌아온다. 남은 바이트는 버린다.
+    char buffer[256];
+    DWORD read = 0;
+    (void)::ReadFile(input, buffer, sizeof(buffer), &read, nullptr);
+}
+
 }  // namespace sangtachi::platform

@@ -105,6 +105,10 @@ ControlRunner::~ControlRunner() {
     drop_stun();
 }
 
+void ControlRunner::start() {
+    run(lobby_.on_start());
+}
+
 void ControlRunner::on_command(const LobbyCommand& command) {
     run(lobby_.on_command(command));
 }
@@ -248,6 +252,10 @@ void ControlRunner::execute(LobbyAction& action) {
             } else if constexpr (std::is_same_v<T, PrintLine>) {
                 if (deps_.print) {
                     deps_.print(a.text);
+                }
+            } else if constexpr (std::is_same_v<T, GuideLine>) {
+                if (deps_.print_guide) {
+                    deps_.print_guide(a.text);
                 }
             } else if constexpr (std::is_same_v<T, LogLine>) {
                 emit(a.level, a.event, a.fields);

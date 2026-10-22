@@ -30,6 +30,17 @@ if(SANGTACHI_ASAN)
     add_link_options(/INCREMENTAL:NO)
 endif()
 
+# 제어 서버 주소의 기본값 (architecture.md 3.5 기동 입력). 실행 파일에 넣는다. `--server` 가 덮어쓴다.
+# 비워 두면 `--server` 가 필수다. 레포는 공개라 실제 주소를 여기에 적지 않는다. 배포용 빌드를 만드는
+# 사람이 설정할 때 준다: -DSANGTACHI_DEFAULT_SERVER=<이름 또는 IPv4>[:<포트>]
+# 시험 빌드(scripts/build.ps1)는 주지 않는다. 시험이 --server 없는 기동을 기동 실패로 본다.
+set(SANGTACHI_DEFAULT_SERVER "" CACHE STRING "Control server compiled in as the --server default. Empty means --server is required")
+
+# 배포 빌드의 관리자 권한 요구 (architecture.md 3.5 기동 입력, windows-prereq.md 1절). 켜면 실행 파일에
+# requireAdministrator 매니페스트를 넣는다. 탐색기에서 더블클릭하면 UAC 창이 뜬다. 관리자가 아닌 셸에서 띄우면
+# Windows 가 프로세스를 만들지 않는다. 시험 빌드는 켜지 않는다. 시험이 관리자가 아닌 셸에서 --no-adapter 로 띄운다.
+option(SANGTACHI_REQUIRE_ADMIN "Embed a requireAdministrator manifest (distribution builds only)" OFF)
+
 add_subdirectory(client)
 
 if(SANGTACHI_BUILD_TESTS)

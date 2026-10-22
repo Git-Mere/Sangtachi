@@ -67,6 +67,25 @@ target_link_libraries(sangtachi_client
     PRIVATE sangtachi_warnings
 )
 
+# 생성 헤더의 문자열 리터럴에 그대로 들어가므로 이름, IPv4, 포트에 쓰는 글자만 받는다. 형식 검사 자체는 기동 시
+# parse_args 가 한다. 여기서는 따옴표나 역슬래시가 C++ 원본을 깨뜨리는 것만 막는다.
+if(NOT SANGTACHI_DEFAULT_SERVER MATCHES "^[A-Za-z0-9.:-]*$")
+    message(FATAL_ERROR "SANGTACHI_DEFAULT_SERVER may only contain letters, digits, '.', '-' and ':' (got '${SANGTACHI_DEFAULT_SERVER}')")
+endif()
+
+# --server 의 기본값 (architecture.md 3.5). 값의 출처는 최상위 CMakeLists.txt 의 SANGTACHI_DEFAULT_SERVER
+# 하나다. 실행 파일에만 넣는다. core 를 링크하는 시험 실행 파일은 이 값을 모른다. 형식 검사는 기동 시
+# parse_args 가 --server 와 같은 규칙으로 한다.
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated_client/sangtachi/default_server.hpp"
+     CONTENT "#pragma once\n\n// client/CMakeLists.txt 에서 만든다. 고치지 않는다.\n\n#include <string_view>\n\nnamespace sangtachi {\ninline constexpr std::string_view kDefaultServer = \"@SANGTACHI_DEFAULT_SERVER@\";\n}  // namespace sangtachi\n"
+     @ONLY)
+target_include_directories(sangtachi_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated_client")
+
+# 배포 빌드의 관리자 권한 요구. 근거는 최상위 CMakeLists.txt 의 SANGTACHI_REQUIRE_ADMIN 에 있다.
+if(SANGTACHI_REQUIRE_ADMIN)
+    target_link_options(sangtachi_client PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+endif()
+
 # 실행 파일 옆에 두는 것 셋 (architecture.md 7장 어댑터 수명). 클라이언트는 wintun.dll 을 실행 파일의
 # 폴더에서만 불러오고, 서브넷 충돌 검사와 방화벽 규칙은 같은 폴더의 스크립트를 부른다.
 #

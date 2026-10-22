@@ -30,7 +30,7 @@ RecordFileOpen failure(std::string_view op, DWORD error) {
     return result;
 }
 
-RecordFileOpen open_in_exe_dir(std::string_view file_name) {
+RecordFileOpen open_in_exe_dir(std::wstring_view folder, std::string_view file_name) {
     std::wstring path(kPathBuffer, L'\0');
     const DWORD length = ::GetModuleFileNameW(nullptr, path.data(), kPathBuffer);
     if (length == 0) {
@@ -46,7 +46,7 @@ RecordFileOpen open_in_exe_dir(std::string_view file_name) {
         return failure("GetModuleFileNameW", 0);
     }
     path.resize(slash + 1);
-    path += L"records";
+    path += folder;
 
     if (::CreateDirectoryW(path.c_str(), nullptr) == 0) {
         const DWORD error = ::GetLastError();
@@ -119,9 +119,17 @@ RecordFile& RecordFile::operator=(RecordFile&& other) noexcept {
 
 RecordFileOpen open_record_file(std::string_view file_name) noexcept {
     try {
-        return open_in_exe_dir(file_name);
+        return open_in_exe_dir(L"records", file_name);
     } catch (const std::bad_alloc&) {
         return failure("open_record_file", ERROR_NOT_ENOUGH_MEMORY);
+    }
+}
+
+RecordFileOpen open_log_file(std::string_view file_name) noexcept {
+    try {
+        return open_in_exe_dir(L"logs", file_name);
+    } catch (const std::bad_alloc&) {
+        return failure("open_log_file", ERROR_NOT_ENOUGH_MEMORY);
     }
 }
 

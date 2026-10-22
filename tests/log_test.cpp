@@ -131,3 +131,43 @@ TEST_CASE("log: removing a sink restores the one before it", "[log]") {
     sangtachi::emit(LogLevel::Info, "outer", {});
     REQUIRE(outer.lines == std::vector<std::string>{"INFO outer"});
 }
+
+// ---------------------------------------------------------------- 로그 파일과 화면 (architecture.md 9장 로그 출력)
+
+TEST_CASE("log: the file sink writes every line to the file and only startup errors to a console", "[log]") {
+    struct Out {
+        std::string file;
+        std::string screen;
+    };
+    const auto make = [](Out& out, bool screen_all) {
+        return sangtachi::FileLogSink([&out](std::string_view l) { out.file += l; },
+                                      [&out](std::string_view l) { out.screen += l; }, screen_all);
+    };
+
+    // 표준 오류가 콘솔이다. 기동 중의 ERROR 만 화면에 나온다. 파일에는 전부 간다.
+    Out console;
+    auto sink = make(console, false);
+    sink.write("INFO a x=1");
+    sink.write("WARN b x=2");
+    sink.write("ERROR c x=3");
+    sink.end_startup();
+    sink.write("ERROR d x=4");
+    CHECK(console.file == "INFO a x=1\nWARN b x=2\nERROR c x=3\nERROR d x=4\n");
+    CHECK(console.screen == "ERROR c x=3\n");
+
+    // 표준 오류가 리다이렉트됐다. 스크립트가 받으므로 화면에도 전부 간다.
+    Out redirected;
+    auto all = make(redirected, true);
+    all.write("INFO a x=1");
+    all.end_startup();
+    all.write("WARN b x=2");
+    CHECK(redirected.file == "INFO a x=1\nWARN b x=2\n");
+    CHECK(redirected.screen == redirected.file);
+
+    // 수준 낱말이 앞에 있을 때만 ERROR 줄이다.
+    Out prefix;
+    auto p = make(prefix, false);
+    p.write("INFO e reason=ERROR_x");
+    CHECK(prefix.screen.empty());
+}
+

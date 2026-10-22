@@ -56,4 +56,28 @@ ConsoleSession::~ConsoleSession() {
     platform::close_event(event_);
 }
 
+void ConsolePrompt::line(std::string_view text) {
+    std::string out = "\r";
+    out += text;
+    write_(out, true);
+    showing_ = false;
+    show();
+}
+
+void ConsolePrompt::show() {
+    if (showing_ || closed_) {
+        return;
+    }
+    write_("> ", false);
+    showing_ = true;
+}
+
+void ConsolePrompt::close() {
+    if (showing_) {
+        write_("\r  \r", false);
+        showing_ = false;
+    }
+    closed_ = true;
+}
+
 }  // namespace sangtachi

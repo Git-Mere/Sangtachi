@@ -7,14 +7,14 @@
 //
 // | 입력 | 필수 | 없거나 어긋나면 |
 // |------|------|-----------------|
-// | `--server` | 예 | MissingServer |
+// | `--server` | 빌드에 넣은 기본 주소가 없으면 예 | MissingServer |
 // | `--room` | `player` 는 항상 | MissingRoom |
 // | `--room` 을 `host` 에 | 주면 기동 실패 | RoomWithHost |
 // | `--room` 을 역할 없이 | 주면 기동 실패 | RoomWithoutRole |
-// | `--name` | 예 (Phase 4 이후) | MissingName |
 //
-// 필수 판정의 순서는 위 표의 순서다. 문서는 순서를 정하지 않는다. `--name` 을 맨 뒤에 둔 것은
-// Phase 3 까지의 오류 토큰이 같은 입력에서 그대로 나오게 하려는 것이다.
+// 필수 판정의 순서는 위 표의 순서다. 문서는 순서를 정하지 않는다.
+//
+// `--name` 은 필수가 아니다. 없으면 부르는 쪽이 make_default_name 으로 기본 이름을 만든다.
 //
 // 역할은 어느 구간에서나 없어도 기동하고, 그때는 로비에서 시작한다.
 //
@@ -25,7 +25,9 @@
 // 하나다. 뒤에 값을 주면 그 값은 역할 자리의 위치 인자로 읽힌다. 한 가지 꼴만 받으면
 // 시험이 볼 경우의 수가 반으로 준다.
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -81,11 +83,10 @@ enum class ArgError {
     BadHost,
     BadPort,
     MissingPort,
-    MissingServer,    // --server 가 없다. Phase 3 이후 필수다
+    MissingServer,    // --server 도 빌드에 넣은 기본 주소도 없다
     MissingRoom,      // player 인데 --room 이 없다
     RoomWithoutRole,  // 역할 없이 --room 을 줬다. Phase 3 이후 기동 실패다
     BadName,          // --name 이 control_plane.md 2.7 의 형식이 아니다
-    MissingName,      // --name 이 없다. Phase 4 이후 필수다
 };
 
 // 로그와 시험이 쓰는 고정 토큰.
@@ -102,6 +103,24 @@ struct ParseResult {
 // 프로그램 이름을 뺀 인자열을 읽는다.
 //
 // 같은 인자를 두 번 주면 --stun 은 목록에 쌓이고 나머지는 마지막 값이 이긴다.
-[[nodiscard]] ParseResult parse_args(std::span<const std::string_view> argv);
+//
+// default_server 는 빌드에 넣은 제어 서버 주소다 (CMake 의 SANGTACHI_DEFAULT_SERVER). --server 가
+// 없을 때만 쓰고 --server 와 같은 형식 검사를 한다. 비어 있으면 --server 가 필수다.
+[[nodiscard]] ParseResult parse_args(std::span<const std::string_view> argv,
+                                     std::string_view default_server = {});
+
+// 기본 표시 이름의 꼴. `user_` 뒤에 ASCII 소문자와 숫자 8자다. 붙임표는 control_plane.md 2.7 의
+// 문자 집합에 없어서 밑줄을 쓴다.
+inline constexpr std::string_view kDefaultNamePrefix = "user_";
+inline constexpr std::size_t kDefaultNameSuffixLength = 8;
+
+// 난수 바이트를 채운다. 다 채웠으면 참이다. 제품 경로는 platform::random_bytes 다.
+using NameRandomFn = std::function<bool(std::span<std::byte>)>;
+
+// `--name` 이 없을 때의 표시 이름을 만든다. 난수원이 실패하면 값이 없다.
+//
+// 글자마다 바이트 하나를 쓰고, 36 의 배수(252) 이상인 바이트는 버리고 다시 뽑는다. 그래야 36 글자가
+// 같은 확률로 나온다.
+[[nodiscard]] std::optional<std::string> make_default_name(const NameRandomFn& random);
 
 }  // namespace sangtachi

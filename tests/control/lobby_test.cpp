@@ -167,6 +167,7 @@ public:
     std::optional<SubmitRequest> in_flight;
     std::vector<Sent> sent;
     std::vector<std::string> printed;
+    std::vector<std::string> guides;  // 안내 줄 (architecture.md 3.5 로비 안내)
     std::vector<LogLine> logs;
     int stun_starts = 0;
     int stun_cancels = 0;
@@ -386,6 +387,11 @@ private:
                     }
                 }
                 printed.push_back(p->text);
+            } else if (auto* g = std::get_if<GuideLine>(&action)) {
+                // 안내 줄은 ROOM, FAIL 처럼 시작하지 않는다. 스크립트가 첫 낱말로 줄을 가르기 때문이다.
+                CHECK(g->text.rfind("ROOM ", 0) != 0);
+                CHECK(g->text.rfind("FAIL ", 0) != 0);
+                guides.push_back(g->text);
             } else if (auto* l = std::get_if<LogLine>(&action)) {
                 check_log(*l);
                 logs.push_back(*l);
@@ -435,15 +441,15 @@ TEST_CASE("lobby: fail lines carry the code, the peer and the sentence of archit
     };
     const Row rows[] = {
         {FailCode::kStunDiscoveryFailed, "-",
-         "FAIL STUN_DISCOVERY_FAILED - 인터넷에서 내 주소를 확인하지 못했습니다. 네트워크 연결을 확인하고 다시 시도하세요."},
+         "FAIL STUN_DISCOVERY_FAILED - Could not find this computer's internet address. Check the network connection and try again."},
         {FailCode::kControlPlaneExchangeFailed, "-",
-         "FAIL CONTROL_PLANE_EXCHANGE_FAILED - 방 정보를 주고받지 못했습니다. 방 코드가 맞는지, 방이 아직 열려 있는지 확인하고 다시 시도하세요. 방에 같은 이름이 있으면 다른 이름을 쓰세요."},
+         "FAIL CONTROL_PLANE_EXCHANGE_FAILED - Could not exchange room information. Check that the room code is right and the room is still open, then try again. If someone in the room already has your name, use another name."},
         {FailCode::kHolePunchTimeout, "Bob",
-         "FAIL HOLE_PUNCH_TIMEOUT Bob 상대와 직접 연결을 만들지 못했습니다. 둘 중 한 명이 다른 네트워크에서 다시 시도해 보세요."},
+         "FAIL HOLE_PUNCH_TIMEOUT Bob Could not make a direct connection to the other player. Try again with one of you on a different network."},
         {FailCode::kPeerHandshakeFailed, "bob_01",
-         "FAIL PEER_HANDSHAKE_FAILED bob_01 연결이 한쪽 방향만 열렸습니다. 방화벽 설정을 확인하고 다시 시도하세요."},
+         "FAIL PEER_HANDSHAKE_FAILED bob_01 The connection opened in one direction only. Check the firewall settings and try again."},
         {FailCode::kTunnelDropped, "Host",
-         "FAIL TUNNEL_DROPPED Host 상대와의 연결이 끊어졌습니다. 상대가 접속을 종료했거나 네트워크가 불안정합니다."},
+         "FAIL TUNNEL_DROPPED Host The connection to the other player was lost. They may have left, or the network is unstable."},
     };
     for (const auto& row : rows) {
         CHECK(fail_line(row.code, row.peer) == row.line);
@@ -482,6 +488,9 @@ TEST_CASE("lobby: parse_lobby_command table") {
         {"name   ", true, K::kName, "", false},
         {"name Bob Carol", true, K::kName, "Bob", true},
         {"name a-b", true, K::kName, "a-b", false},
+        {"help", true, K::kHelp, "", false},
+        {"help me", true, K::kHelp, "", true},
+        {"Help", false, K::kHost, "", false},
         {"Name Bob", false, K::kHost, "", false},
         {"nameBob", false, K::kHost, "", false},
         {"names Bob", false, K::kHost, "", false},
@@ -2089,4 +2098,159 @@ TEST_CASE("lobby: a pair that ends while a departed report is pending is reporte
     REQUIRE(sim.in_flight.has_value());
     CHECK(body_ids(sim.in_flight->body, "departed") == std::vector<std::int64_t>{22});
     CHECK(sim.lobby.departed() == std::vector<std::uint32_t>{22});
+}
+
+// ---------------------------------------------------------------- 안내 줄 (architecture.md 3.5 로비 안내)
+
+namespace {
+
+bool has_line_starting(const std::vector<std::string>& lines, std::string_view prefix) {
+    return std::any_of(lines.begin(), lines.end(),
+                       [&](const std::string& l) { return l.rfind(prefix, 0) == 0; });
+}
+
+// 로비 안내 한 벌인지. 머리 줄에 이름이 있고 로비 명령 다섯이 있다.
+void check_lobby_guide(const std::vector<std::string>& lines, std::string_view name) {
+    CHECK(std::find(lines.begin(), lines.end(), "   Sangtachi lobby  |  Name: " + std::string(name)) != lines.end());
+    for (const std::string_view word : {"host ", "join ", "name ", "help ", "quit "}) {
+        INFO("word=" << word);
+        CHECK(has_line_starting(lines, "    " + std::string(word)));
+    }
+}
+
+}  // namespace
+
+TEST_CASE("lobby guide: startup shows the name and the commands, and sends nothing") {
+    Sim sim;
+    sim.apply(sim.lobby.on_start());
+    check_lobby_guide(sim.guides, kName);
+    CHECK(sim.printed.empty());
+    CHECK(sim.sent.empty());
+    CHECK(sim.logs.empty());
+}
+
+TEST_CASE("lobby guide: help shows the lobby guide in the lobby and the room guide in a room") {
+    Sim sim;
+    sim.command("help");
+    check_lobby_guide(sim.guides, kName);
+    CHECK(sim.sent.empty());
+
+    sim.guides.clear();
+    sim.host_settled();
+    sim.guides.clear();
+    sim.command("help");
+    CHECK(std::find(sim.guides.begin(), sim.guides.end(),
+                    "   Room ABCDEF  |  Name: Alice  |  Virtual IP: 10.100.0.2") != sim.guides.end());
+    CHECK(has_line_starting(sim.guides, "    leave "));
+    CHECK_FALSE(has_line_starting(sim.guides, "    host "));
+    CHECK(sim.lobby.stage() == LobbyStage::kSettled);
+
+    // 낱말이 더 있으면 다른 명령과 같이 거부한다.
+    sim.guides.clear();
+    sim.command("help me");
+    CHECK(sim.count_log("console.rejected") == 1);
+    CHECK(sim.guides.size() == 1);
+}
+
+TEST_CASE("lobby guide: every rejected lobby command shows one guide line") {
+    // 거부는 로그 한 줄과 안내 한 줄이다. 안내는 사유마다 다르다.
+    struct Row {
+        std::string_view setup;  // "" 로비, "room" 방을 세운 호스트
+        std::string_view line;
+        std::string_view reason;
+    };
+    const Row rows[] = {
+        {"", "leave", "in_lobby"},
+        {"", "join", "missing_room"},
+        {"", "join ABCDE0", "bad_room"},
+        {"", "join ABCDEF x", "extra_argument"},
+        {"", "name", "missing_name"},
+        {"", "name a-b", "bad_name"},
+        {"room", "host", "not_in_lobby"},
+        {"room", "name Bob", "not_in_lobby"},
+    };
+    std::vector<std::string> seen;
+    for (const auto& row : rows) {
+        INFO("line=" << row.line);
+        Sim sim;
+        if (row.setup == "room") {
+            sim.host_settled();
+        }
+        sim.guides.clear();
+        const std::size_t before = sim.count_log("console.rejected");
+        sim.command(row.line);
+        REQUIRE(sim.count_log("console.rejected") == before + 1);
+        REQUIRE(sim.guides.size() == 1);
+        seen.push_back(sim.guides[0]);
+    }
+    // 사유가 다르면 안내도 다르다. 같은 사유(not_in_lobby)는 같은 안내다.
+    CHECK(seen[6] == seen[7]);
+    for (std::size_t i = 0; i < 6; ++i) {
+        for (std::size_t j = i + 1; j < 7; ++j) {
+            INFO("i=" << i << " j=" << j);
+            CHECK(seen[i] != seen[j]);
+        }
+    }
+}
+
+TEST_CASE("lobby guide: a name change is confirmed and the next guide shows the new name") {
+    Sim sim;
+    sim.command("name Bob_2");
+    REQUIRE(sim.guides.size() == 1);
+    CHECK(sim.guides[0] == "  Name changed: Bob_2");
+    sim.guides.clear();
+    sim.command("help");
+    check_lobby_guide(sim.guides, "Bob_2");
+}
+
+TEST_CASE("lobby guide: the ROOM line is followed by what to do next") {
+    {
+        Sim sim;
+        sim.command("host");
+        sim.reply(issued());
+        REQUIRE(sim.printed == std::vector<std::string>{"ROOM ABCDEF"});
+        CHECK(has_line_starting(sim.guides, "  Room created."));
+        CHECK(has_line_starting(sim.guides, "  Your virtual IP: 10.100.0.2"));
+    }
+    {
+        Sim sim;
+        sim.player_to_stun();
+        REQUIRE(sim.printed == std::vector<std::string>{"ROOM ABCDEF"});
+        CHECK(has_line_starting(sim.guides, "  Joined the room."));
+        CHECK(has_line_starting(sim.guides, "  Your virtual IP: 10.100.0.2"));
+    }
+}
+
+TEST_CASE("lobby guide: CONNECTED names the peer") {
+    Sim sim;
+    player_open(sim);
+    sim.guides.clear();
+    sim.session(kHostId, SessionState::kConnected);
+    CHECK(sim.guides == std::vector<std::string>{"  Connected: Host"});
+}
+
+TEST_CASE("lobby guide: going back to the lobby shows the lobby guide, shutdown does not") {
+    {
+        Sim sim;
+        sim.host_settled();
+        sim.guides.clear();
+        sim.command("leave");
+        check_lobby_guide(sim.guides, kName);
+    }
+    {
+        // 실패로 돌아올 때도 FAIL 줄 뒤에 안내가 나온다.
+        Sim sim;
+        player_open(sim);
+        sim.guides.clear();
+        sim.session(kHostId, SessionState::kFailed, SessionFailure::kHolePunchTimeout);
+        REQUIRE(sim.count_fail() == 1);
+        check_lobby_guide(sim.guides, kName);
+    }
+    {
+        Sim sim;
+        sim.host_settled();
+        sim.guides.clear();
+        sim.apply(sim.lobby.on_shutdown());
+        CHECK(sim.guides.empty());
+    }
 }

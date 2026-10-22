@@ -13,6 +13,7 @@
 // | CancelStun | 그 StunClient 의 타이머를 지우고 버린다 |
 // | ArmTimer / CancelTimer | 루프의 TimerSet 에 add_once / cancel |
 // | PrintLine | print 함수 (제품 경로는 platform::write_stdout_line) |
+// | GuideLine | print_guide 함수. 비어 있으면 버린다 (제품 경로는 표준 출력이 콘솔일 때만 둔다) |
 // | LogLine | emit |
 // | OpenSession | 터널의 create_session. 널이면 Lobby::on_session_open_failed. 만들었으면 그 쌍의 기록 줄을 맡는다(아래) |
 // | StartPunch | 그 상대의 세션이 있으면 start_punch |
@@ -116,10 +117,11 @@ struct RunnerDeps {
     std::string host_header;                         // http::host_header 가 만든 값
     std::vector<network::StunServer> stun_servers;   // 기동 시 한 번 해석한 목록
     NonceSource nonce;                               // 시도마다 새 client_nonce
-    std::string name;                                // 로비의 처음 표시 이름. 제품 경로는 --name (architecture.md 3.5)
+    std::string name;                                // 로비의 처음 표시 이름. --name 이나 기본 이름 (architecture.md 3.5)
     SubmitFn submit;
     network::StunSendFn send;                        // 루프의 소켓으로 보낸다
     PrintFn print;
+    PrintFn print_guide;                             // 안내 줄 (architecture.md 3.5 로비 안내). 비어 있으면 버린다
     ClockFn clock;
     network::StunRandomFn stun_random;               // 비워 두면 platform::random_bytes
     // 지금의 자기 서브넷 집합 (protocol.md 10.1). get_peers 와 host_report 의 상대 후보 위생에 넘긴다.
@@ -152,6 +154,9 @@ public:
     ControlRunner& operator=(const ControlRunner&) = delete;
     ControlRunner(ControlRunner&&) = delete;
     ControlRunner& operator=(ControlRunner&&) = delete;
+
+    // 역할 없이 기동했을 때 로비 안내를 낸다 (Lobby::on_start).
+    void start();
 
     // 로비 명령 하나 (콘솔이나 기동 시 역할 인자).
     void on_command(const LobbyCommand& command);

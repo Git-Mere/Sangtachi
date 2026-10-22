@@ -1,5 +1,6 @@
 #include "sangtachi/control/lobby.hpp"
 
+#include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/protocol_constants.hpp"
 #include "sangtachi/tunnel/packet.hpp"
@@ -27,17 +28,17 @@ std::string_view to_token(FailCode code) noexcept {
 std::string_view fail_sentence(FailCode code) noexcept {
     switch (code) {
         case FailCode::kStunDiscoveryFailed:
-            return "인터넷에서 내 주소를 확인하지 못했습니다. 네트워크 연결을 확인하고 다시 시도하세요.";
+            return "Could not find this computer's internet address. Check the network connection and try again.";
         case FailCode::kControlPlaneExchangeFailed:
-            return "방 정보를 주고받지 못했습니다. 방 코드가 맞는지, 방이 아직 열려 있는지 확인하고 다시 시도하세요. 방에 같은 이름이 있으면 다른 이름을 쓰세요.";
+            return "Could not exchange room information. Check that the room code is right and the room is still open, then try again. If someone in the room already has your name, use another name.";
         case FailCode::kHolePunchTimeout:
-            return "상대와 직접 연결을 만들지 못했습니다. 둘 중 한 명이 다른 네트워크에서 다시 시도해 보세요.";
+            return "Could not make a direct connection to the other player. Try again with one of you on a different network.";
         case FailCode::kPeerHandshakeFailed:
-            return "연결이 한쪽 방향만 열렸습니다. 방화벽 설정을 확인하고 다시 시도하세요.";
+            return "The connection opened in one direction only. Check the firewall settings and try again.";
         case FailCode::kTunnelDropped:
-            return "상대와의 연결이 끊어졌습니다. 상대가 접속을 종료했거나 네트워크가 불안정합니다.";
+            return "The connection to the other player was lost. They may have left, or the network is unstable.";
     }
-    return "방 정보를 주고받지 못했습니다. 방 코드가 맞는지, 방이 아직 열려 있는지 확인하고 다시 시도하세요. 방에 같은 이름이 있으면 다른 이름을 쓰세요.";
+    return "Could not exchange room information. Check that the room code is right and the room is still open, then try again. If someone in the room already has your name, use another name.";
 }
 
 FailCode to_fail_code(peer::SessionFailure failure) noexcept {
@@ -106,6 +107,8 @@ std::optional<LobbyCommand> parse_lobby_command(std::string_view line) {
     } else if (head == "name") {
         command.kind = LobbyCommandKind::kName;
         command.argument = std::string(next_word(rest));
+    } else if (head == "help") {
+        command.kind = LobbyCommandKind::kHelp;
     } else {
         return std::nullopt;
     }
@@ -159,6 +162,7 @@ std::string_view command_token(LobbyCommandKind kind) noexcept {
         case LobbyCommandKind::kJoin:  return "join";
         case LobbyCommandKind::kLeave: return "leave";
         case LobbyCommandKind::kName:  return "name";
+        case LobbyCommandKind::kHelp:  return "help";
     }
     return "host";
 }
@@ -169,6 +173,21 @@ std::vector<LogField> rejected_fields(std::string_view reason, LobbyCommandKind 
     fields.push_back(field("command", command_token(kind)));
     return fields;
 }
+
+// 로비 명령이 거부된 사유마다 사람에게 보이는 안내 (architecture.md 3.5 로비 안내).
+std::string_view rejected_guide(std::string_view reason) noexcept {
+    if (reason == "in_lobby")        return "  You are not in a room.";
+    if (reason == "not_in_lobby")    return "  Not available while in a room. Type leave first.";
+    if (reason == "request_pending") return "  Still working on the previous request. Try again in a moment.";
+    if (reason == "extra_argument")  return "  Too many words. Type help to see how to use it.";
+    if (reason == "missing_room")    return "  Type the room code after join.";
+    if (reason == "bad_room")        return "  A room code is 6 characters. Check the code and try again.";
+    if (reason == "missing_name")    return "  Type the new name after name.";
+    if (reason == "bad_name")        return "  A name is 1-16 letters, digits or _.";
+    return "  That command is not available now. Type help to see the commands.";
+}
+
+constexpr std::string_view kRule = "  ==================================================";
 
 std::vector<LogField> op_fields(http::Op op) {
     std::vector<LogField> fields;
@@ -265,6 +284,42 @@ Millis Lobby::now() const {
     return clock_ ? clock_() : 0;
 }
 
+LobbyActions Lobby::on_start() {
+    Batch out;
+    show_lobby_guide(out);
+    return std::move(out).finish();
+}
+
+void Lobby::reject(Batch& out, std::string_view reason, LobbyCommandKind kind) {
+    out.log(LogLevel::Warn, "console.rejected", rejected_fields(reason, kind));
+    out.push(GuideLine{std::string(rejected_guide(reason))});
+}
+
+void Lobby::show_lobby_guide(Batch& out) const {
+    out.push(GuideLine{std::string(kRule)});
+    out.push(GuideLine{"   Sangtachi lobby  |  Name: " + name_});
+    out.push(GuideLine{std::string(kRule)});
+    out.push(GuideLine{"    host           Create a room"});
+    out.push(GuideLine{"    join <code>    Join a room"});
+    out.push(GuideLine{"    name <name>    Change your name (1-16 letters, digits or _)"});
+    out.push(GuideLine{"    help           Show this help"});
+    out.push(GuideLine{"    quit           Exit"});
+}
+
+void Lobby::show_room_guide(Batch& out) const {
+    std::string title = "   Room " + (room_id_.empty() ? std::string("(joining)") : room_id_) +
+                        "  |  Name: " + name_;
+    if (local_vip_ != 0) {
+        title += "  |  Virtual IP: " + network::format_ipv4(local_vip_);
+    }
+    out.push(GuideLine{std::string(kRule)});
+    out.push(GuideLine{std::move(title)});
+    out.push(GuideLine{std::string(kRule)});
+    out.push(GuideLine{"    leave          Leave the room and go back to the lobby"});
+    out.push(GuideLine{"    help           Show this help"});
+    out.push(GuideLine{"    quit           Exit"});
+}
+
 std::size_t Lobby::active_pairs() const noexcept {
     std::size_t n = 0;
     for (const auto& [id, pair] : pairs_) {
@@ -282,14 +337,26 @@ LobbyActions Lobby::on_command(const LobbyCommand& command) {
     Batch out;
     const LobbyCommandKind kind = command.kind;
 
+    // help 는 언제나 받는다. 요청을 보내지 않는다 (architecture.md 3.5 로비 명령 표).
+    if (kind == LobbyCommandKind::kHelp) {
+        if (command.extra) {
+            reject(out, "extra_argument", kind);
+        } else if (in_lobby()) {
+            show_lobby_guide(out);
+        } else {
+            show_room_guide(out);
+        }
+        return std::move(out).finish();
+    }
+
     if (kind == LobbyCommandKind::kLeave) {
         // leave 는 로비가 아닐 때만 받는다 (architecture.md 3.5 로비 명령 표).
         if (in_lobby()) {
-            out.log(LogLevel::Warn, "console.rejected", rejected_fields("in_lobby", kind));
+            reject(out, "in_lobby", kind);
             return std::move(out).finish();
         }
         if (command.extra) {
-            out.log(LogLevel::Warn, "console.rejected", rejected_fields("extra_argument", kind));
+            reject(out, "extra_argument", kind);
             return std::move(out).finish();
         }
         // 세션 없이 끝나는 시도는 수립 줄 ABORTED 다. 세션의 줄은 LeaveRoom 이 닫는 전이가 쓴다.
@@ -305,15 +372,15 @@ LobbyActions Lobby::on_command(const LobbyCommand& command) {
 
     // host 와 join 은 로비에 있고 미결 제어 요청이 없을 때만 받는다.
     if (!in_lobby()) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("not_in_lobby", kind));
+        reject(out, "not_in_lobby", kind);
         return std::move(out).finish();
     }
     if (pending_) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("request_pending", kind));
+        reject(out, "request_pending", kind);
         return std::move(out).finish();
     }
     if (command.extra) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("extra_argument", kind));
+        reject(out, "extra_argument", kind);
         return std::move(out).finish();
     }
 
@@ -324,11 +391,11 @@ LobbyActions Lobby::on_command(const LobbyCommand& command) {
 
     // join. 방 코드의 형식 검사는 --room 과 같다 (control_plane.md 2.1). 친 값은 로그에 싣지 않는다.
     if (command.argument.empty()) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("missing_room", kind));
+        reject(out, "missing_room", kind);
         return std::move(out).finish();
     }
     if (!is_room_id_input(command.argument)) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("bad_room", kind));
+        reject(out, "bad_room", kind);
         return std::move(out).finish();
     }
     start_attempt(out, LobbyRole::kPlayer, command.argument);
@@ -373,26 +440,27 @@ void Lobby::on_name(Batch& out, const LobbyCommand& command) {
     // name 은 로비에 있을 때 받는다. 미결 요청은 보지 않는다. 요청을 보내지 않기 때문이다
     // (architecture.md 3.5 로비 명령 표).
     if (!in_lobby()) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("not_in_lobby", kind));
+        reject(out, "not_in_lobby", kind);
         return;
     }
     if (command.extra) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("extra_argument", kind));
+        reject(out, "extra_argument", kind);
         return;
     }
     if (command.argument.empty()) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("missing_name", kind));
+        reject(out, "missing_name", kind);
         return;
     }
     // 형식 검사는 --name 과 같다 (control_plane.md 2.7). 틀리면 이름을 바꾸지 않는다.
     if (!tunnel::is_valid_name(command.argument)) {
-        out.log(LogLevel::Warn, "console.rejected", rejected_fields("bad_name", kind));
+        reject(out, "bad_name", kind);
         return;
     }
     name_ = command.argument;
     std::vector<LogField> fields;
     fields.push_back(field("name", std::string_view(name_)));
     out.log(LogLevel::Info, "lobby.name", std::move(fields));
+    out.push(GuideLine{"  Name changed: " + name_});
 }
 
 void Lobby::submit(Batch& out, http::Op op, std::string body, std::vector<std::uint32_t> departed) {
@@ -538,6 +606,10 @@ void Lobby::end_attempt(Batch& out, std::string_view reason, bool leave_room) {
     std::vector<LogField> fields;
     fields.push_back(field("reason", reason));
     out.log(LogLevel::Info, "attempt.end", std::move(fields));
+    // 종료 중에는 안내를 내지 않는다. 사용자가 더 칠 명령이 없다.
+    if (reason != "shutdown") {
+        show_lobby_guide(out);
+    }
 }
 
 void Lobby::arm(Batch& out, std::string_view name, Millis delay_ms) {
@@ -655,6 +727,12 @@ void Lobby::on_issued(Batch& out, const Reply<Issued>& reply) {
     tries_ = 0;
 
     out.push(PrintLine{room_line(room_id_)});
+    if (role_ == LobbyRole::kHost) {
+        out.push(GuideLine{"  Room created. Share the room code above with the other players."});
+    } else {
+        out.push(GuideLine{"  Joined the room. Connecting to the host..."});
+    }
+    out.push(GuideLine{"  Your virtual IP: " + network::format_ipv4(local_vip_) + ". Type leave to leave the room, quit to exit."});
     out.push(AssignAddress{local_vip_});
     if (role_ == LobbyRole::kHost) {
         // host_report 는 create_room 성공 응답에서 시작한다 (protocol.md 11장, 8.4).
@@ -883,6 +961,12 @@ void Lobby::close_pair(Batch& out, std::uint32_t peer_id, std::optional<FailCode
 
 LobbyActions Lobby::on_session_event(const SessionEvent& event) {
     Batch out;
+    if (event.to == peer::SessionState::kConnected) {
+        if (const auto it = pairs_.find(event.peer_id); it != pairs_.end() && it->second.active) {
+            out.push(GuideLine{"  Connected: " + (it->second.name.empty() ? std::string("peer") : it->second.name)});
+        }
+        return std::move(out).finish();
+    }
     // 로비면 pairs_ 가 비어 close_pair 가 거른다 (end_attempt).
     if (!peer::is_terminal(event.to)) {
         return std::move(out).finish();

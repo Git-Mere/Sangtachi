@@ -211,14 +211,20 @@ arguments only.** There is no configuration file. The values are few, and if val
 per test live in a file, which file a run used does not appear in the record. When a file
 becomes necessary is decided by [`roadmap.md`](roadmap.md).
 
+**One value is built in.** The default control server address. The CMake value
+`SANGTACHI_DEFAULT_SERVER` puts it into the executable, and `--server` overrides it. If left
+empty, there is no default. The repository holds no real address; whoever makes a release build
+gives it at configure time. Test builds leave it empty. The decision is
+[ADR 0030](decisions/0030-startup-input-and-console-screen.md).
+
 | Input | Argument | Required | Value |
 |------|------|:---:|-----|
 | Role | First positional argument `host` or `player` | No. Without it the process starts in the lobby | The same as typing one lobby command right after startup. `host` is `host`, and `player` is `join <--room value>`. Phase 1~2 only accepts and stores it |
-| Control server address | `--server <name or IPv4>[:<port>]` | Yes from Phase 3. Phase 1~2 only accepts and stores it, and starts without it | DNS name or IPv4 literal. If the port is omitted, `CONTROL_PORT` from [`control_plane.md`](control_plane.md) 2.6 Constants. No real address is hard-coded in documents |
+| Control server address | `--server <name or IPv4>[:<port>]` | Yes from Phase 3, unless a default is built in. Phase 1~2 only accepts and stores it, and starts without it | DNS name or IPv4 literal. If the port is omitted, `CONTROL_PORT` from [`control_plane.md`](control_plane.md) 2.6 Constants. The built-in default gets the same format check, and if it is wrong that is a startup failure. No real address is hard-coded in documents |
 | Room code | `--room <6 chars>` | `player` always. Phase 3 onward. **Giving it to `host` is a startup failure.** Giving it without a role is also a startup failure from Phase 3 | Format from `control_plane.md` 2.1 `room_id`. Lowercase is accepted. The server normalizes to uppercase |
-| Display name | `--name <name>` | Yes from Phase 4. Before that it only accepts and stores it, and starts without it | Format from [`control_plane.md`](control_plane.md) 2.7 `name`. Every room creation and join of this process uses this name. It is changed in the lobby with the `name` command below |
+| Display name | `--name <name>` | No. Without it the default name is used | Format from [`control_plane.md`](control_plane.md) 2.7 `name`. Every room creation and join of this process uses this name. It is changed in the lobby with the `name` command below. The default name is `user_` followed by 8 ASCII lowercase letters and digits chosen with a CSPRNG. The generated name is left as one line `INFO lobby.name name=<name>`. If the random source fails, that is a startup failure |
 | STUN servers | `--stun <name or IPv4>:<port>`, repeatable | No | If given, it **replaces the default list below entirely**. The behavior when the list has one entry is below the table |
-| Without adapter | `--no-adapter` | No | A switch without a value. Does not create the virtual adapter and skips every startup step of chapter 7 Adapter lifetime. Starts without administrator rights. Used by tests that run several processes on one machine |
+| Without adapter | `--no-adapter` | No | A switch without a value. Does not create the virtual adapter and skips every startup step of chapter 7 Adapter lifetime. Starts without administrator rights. A release build with the administrator manifest is the exception ([`windows-prereq.md`](windows-prereq.md) section 1). Used by tests that run several processes on one machine |
 
 **A `--stun` list with one entry leaves one `WARN` line at startup.** That list cannot produce
 responses from two different servers, so it ends as `STUN_DISCOVERY_FAILED` per "Server
@@ -350,7 +356,7 @@ machine, it uses `peer_id`, not the name. The name is not authenticated.
 **When standard output is redirected, it is written as UTF-8 bytes.** The line ending is a single LF. When
 standard output is a console, it is emitted with the console's Unicode write. The console code page is not changed.
 
-> **Why.** The sentence is Korean, so if the byte encoding is not fixed, scripts cannot match the lines.
+> **Why.** Characters outside names and room codes can appear in a line, so if the byte encoding is not fixed, scripts cannot match the lines.
 > Changing the code page stays on that console even after the process ends.
 
 > **Why emit the code and the sentence together.** Emitting the code alone leaves the user not
@@ -371,6 +377,7 @@ The order is from step 4 of `control_plane.md` 8.4 From Launch to Punch.
 | `join <room code>` | Joins that room with `join_room`. The format check of the room code is the same as `--room` | In the lobby, with no outstanding control request |
 | `leave` | Goes to the lobby. What it does is decided by `concurrency.md` chapter 7 Lobby | When not in the lobby |
 | `name <name>` | Changes the display name that the next `host` and `join` will use. Sends no request. The format check is the same as `--name` | In the lobby |
+| `help` | Emits the lobby guide again in the lobby, or the room guide in a room ("Lobby guide" below). Sends no request | Always |
 
 A command that arrives when it is not accepted, a `join` with no room code or a malformed one,
 and a `name` with no name or a malformed one send no request and leave one `WARN` line. A
@@ -396,6 +403,35 @@ The contract of `send`, which sends synthetic packets as `DATA`, is owned by [`r
 The test-only inputs once used to confirm Phase 1 send and receive are not kept. The rationale is
 [ADR 0028](decisions/0028-remove-test-peer-raw.md).
 
+**Lobby guide.** When standard output is a console, guide lines that tell a human what to do next
+are emitted. **When standard output is redirected, they are not emitted.** Then standard output
+carries only `ROOM` and `FAIL` lines, as before.
+
+| When | What |
+|------|------|
+| Right after the argument check passes | One line `Loading...`. The adapter and the firewall rules take a few seconds |
+| On entering the lobby after starting without a role, on returning to the lobby, and on `help` in the lobby | The lobby guide. The current name on the header line, and the lobby commands and `quit` below it |
+| On `help` in a room | The room guide. The room code, the name, and the virtual IP on the header line, and `leave`, `help`, `quit` below it |
+| After a `ROOM` line | What to do next and the own virtual IP |
+| When a session enters `CONNECTED` | That counterpart's name |
+| When the name was changed with `name` | The changed name |
+| When a lobby command was not accepted | One line per reason. The `WARN` line above still stays in the log |
+| An unknown console command | One line pointing to `help`. The `WARN console.rejected reason=unknown_command` line left with it does not carry the typed text. A mistyped `join` would contain the room code |
+
+- Going to the lobby as part of the shutdown procedure does not emit the lobby guide
+- Lines shown to humans, both the guides and the chapter 8 sentences, are in English
+- A guide line does not start with `ROOM` or `FAIL`, because scripts tell lines apart by the first word
+- **The wording of the guides is not a contract.** Tests do not judge by the wording. The wording lives in the code (`client/src/control/lobby.cpp`)
+
+**Input prompt.** When standard output is a console, `> ` is shown while waiting for input. Every
+standard output line, `ROOM` and `FAIL` included, starts with a single CR that overwrites the
+`> ` being shown, and `> ` is shown again after the line. It is shown again after a command with
+no output as well. It is erased before exiting. Neither CR nor `> ` is written to a redirected
+standard output.
+
+> **Why only for a console.** If the guides were always emitted, scripts reading standard output would have to tell for every line
+> whether it is a guide. The window a human looks at and the output a script reads are already split by whether it is a console.
+
 **What is not a startup input.** The local record file path is set by "Path" under chapter 9
 Local Record File. The telemetry service address is Phase 9. Neither is in the table above.
 
@@ -410,6 +446,15 @@ and corrected.
 
 > **Why.** Deferring the check means an input that passed in Phase 1 is refused only in Phase 3,
 > and in between the record cannot tell which format the tests ran with.
+
+**The startup failure window.** When this process alone uses its console, like a window opened by
+double-clicking in Explorer, and standard input and standard output are that console, after a startup failure (an exit
+code other than 0) it emits two guide lines and waits for Enter. The first line says the reason
+is in the `ERROR` line on the screen and gives the log file name, and the second says pressing
+Enter closes the window. Cleanup finishes before that. Runs launched from a shell and tests share
+the console with the shell, so they do not wait.
+
+> **Why.** A window used alone closes the moment the process ends, so the `ERROR` line cannot be read.
 
 **The "required" column of the table above decides what counts as missing.** Missing is the
 absence of a value in a span that column requires. The role may be absent in every span and the
@@ -729,15 +774,15 @@ is not accepted as a record.
 
 **This table owns the sentence a person sees.** The rule that the code and the sentence go out
 together is in the standard output part of 3.5 Startup Inputs, and the GUI uses the same
-sentence ([`spec.md`](spec.md) FR-15).
+sentence ([`spec.md`](spec.md) FR-15). The sentences are in English (3.5 Lobby guide).
 
 | Code | Human-readable sentence |
 |------|------------------|
-| `STUN_DISCOVERY_FAILED` | Could not confirm your address on the internet. Check your network connection and try again. |
-| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not exchange room information. Check that the room code is right and that the room is still open, then try again. If the room has the same name, use a different name. |
-| `HOLE_PUNCH_TIMEOUT` | Could not make a direct connection with the other side. Try again with one of you on a different network. |
-| `PEER_HANDSHAKE_FAILED` | The connection opened in one direction only. Check your firewall settings and try again. |
-| `TUNNEL_DROPPED` | The connection with the other side was lost. The other side closed the session, or the network is unstable. |
+| `STUN_DISCOVERY_FAILED` | Could not find this computer's internet address. Check the network connection and try again. |
+| `CONTROL_PLANE_EXCHANGE_FAILED` | Could not exchange room information. Check that the room code is right and the room is still open, then try again. If someone in the room already has your name, use another name. |
+| `HOLE_PUNCH_TIMEOUT` | Could not make a direct connection to the other player. Try again with one of you on a different network. |
+| `PEER_HANDSHAKE_FAILED` | The connection opened in one direction only. Check the firewall settings and try again. |
+| `TUNNEL_DROPPED` | The connection to the other player was lost. They may have left, or the network is unstable. |
 
 **The sentence says what to do next.** It does not assert a cause. The decision basis above is
 what we observed, and that observation is not itself the cause.
@@ -1028,10 +1073,26 @@ to is this log.** The local record file is a Phase 4 deliverable and does not ex
 
 | Item | Contract |
 |------|------|
-| Destination | Standard error (stderr). It is not trapped in buffering, so the line just before a crash survives, and it can be redirected separately from standard output |
+| Destination | The log file and standard error (stderr). "Log file" below splits the share of the two. One line is one write call, so it is not trapped in buffering and the line just before a crash survives |
 | Levels | Three: `INFO`, `WARN`, `ERROR`. No finer split |
 | Unit | One event per line. **A value carries no space and no control character.** Both become a single underscore. No escape notation and no quoting |
 | Failure notation | The chapter 8 failure code strings **as is**. Not translated or reworded. This rule applies to the log only. The sentence a person sees is owned by the sentence table in chapter 8 and carried by the `FAIL` line of 3.5 Startup Inputs |
+
+**Log file.** One per process under `logs\` in the executable's folder. Its name is the same as
+the local record file of the same process. How the path is obtained, creating the folder, the
+failure when the same name exists, and the wide-character path are the same as "Path" under
+Local Record File below. Only the folder name differs.
+
+- **It is opened right after the local record file is opened.** If it cannot be opened, one
+  `socket.error` line is left and startup fails. Lines before that (argument errors, record file
+  open failure) go to standard error only
+- Every line after it is opened is written to the log file
+- **Standard error gets every line if redirected, and only the `ERROR` lines during startup if
+  it is a console.** Startup ends when `[loop]` starts running
+- If a file write fails, the line is not redirected elsewhere
+
+> **Why split in two.** If diagnostic lines mix into the window a human looks at, the lobby guide (3.5) gets buried. Scripts and the field
+> test procedure that take standard error still take all of it, as before. The `ERROR` lines during startup stay in the window because the 3.5 startup failure window points to that line.
 
 The reason for three levels is that the only axes used for decisions are "normal progress /
 abnormal but can continue / that attempt failed". A finer split makes the boundaries differ per

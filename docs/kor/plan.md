@@ -25,6 +25,10 @@ Phase 7 의 구현은 끝났고 한 기기에서 되는 확인(`scripts/test.ps1
 |:--:|------|-----|
 | 1 | 두 기기 검증 | `roadmap.md` Phase 7 검증. 절차는 `field-test/README.md` 시험 6 이고 남은 Phase 4~5 실측(시험 1, 5)과 같은 날 키트 `field-kit-p7` 하나로 돈다(`field-test/required-test.md`). 저장소 소유자가 시점을 알려 준다. 6-5 의 카운터와 캡처 대조는 아직 돌려 보지 않았다 |
 
+**Phase 8 착수 전 결정 가운데 GUI 구조와 무관한 것을 먼저 닫고 구현했다.** 제어 서버 주소의 빌드 기본값, 기본 이름,
+콘솔의 로비 안내, 영어 문구, 로그 파일, 배포 빌드의 관리자 권한 매니페스트다([ADR 0030](decisions/0030-기동-입력과-콘솔-화면.md)).
+`roadmap.md` Phase 8 의 두 항목에 남은 것이 적혀 있다.
+
 **전체 시험이 DynamoDB local 을 요구한다.** `scripts/lobby-check.ps1` 이 제어 서버 하네스를 띄우기 때문이다.
 띄우는 명령은 `control-server/README.md` 에 있다.
 
@@ -53,6 +57,7 @@ Phase 1 의 두 머신 실측은 따로 기다리지 않는다. 실제 두 기�
 | `tests/mutate.py` 의 시간 초과 | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
 | `pending_pings` 상한 | 상한 분기(`protocol.md` 5.5 의 "그래도 가득 차면 새 `PING`을 보내지 않는다")를 밟는 시험이 없다. PING 간격과 항목 수명이 둘 다 5초라 지금 구성으로는 표가 둘 이상 차지 않는다 | 11장 PING 간격이나 5.5 항목 수명을 바꿀 때 |
 | 서브넷 검사의 `-AllowShadow` | [`windows-prereq.md`](windows-prereq.md) 7절은 대역이 실제로 비어 있다는 것을 사람이 알 때 쓰라고 이 우회를 둔다. 클라이언트가 그 검사를 부를 때 이 우회를 사용자에게 열지는 정하지 않았다 | Phase 6 에서 서브넷 검사를 클라이언트에 이을 때 |
+| `field-test/README.md` 의 키트 빌드 | 지금 절차는 태그 `field-kit-p7` 의 것이라 ADR 0030 앞이다. 다음 키트는 빌드에 `-DSANGTACHI_DEFAULT_SERVER=<서버>` 와 `-DSANGTACHI_REQUIRE_ADMIN=ON` 을 주고, 로그를 `2>` 대신 실행 파일 옆 `logs\` 에서 모은다. 그 키트를 cmd 에서 띄울 때는 관리자 cmd 여야 한다. 더블클릭은 UAC 동의를 묻는다 | 다음 키트를 만들 때 |
 | `is_valid_name` 의 자리 | `control_plane.md` 2.7 검사가 `tunnel/packet.hpp` 에 있어 기동 인자와 제어 평면 코드가 터널 패킷 모듈을 포함한다. 중립 헤더로 옮기고 `packet.hpp` 가 그것을 쓰는 편이 의존 방향이 맞다 | 다음에 그 헤더를 고칠 때 |
 
 ## 문서 부채

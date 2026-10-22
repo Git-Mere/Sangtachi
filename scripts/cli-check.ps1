@@ -301,6 +301,17 @@ try {
     $whyCopy = Test-RecordOpened $copy $tmp
     Report-Check 'a copied executable opens its record file in its own folder' ($whyCopy -eq '') $whyCopy
 
+    # 어댑터 기동 단계는 실행 파일 옆의 파일 셋을 먼저 본다 (architecture.md 7장 어댑터 수명). 실행 파일만 옮기면 셋 다
+    # 없다는 줄 하나로 기동 실패다. 관리자 권한 확인보다 앞이다.
+    $alone = Complete-Client (Start-Client $tmpExe @('--server', $srv, '--name', $nm) -Adapter)
+    Report-Check 'an executable without its files names every missing file' ($alone.code -eq 2 -and $alone.err.Contains('ERROR adapter.error reason=missing_file file=wintun.dll,Test-SubnetOverlap.ps1,Initialize-FirewallRules.ps1') -and -not $alone.err.Contains('not_elevated')) "exit=$($alone.code) stderr=$(($alone.err -replace "`r?`n", ' | ').Trim())"
+    # 하나만 빠지면 그 하나다.
+    $exeDir = Split-Path -Parent $exe
+    Copy-Item -LiteralPath (Join-Path $exeDir 'wintun.dll') -Destination $tmp
+    Copy-Item -LiteralPath (Join-Path $exeDir 'Test-SubnetOverlap.ps1') -Destination $tmp
+    $one = Complete-Client (Start-Client $tmpExe @('--server', $srv, '--name', $nm) -Adapter)
+    Report-Check 'one missing file is named alone' ($one.code -eq 2 -and $one.err.Contains('ERROR adapter.error reason=missing_file file=Initialize-FirewallRules.ps1')) "exit=$($one.code) stderr=$(($one.err -replace "`r?`n", ' | ').Trim())"
+
     Invoke-Icacls @($sub, '/deny', "*${sid}:(AD)")
     $noDir = Complete-Client (Start-Client (Join-Path $sub 'sangtachi_client.exe') $okArgs)
     Invoke-Icacls @($sub, '/remove:d', "*$sid")

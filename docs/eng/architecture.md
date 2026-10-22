@@ -416,6 +416,7 @@ carries only `ROOM` and `FAIL` lines, as before.
 | When a session enters `CONNECTED` | That counterpart's name |
 | When the name was changed with `name` | The changed name |
 | When a lobby command was not accepted | One line per reason. The `WARN` line above still stays in the log |
+| A file the adapter needs is not next to the executable (chapter 7 Adapter lifetime) | The names of the files to keep in the same folder |
 | An unknown console command | One line pointing to `help`. The `WARN console.rejected reason=unknown_command` line left with it does not carry the typed text. A mistyped `join` would contain the room code |
 
 - Going to the lobby as part of the shutdown procedure does not emit the lobby guide
@@ -738,7 +739,8 @@ does not configure addresses or routes.
 
 | When | What | On failure |
 |----|---------|----------|
-| Startup. After argument checks, before `[loop]` starts | Check administrator rights ([`windows-prereq.md`](windows-prereq.md) 1) | Startup failure |
+| Startup. After argument checks, before `[loop]` starts | Check that `wintun.dll`, `Test-SubnetOverlap.ps1` and `Initialize-FirewallRules.ps1` exist as regular files next to the executable. Put every missing one in one `adapter.error reason=missing_file` line, and when stdout is a console write one guide line naming the files to keep in the same folder | Startup failure |
+| Same | Check administrator rights ([`windows-prereq.md`](windows-prereq.md) 1) | Startup failure |
 | Same | Check for subnet conflicts (same document, 7). Call `Test-SubnetOverlap.ps1` next to the executable with our adapter's GUID and name and judge by its exit code | Startup failure if not 0 |
 | Same | Compare the SHA-256 of `wintun.dll` with the expected value and load it (same document, 4) | Startup failure |
 | Same | Create the adapter. Its name and GUID are client constants (same document, 3). Set the interface MTU to the default of [`protocol.md`](protocol.md) chapter 12 and the IPv4 DAD transmit count to 0 (same document, 9), delete any remaining IPv4 addresses, then open the session | Startup failure |
@@ -1133,7 +1135,7 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `timer.tick` | `name`, `elapsed_ms` (milliseconds actually elapsed since the previous expiry) | Phase 1 drain budget, Phase 3 `[loop]` survival while the control plane is dead |
 | `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
 | `adapter.firewall` | `verdict` (`pass`), `created` (names of the rules created this time joined with commas, `-` if none) | Phase 7 creation and reuse of the firewall rules ([`windows-prereq.md`](windows-prereq.md) 2) |
-| `adapter.error` | `reason`. With `reason=firewall`: `verdict` (`fail` or `unknown`), `exit_code`, `failed` (`<rule name or policy>:<check>` joined with commas), `unknown` (undecidable items of the same shape), `op`, `code` | Phase 7 startup failure of firewall rule verification (same section) |
+| `adapter.error` | `reason`. With `reason=missing_file`: `file` (missing file names joined with commas). With `reason=firewall`: `verdict` (`fail` or `unknown`), `exit_code`, `failed` (`<rule name or policy>:<check>` joined with commas), `unknown` (undecidable items of the same shape), `op`, `code` | Phase 7 startup failure of firewall rule verification (same section) |
 | `data.tx` | `to` (destination virtual IP), `len`, `sha256` (the inner packet just before encapsulation). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.echo` | `rtt_ms` (from the send time at offset 32 of a returned echo to its arrival, in milliseconds). **Test build only** | Phase 4 RTT baseline |

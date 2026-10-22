@@ -115,6 +115,29 @@ std::string guid_text(const sangtachi::platform::InterfaceGuid& g) {
 int open_adapter(std::unique_ptr<sangtachi::platform::TunDevice>& tun) {
     using sangtachi::LogLevel;
     using sangtachi::field;
+    // 실행 파일 옆의 파일 셋을 먼저 본다 (architecture.md 7장 어댑터 수명). 없으면 뒤 단계가 이유를 알 수 없는 실패로
+    // 끝난다. 스크립트가 없으면 PowerShell 이 종료 코드만 남긴다.
+    if (const auto missing = sangtachi::platform::missing_adapter_files(); !missing.empty()) {
+        std::string names;
+        for (const auto name : missing) {
+            names += names.empty() ? "" : ",";
+            names += name;
+        }
+        const sangtachi::LogField fields[] = {
+            field("reason", std::string_view("missing_file")),
+            field("file", std::string_view(names)),
+        };
+        sangtachi::emit(LogLevel::Error, "adapter.error", fields);
+        if (sangtachi::platform::is_console(sangtachi::platform::stdout_handle())) {
+            std::string guide = "  Keep these files in the same folder as sangtachi_client.exe:";
+            for (const auto name : sangtachi::platform::kAdapterFiles) {
+                guide += " ";
+                guide += name;
+            }
+            (void)sangtachi::platform::write_stdout_line(guide);
+        }
+        return kStartupFailure;
+    }
     if (!sangtachi::platform::is_elevated()) {
         // windows-prereq.md 1절. 어댑터를 만들다 실패하는 것보다 시작 전에 막는다.
         const sangtachi::LogField fields[] = {field("reason", std::string_view("not_elevated"))};

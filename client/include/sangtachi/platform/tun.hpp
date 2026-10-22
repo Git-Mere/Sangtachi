@@ -29,6 +29,13 @@ struct OsFailure {
 // 관리자 권한으로 돌고 있는가 (windows-prereq.md 1절). 조회가 실패하면 거짓이다.
 [[nodiscard]] bool is_elevated() noexcept;
 
+// 어댑터 기동 단계가 실행 파일 옆에서 찾는 파일 셋 (architecture.md 7장 어댑터 수명). 이 순서로 확인한다.
+inline constexpr std::string_view kAdapterFiles[] = {"wintun.dll", "Test-SubnetOverlap.ps1",
+                                                     "Initialize-FirewallRules.ps1"};
+
+// kAdapterFiles 가운데 실행 파일 옆에 일반 파일로 없는 것. 실행 파일 경로를 얻지 못하면 셋 다다.
+[[nodiscard]] std::vector<std::string_view> missing_adapter_files();
+
 // 서브넷 충돌 검사의 결과 (windows-prereq.md 7절). 스크립트의 종료 코드 0, 1, 2 와 같다.
 enum class SubnetVerdict {
     kProceed,  // 0

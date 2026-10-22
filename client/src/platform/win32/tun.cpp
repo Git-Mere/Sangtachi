@@ -422,6 +422,22 @@ std::vector<std::string> firewall_lines(const std::string& output, std::string_v
 
 }  // namespace
 
+std::vector<std::string_view> missing_adapter_files() {
+    std::vector<std::string_view> missing;
+    const std::wstring dir = exe_dir();
+    for (const std::string_view name : kAdapterFiles) {
+        if (dir.empty()) {
+            missing.push_back(name);
+            continue;
+        }
+        const DWORD attributes = ::GetFileAttributesW((dir + widen_ascii(name)).c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            missing.push_back(name);
+        }
+    }
+    return missing;
+}
+
 SubnetCheck run_subnet_check(std::string_view target) {
     SubnetCheck result;
     const ScriptRun run = run_script(L"Test-SubnetOverlap.ps1",

@@ -373,6 +373,7 @@ Phase 1 의 송수신 확인에 쓰던 시험용 입력은 두지 않는다. 근
 | 세션이 `CONNECTED` 에 들어갔을 때 | 그 상대의 이름 |
 | `name` 으로 이름을 바꿨을 때 | 바꾼 이름 |
 | 로비 명령을 받지 않았을 때 | 사유마다 한 줄. 위 `WARN` 줄은 그대로 로그에 남는다 |
+| 어댑터에 필요한 파일이 실행 파일 옆에 없을 때(7장 어댑터 수명) | 같은 폴더에 둘 파일 이름 |
 | 알 수 없는 콘솔 명령 | `help` 를 알리는 한 줄. 같이 남는 `WARN console.rejected reason=unknown_command` 줄은 친 문자열을 싣지 않는다. 틀리게 친 `join` 이면 방 코드가 들어 있다 |
 
 - 종료 절차로 로비에 가는 때는 로비 안내를 내지 않는다
@@ -649,7 +650,8 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 
 | 때 | 하는 일 | 실패하면 |
 |----|---------|----------|
-| 기동. 인자 검사 뒤, `[loop]` 시작 전 | 관리자 권한을 확인한다([`windows-prereq.md`](windows-prereq.md) 1절) | 기동 실패 |
+| 기동. 인자 검사 뒤, `[loop]` 시작 전 | 실행 파일 옆에 `wintun.dll`, `Test-SubnetOverlap.ps1`, `Initialize-FirewallRules.ps1` 이 일반 파일로 있는지 본다. 없는 것을 모두 `adapter.error reason=missing_file` 한 줄에 싣고, 표준 출력이 콘솔이면 같은 폴더에 둘 파일을 알리는 안내 한 줄을 낸다 | 기동 실패 |
+| 같은 때 | 관리자 권한을 확인한다([`windows-prereq.md`](windows-prereq.md) 1절) | 기동 실패 |
 | 같은 때 | 서브넷 충돌을 검사한다(같은 문서 7절). 실행 파일 옆의 `Test-SubnetOverlap.ps1` 을 자기 어댑터의 GUID 와 이름으로 부르고 종료 코드로 판정한다 | 0 이 아니면 기동 실패 |
 | 같은 때 | `wintun.dll` 의 SHA-256 을 기대값과 비교하고 불러온다(같은 문서 4절) | 기동 실패 |
 | 같은 때 | 어댑터를 만든다. 이름과 GUID 는 클라이언트 상수다(같은 문서 3절). 인터페이스 MTU 를 [`protocol.md`](protocol.md) 12장 기본값으로, IPv4 DAD 전송 횟수를 0 으로 두고(같은 문서 9절), 남아 있는 IPv4 주소를 지운 뒤 세션을 연다 | 기동 실패 |
@@ -998,7 +1000,7 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `timer.tick` | `name`, `elapsed_ms` (직전 만료로부터 실제로 흐른 밀리초) | Phase 1 drain 예산, Phase 3 제어 평면 사망 중 `[loop]` 생존 |
 | `record.open` | `file` (로컬 기록 파일의 이름. 폴더를 빼고) | Phase 4 기록 확인, `spec.md` M-6 |
 | `adapter.firewall` | `verdict` (`pass`), `created` (이번에 만든 규칙 이름을 쉼표로 이은 것. 없으면 `-`) | Phase 7 방화벽 규칙의 만들기와 재사용 ([`windows-prereq.md`](windows-prereq.md) 2절) |
-| `adapter.error` | `reason`. `reason=firewall` 이면 `verdict` (`fail` 또는 `unknown`), `exit_code`, `failed` (`<규칙 이름 또는 policy>:<검사>` 를 쉼표로 이은 것), `unknown` (같은 모양의 판정 불가), `op`, `code` | Phase 7 방화벽 규칙 검증의 기동 실패 (같은 절) |
+| `adapter.error` | `reason`. `reason=missing_file` 이면 `file` (없는 파일 이름을 쉼표로 이은 것). `reason=firewall` 이면 `verdict` (`fail` 또는 `unknown`), `exit_code`, `failed` (`<규칙 이름 또는 policy>:<검사>` 를 쉼표로 이은 것), `unknown` (같은 모양의 판정 불가), `op`, `code` | Phase 7 방화벽 규칙 검증의 기동 실패 (같은 절) |
 | `data.tx` | `to` (목적지 가상 IP), `len`, `sha256` (캡슐화 직전의 내부 패킷). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.rx` | `from` (상대 가상 IP), `len`, `sha256` (페이로드 훅이 받은 바이트열). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.echo` | `rtt_ms` (되돌아온 에코의 오프셋 32 송신 시각에서 받은 시각까지. 밀리초). **시험 빌드에만 있다** | Phase 4 RTT 기준선 |

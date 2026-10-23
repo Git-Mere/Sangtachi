@@ -525,9 +525,8 @@ The tunnel header is added, so the available payload size shrinks.
 
 The default virtual adapter MTU is owned by [`protocol.md`](protocol.md) chapter 12. It is a value
 with margin below the 1452 bytes above, and the basis of the margin and the DF bit handling are in
-that chapter too. **The number is not copied here.** That value is subject to confirmation by
-measurement (`roadmap.md` Phase 7), and a copy would make this document stale at confirmation
-time.
+that chapter too. **The number is not copied here.** A copy would make this document stale when that value
+changes.
 
 However, the calculation above depends on the **assumption that the outer path MTU is 1500.**
 Paths over PPPoE lines or through other tunnels are smaller, and in that case the outer UDP packet

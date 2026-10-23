@@ -634,10 +634,8 @@ other pairs are not affected. That line carries the name of the player in the fa
 | The host's `host_report` | **Stops.** Leaving the room drops the lease (`control_plane.md` 5.1) |
 
 **Do not assert that the mapping survives.** The socket is kept because rebinding changes the
-mapping **for certain**, and keeping it does not guarantee that the mapping lives. Whether to
-run STUN again on the next join after a long stay in the lobby is decided by measurement, and that
-point in time belongs to `roadmap.md`. Until it is decided, STUN runs again in the order of
-`control_plane.md` 8.4.
+mapping **for certain**, and keeping it does not guarantee that the mapping lives. So an attempt after the lobby also runs
+STUN again, in the order of `control_plane.md` 8.4 From Launch to Punch.
 
 **The console vocabulary splits in two.**
 

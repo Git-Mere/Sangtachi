@@ -1805,10 +1805,8 @@ simply do not turn it on.
 > small packets get through and large ones vanish. Inner TCP falls into a retransmission black hole.
 > Login works but world loading stalls: that is the classic symptom.
 
-Full PMTU discovery is outside v1 scope. The default is fixed by measurement and the limitations are
-recorded in [`experiments.md`](experiments.md). **Even if the decision is to keep the conservative
-fixed value as is, the paths that value cannot cover are written in the same place.** Not deciding a
-value and deciding one while recording its limits are different things.
+Full PMTU discovery is outside v1 scope. **The default 1400 is a fixed value confirmed by measurement.**
+That measurement and the paths this value cannot cover go in [`experiments.md`](experiments.md).
 
 ---
 

@@ -41,40 +41,48 @@ field-test/
 
 **키트.** 친구에게 폴더 하나를 준다. 실행 파일은 C 런타임을 정적으로 넣은 Release 빌드라 Visual Studio 없이 돈다.
 
-키트는 태그 `field-kit-p7`(Phase 7 끝)로 만든다. 남은 Phase 4~5 실측(시험 1, 5)과 Phase 7 실측(시험 6)을 이 키트 하나로 같은
-날 돈다. 친구 PC 의 준비가 한 번으로 끝난다. 시험 1, 2, 5 는 `--no-adapter` 를 붙여 Phase 5 까지와 같은 경로로 돈다
-(`docs/kor/architecture.md` 3.5 기동 입력). 키트를 바꿀 때는 [`required-test.md`](required-test.md) 의 "키트" 를 먼저 고친다.
+키트는 태그 `field-kit-p7b`(Phase 7 끝과 [ADR 0030](../docs/kor/decisions/0030-기동-입력과-콘솔-화면.md))로 만든다. 남은 Phase 4~5 실측(시험 1, 5)과
+Phase 7 실측(시험 6)을 이 키트 하나로 같은 날 돈다. 친구 PC 의 준비가 한 번으로 끝난다. 시험 1, 2, 5 는 `--no-adapter` 를 붙여 Phase 5 까지와
+같은 경로로 돈다(`docs/kor/architecture.md` 3.5 기동 입력). 키트를 바꿀 때는 [`required-test.md`](required-test.md) 의 "키트" 를 먼저 고친다.
+
+배포 빌드와 같은 설정이다. 제어 서버 주소를 실행 파일에 넣고 관리자 권한 매니페스트를 넣는다. `<서버>` 는 `deploy/aws.local.md` 의
+Elastic IP 다(레포에 적지 않는다). PowerShell 은 따옴표 없는 `-D...=<IPv4>` 를 첫 `.` 에서 자르므로 그 인자를 따옴표로 감싼다.
 
 ```powershell
-git worktree add C:\me\field-kit-src-p7 field-kit-p7   # 한 번. 태그의 원본을 작업 트리 밖에 꺼낸다
+git worktree add C:\me\build\field-kit-p7b\src field-kit-p7b   # 한 번. 태그의 원본을 작업 트리 밖에 꺼낸다
 . scripts\vsdevshell.ps1
-cmake -S C:\me\field-kit-src-p7 -B C:\me\build-field-p7 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DSANGTACHI_BUILD_TESTS=OFF
-cmake --build C:\me\build-field-p7 --target sangtachi_client
+cmake -S C:\me\build\field-kit-p7b\src -B C:\me\build\field-kit-p7b\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DSANGTACHI_BUILD_TESTS=OFF '-DSANGTACHI_DEFAULT_SERVER=<서버>' -DSANGTACHI_REQUIRE_ADMIN=ON
+cmake --build C:\me\build\field-kit-p7b\build --target sangtachi_client
 ```
 
-키트 폴더에 아래를 한 폴더로 넣는다. 앞의 넷은 같은 폴더에 있어야 한다. 클라이언트가 실행 파일 옆에서만 찾는다
-(`docs/kor/architecture.md` 7장 어댑터 수명).
+키트는 `C:\me\build\field-kit-p7b\` 바로 아래에 아래 파일을 넣어 만든다. 앞의 넷은 같은 폴더에 있어야 한다. 클라이언트가 실행 파일 옆에서만 찾는다
+(`docs/kor/architecture.md` 7장 어댑터 수명). 친구에게는 이 파일들을 묶은 zip 을 준다. A 도 이 폴더에서 실측한다. 레포 폴더에서 하지 않는다.
+로그, 캡처, `records\`, `logs\` 가 모두 여기 생긴다.
 
 | 파일 | 어디서 |
 |------|--------|
-| `sangtachi_client.exe`, `wintun.dll`, `Test-SubnetOverlap.ps1`, `Initialize-FirewallRules.ps1` | `C:\me\build-field-p7\client\` |
-| `natprobe.py` | `C:\me\field-kit-src-p7\tools\nat-probe\` |
-| `Test-Transfer.ps1` | `C:\me\field-kit-src-p7\tools\transfer\` |
-| `natlife.py` (시험 3 상대에게만) | `C:\me\field-kit-src-p7\tools\nat-lifetime\` |
+| `sangtachi_client.exe`, `wintun.dll`, `Test-SubnetOverlap.ps1`, `Initialize-FirewallRules.ps1` | `C:\me\build\field-kit-p7b\build\client\` |
+| `natprobe.py` | `C:\me\build\field-kit-p7b\src\tools\nat-probe\` |
+| `Test-Transfer.ps1` | `C:\me\build\field-kit-p7b\src\tools\transfer\` |
+| `natlife.py` (시험 3 상대에게만) | `C:\me\build\field-kit-p7b\src\tools\nat-lifetime\` |
 
 **두 PC 모두.**
 
-- 키트를 쓸 수 있는 폴더(바탕화면 등)에 둔다. `Program Files` 아래는 안 된다(실행 파일 옆에 `records\` 를 만든다)
+- 키트를 쓸 수 있는 폴더(바탕화면 등)에 둔다. `Program Files` 아래는 안 된다(실행 파일 옆에 `records\`, `logs\` 를 만든다)
 - Python 3.8 이상
 - VPN 을 끈다. **Tailscale 도 끈다.** 켜 두면 nat-probe 결과가 오염된다
 - 첫 실행 때 뜨는 Windows 방화벽 창에서 **허용**을 누른다. 거부하면 펀치가 늘 실패한다
 - 명령은 **cmd** 에서 친다(PowerShell 5.1 은 `2>` 로 돌린 로그를 깨뜨린다)
-- **시험 6 은 관리자 cmd 에서 친다.** 시작 메뉴에서 cmd 를 오른쪽 클릭하고 "관리자 권한으로 실행". 어댑터를 만들고 방화벽 규칙 둘을
-  만든다(`docs/kor/windows-prereq.md` 1절, 2절). 규칙은 남는다. 다 끝나면 관리자 PowerShell 에서 `Remove-NetFirewallRule -Group 'Sangtachi'`
-  로 지운다. 시험 1, 2, 5 는 관리자가 아니어도 된다
+- **클라이언트는 모든 시험에서 관리자 cmd 로 띄운다.** 시작 메뉴에서 cmd 를 오른쪽 클릭하고 "관리자 권한으로 실행". 키트의 실행 파일에는
+  관리자 권한 매니페스트가 있어 관리자가 아닌 셸에서는 `--no-adapter` 도 Windows 가 띄우지 않는다(`docs/kor/windows-prereq.md` 1절).
+  관리자 cmd 는 `C:\Windows\System32` 에서 시작하므로 창마다 먼저 `cd /d <키트 폴더>` 를 친다. 캡처나 `netstat` 을 치는 다른 창도 같은 폴더에서 친다
+- 클라이언트 명령에 `--server` 를 주지 않는다. 키트에 들어 있다
+- 로그는 `2>` 로 받은 파일이 판정의 원본이다. 같은 내용이 `logs\` 에도 생긴다
+- 시험 6 은 어댑터를 만들고 방화벽 규칙 둘을 만든다(`windows-prereq.md` 1절, 2절). 규칙은 남는다. 다 끝나면 관리자 PowerShell 에서
+  `Remove-NetFirewallRule -Group 'Sangtachi'` 로 지운다
 - 시험 6 에서 클라이언트가 `ERROR adapter.error reason=subnet` 으로 끝나면 그 PC 의 망이 `10.100.0.0/24` 와 겹친다. 그 PC 로는 시험 6 을
   못 한다(`windows-prereq.md` 7절)
-- 서버 주소 `<서버>` 는 `deploy/aws.local.md` 의 Elastic IP 다. 친구에게 따로 알려 준다(레포에 적지 않는다)
+- 시험 3 의 서버 주소 `<서버>` 는 친구에게 따로 알려 준다(레포에 적지 않는다)
 
 ## 시험 1. 서로 다른 두 집
 
@@ -83,7 +91,7 @@ A = 나(호스트), B = 친구.
 **1-1. nat-probe 호스트 네 쌍.** 절차의 출처는 `tools/nat-probe/README.md` 의 `host`, `players` 절이다.
 
 ```text
-A:  python tools\nat-probe\natprobe.py host --peers 4 --label home-a
+A:  python natprobe.py host --peers 4 --label home-a
 B:  python natprobe.py players --count 4 --label home-b
 ```
 
@@ -94,8 +102,8 @@ B:  python natprobe.py players --count 4 --label home-b
 
 ```text
 A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t1.pcapng
-A:  sangtachi_client.exe host --no-adapter --name A --server <서버> 2> a.log
-B:  sangtachi_client.exe player --no-adapter --room <A 의 ROOM 코드> --name B --server <서버> 2> b.log
+A:  sangtachi_client.exe host --no-adapter --name A 2> a.log
+B:  sangtachi_client.exe player --no-adapter --room <A 의 ROOM 코드> --name B 2> b.log
 ```
 
 1. 두 창의 로그(`a.log`, `b.log`)에 `to=CONNECTED` 가 나오면 양쪽에서 `send 5`. A 는 다른 창에서
@@ -112,8 +120,8 @@ B:  sangtachi_client.exe player --no-adapter --room <A 의 ROOM 코드> --name B
 두 PC 를 같은 Wi-Fi 에 붙인다. 캡처는 필요 없다.
 
 ```text
-A:  sangtachi_client.exe host --no-adapter --name A --server <서버> 2> a2.log
-B:  sangtachi_client.exe player --no-adapter --room <코드> --name B --server <서버> 2> b2.log
+A:  sangtachi_client.exe host --no-adapter --name A 2> a2.log
+B:  sangtachi_client.exe player --no-adapter --room <코드> --name B 2> b2.log
 ```
 
 양쪽 `to=CONNECTED` 뒤 20초 기다리고 둘 다 `quit`.
@@ -150,8 +158,8 @@ A = 나(호스트), B = 친구. 같은 기기에는 NAT 가 없어 keepalive 와
 
 ```text
 A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t5.pcapng
-A:  sangtachi_client.exe host --no-adapter --name A --server <서버> 2> a5.log
-B:  sangtachi_client.exe player --no-adapter --room <코드> --name B --server <서버> 2> b5.log
+A:  sangtachi_client.exe host --no-adapter --name A 2> a5.log
+B:  sangtachi_client.exe player --no-adapter --room <코드> --name B 2> b5.log
 ```
 
 로그 줄에는 시각이 없다. 시각은 A 의 캡처가 갖는다.
@@ -189,8 +197,8 @@ Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True | ForEach-Obj
 
 ```text
 A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t6.pcapng
-A:  sangtachi_client.exe host --name A --server <서버> 2> a6.log
-B:  sangtachi_client.exe player --room <코드> --name B --server <서버> 2> b6.log
+A:  sangtachi_client.exe host --name A 2> a6.log
+B:  sangtachi_client.exe player --room <코드> --name B 2> b6.log
 ```
 
 **통과(그 자리에서 볼 것): 양쪽 로그에 `INFO adapter.firewall verdict=pass` 와 `to=CONNECTED`.** `adapter.error` 로 끝나면 그 줄을 그대로
@@ -235,8 +243,8 @@ B (클라이언트 창):  send 1 1452
 ```text
 A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t6c-1000.pcapng
 A (다른 cmd 창):  netstat -s -p udp > a-udp-before-1000.txt
-A:  sangtachi_client.exe host --name A --server <서버> 2> a6c-1000.log
-B:  sangtachi_client.exe player --room <코드> --name B --server <서버> 2> b6c-1000.log
+A:  sangtachi_client.exe host --name A 2> a6c-1000.log
+B:  sangtachi_client.exe player --room <코드> --name B 2> b6c-1000.log
 ```
 
 1. 양쪽 `to=CONNECTED` 뒤, 양쪽 클라이언트 창에서 `send 1000 20`, `send 1000 576`, `send 1000 1452` 를 차례로 친다. 한 줄마다
@@ -266,7 +274,7 @@ Select-String -Path a6c-1000.log -Pattern '^INFO counter name=(tx_bytes|rx_bytes
 ```
 
 **통과: dumpcap 유실 0, `a-udp-before-1000.txt` 와 `a-udp-after-1000.txt` 의 수신 오류(`Receive Errors`) 가 같고, 마지막 `tx_bytes`, `rx_bytes` 가
-캡처의 합과 같다.** 유실이나 수신 오류가 늘었으면 실패가 아니라 버리고 다시 잰다. **카운터와의 대조는 아직 돌려 보지 않았다.** tshark 합산
+캡처의 합과 같다.** 유실이나 수신 오류가 늘었으면 실패가 아니라 버리고 다시 잰다. **카운터와의 대조는 2026-10-22 에 돌렸고 수신 오류가 늘어 판정하지 못했다.** 다시 하기 전에 정할 것은 `docs/kor/plan.md` 에 있다. tshark 합산
 명령은 2026-10-14 시험 1 의 캡처로 돌려 값이 나오는 것만 봤다. 그 빌드에는 바이트 카운터가 없었다.
 
 ## 모으기
@@ -282,5 +290,4 @@ Select-String -Path a6c-1000.log -Pattern '^INFO counter name=(tx_bytes|rx_bytes
 | 5 | `a5.log`, `b5.log`, 양쪽 `records\*.log`, A 의 `t5.pcapng` |
 | 6 | `a6.log`, `b6.log`, 양쪽 `records\*.log`, 6-0 의 출력, A 의 `t6.pcapng`, 개수 단계마다의 `t6c-<개수>.pcapng`, `a6c-<개수>.log`, `b6c-<개수>.log`, `a-udp-before-<개수>.txt`, `a-udp-after-<개수>.txt`, `a-dumpcap-<개수>.txt`, B 의 `b-transfer.txt` 와 `ping` 출력 |
 
-A 쪽 파일은 흩어져 생긴다. nat-probe JSON 은 `tools\nat-probe\results\` 에, `t1.pcapng` 와 `a-ports.txt` 는 그 명령을 친
-폴더에 생긴다.
+양쪽 모두 키트 폴더에 생긴다. nat-probe JSON 은 그 아래 `results\` 에 생긴다.

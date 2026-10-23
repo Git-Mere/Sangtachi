@@ -1998,8 +1998,8 @@ all from [`protocol.md`](protocol.md) section 11 Timers; only the order is fixed
 
 **Steps 2 and 3 happen once per process.** They are done at startup even with no role argument.
 When a new attempt starts from the lobby, it takes the command of step 1 and goes again from step 4.
-The STUN of step 5 also runs again. Whether to skip it is left undecided by
-[`concurrency.md`](concurrency.md) chapter 7 Lobby.
+The STUN of step 5 always runs again.
+It is not skipped based on how long the process stayed in the lobby ([ADR 0031](decisions/0031-rerun-stun-on-every-attempt-after-lobby.md)).
 
 **Step 4 comes before step 5.** The protocol still holds if the order is swapped, but the person
 waits longer.

@@ -26,7 +26,7 @@ Each section header states its verification status.
 | **Partly measured** | The command was run, but **the pass condition is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
-Currently 6 sections are measured, 4 partly measured, 3 unverified.
+Currently 7 sections are measured, 3 partly measured, 2 unverified, 1 human-checked (section 10).
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
 `commit_history/` and `field-test/`. This document holds only the current spec and the
@@ -53,8 +53,7 @@ section states its criterion.
 
 End-to-end verification on a freshly reset PC belongs to Phase 8 demo preparation and is not the
 completion condition of this document. Among the automatic handling by the client, that
-of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. Whether the firewall rules of section 2 let traffic
-through has not been seen yet. The Qt bundling of section 4 is not done yet either.
+of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. The Qt bundling of section 4 is not done yet.
 
 ## 1. Administrator rights
 
@@ -94,13 +93,13 @@ needs them. The marginal cost is "one more rule with rights we already have".
 
 ## 2. Firewall and network profile
 
-**Status: partly measured.** The default inbound policy and the profile classification of existing
+**Status: measured.** The default inbound policy and the profile classification of existing
 adapters were actually observed. Our newly created adapter being classified as `Public` was seen in
 `scripts/adapter-check.ps1`. That a rule scoped to the adapter stays bound to the adapter after it is
 deleted and recreated was also seen (Rules the client creates, below). That the client creates and
-verifies the rules is checked by `scripts/adapter-check.ps1` in an elevated shell. **Whether the rules
-actually let traffic through has not been seen yet.** It needs a peer machine, so the
-[`roadmap.md`](roadmap.md) Phase 7 verification checks it.
+verifies the rules is checked by `scripts/adapter-check.ps1` in an elevated shell. That the rules
+the client creates actually let the peer's ICMP echo requests and TCP 25565 through was seen in the two-device
+measurement (the `ping` and file transfer of the [`roadmap.md`](roadmap.md) Phase 7 verification).
 
 Windows Firewall is **inbound-block by default.** A newly created virtual adapter has no gateway,
 so it is classified as an "unidentified network", and that gets the Public profile. Under Public,
@@ -669,6 +668,8 @@ Overlapping routes are split into three classes by prefix length.
 no longer reach the `10.100.0.x` hosts they used to reach. Working while cutting off someone
 else's is not better than not working. `-AllowShadow` exists for the case where a person knows
 that range is actually empty. The default is block.
+**The client does not expose this override to users.** The check the client calls always uses the default,
+and `-AllowShadow` is used only when a person runs the script directly ([ADR 0033](decisions/0033-allowshadow-is-not-exposed-to-users.md)).
 
 **Do not decide by string comparison.** `DestinationPrefix -like '10.100.0.*'` **misses overlaps
 whose string differs.** Confirmed values.

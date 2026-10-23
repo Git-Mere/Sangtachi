@@ -41,7 +41,7 @@ Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖�
 | 무엇 | 막힌 이유 | 풀리는 조건 |
 |------|-----------|-------------|
 | nat-probe 후속 | Windows에서 이어간다 | [`../../tools/nat-probe/README.md`](../../tools/nat-probe/README.md) |
-| [`windows-prereq.md`](windows-prereq.md) 실물 검증의 나머지 | 2절 방화벽과 프로필, 3절 저장된 주소의 잔존 | Phase 7(방화벽), 8(시연) |
+| [`windows-prereq.md`](windows-prereq.md) 실물 검증의 나머지 | 3절 저장된 주소의 잔존 | Phase 8(시연) |
 | NFR-5 를 두 종류로 나눈 것의 교수 확인 | 확인 대상은 Catch2 승인이 아니라 요구를 제품 의존성과 시험 전용 의존성으로 나눈 것이다 | 제출 전 확인. 결과가 다르면 [ADR 0005](decisions/0005-시험-프레임워크-catch2.md)를 뒤집고 새 ADR 을 쓴다 |
 
 Phase 1 의 두 머신 실측은 따로 기다리지 않는다. 실제 두 기기 사이의 송수신은 Phase 4 검증의 "같은 LAN 의
@@ -56,7 +56,6 @@ Phase 1 의 두 머신 실측은 따로 기다리지 않는다. 실제 두 기�
 |------|------|------|
 | `tests/mutate.py` 의 시간 초과 | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
 | `pending_pings` 상한 | 상한 분기(`protocol.md` 5.5 의 "그래도 가득 차면 새 `PING`을 보내지 않는다")를 밟는 시험이 없다. PING 간격과 항목 수명이 둘 다 5초라 지금 구성으로는 표가 둘 이상 차지 않는다 | 11장 PING 간격이나 5.5 항목 수명을 바꿀 때 |
-| 서브넷 검사의 `-AllowShadow` | [`windows-prereq.md`](windows-prereq.md) 7절은 대역이 실제로 비어 있다는 것을 사람이 알 때 쓰라고 이 우회를 둔다. 클라이언트가 그 검사를 부를 때 이 우회를 사용자에게 열지는 정하지 않았다 | Phase 6 에서 서브넷 검사를 클라이언트에 이을 때 |
 | 콘솔 `send` 의 송신 버퍼 | 소켓 송신 버퍼가 차면 `WSAEWOULDBLOCK` 으로 작업을 끝낸다. 576·1452바이트는 한 번에 45~133개만 나간다. 다음 루프 바퀴에 이어 보내면 정한 개수를 채운다. 바이트 대조는 이것에 기대지 않는다(ADR 0032) | 콘솔 `send` 로 개수를 채워야 하는 시험이 생길 때 |
 | `is_valid_name` 의 자리 | `control_plane.md` 2.7 검사가 `tunnel/packet.hpp` 에 있어 기동 인자와 제어 평면 코드가 터널 패킷 모듈을 포함한다. 중립 헤더로 옮기고 `packet.hpp` 가 그것을 쓰는 편이 의존 방향이 맞다 | 다음에 그 헤더를 고칠 때 |
 

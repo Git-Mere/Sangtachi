@@ -138,10 +138,8 @@ implement ourselves with an outside library. A test runner is not on that list.
 must be absent from the link list of the product targets. On the Python side the deployed process
 must not import it.
 
-**Whether this split itself is acceptable to the course has not been confirmed.** What needs
-confirming is not whether Catch2 is approved but the act of splitting this requirement in two.
-`plan.md` owns when that is confirmed, and [ADR 0005](decisions/0005-test-framework-catch2.md)
-owns the reasoning and its cost.
+**The professor accepted this split.** [ADR 0005](decisions/0005-test-framework-catch2.md) owns the
+reasoning and its cost.
 
 **What NFR-10 does not cover.** Resource isolation is not part of this requirement. While the
 two services share one instance, shared resource exhaustion **remains a risk.** It does until an

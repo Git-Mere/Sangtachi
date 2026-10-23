@@ -238,44 +238,48 @@ B (클라이언트 창):  send 1 1452
 
 **6-5. 바이트 카운터와 캡처 대조.** 판정 기준은 `roadmap.md` Phase 7 의 표다. **측정 경계는 A 의 클라이언트 프로세스 수명 전체다.**
 카운터는 0 에서 시작하고 `quit` 때 전량이 한 번 더 나온다. 캡처를 기동 전에 켜고 종료 뒤에 끄므로 같은 구간을 본다. 그래서 6-1~6-4 와
-다른 프로세스로 새로 한다. 64 MiB 전송이 섞이면 캡처가 커지고 유실될 수 있다.
+다른 프로세스로 새로 한다. 대조할 트래픽은 6-3 과 같은 64 MiB 전송 하나다.
+
+**시작 전에 A 를 휴대폰 핫스팟(Wi-Fi)에 붙인다.** 표의 망 조건대로 두 PC 의 사설 서브넷이 겹치면 안 된다. 두 집 공유기는 같은 대역을 쓴다.
+양쪽 `ipconfig` 의 Wi-Fi IPv4 주소와 서브넷 마스크로 두 대역이 다른지 본다. A 가 받는 64 MiB 와 캡처만큼 휴대폰 데이터를 쓴다(약 70MB). 핫스팟에서 `to=CONNECTED` 에 닿지 못하고 `FAIL` 로 끝나면
+그 로그를 받아 두고 멈춘다. 휴대폰 망의 NAT 가 지원 조건 밖일 수 있다. 판정 불가로 적고 다시 정한다.
 
 ```text
-A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t6c-1000.pcapng
-A (다른 cmd 창):  netstat -s -p udp > a-udp-before-1000.txt
-A:  sangtachi_client.exe host --name A 2> a6c-1000.log
-B:  sangtachi_client.exe player --room <코드> --name B 2> b6c-1000.log
+A (다른 cmd 창):  "C:\Program Files\Wireshark\dumpcap.exe" -i Wi-Fi -f udp -w t6c.pcapng 2> a-dumpcap.txt
+A (다른 cmd 창):  netstat -s -p udp > a-udp-before.txt
+A:  sangtachi_client.exe host --name A 2> a6c.log
+B:  sangtachi_client.exe player --room <코드> --name B 2> b6c.log
 ```
 
-1. 양쪽 `to=CONNECTED` 뒤, 양쪽 클라이언트 창에서 `send 1000 20`, `send 1000 576`, `send 1000 1452` 를 차례로 친다. 한 줄마다
-   `console.send sent=1000` 이 나온 뒤 다음 줄을 친다. `send` 는 한 번에 1,000 개까지다
+1. 양쪽 `to=CONNECTED` 뒤 6-3 과 같이 A 의 다른 cmd 창에서 받고 B 가 보낸다. B 의 출력은 `b-transfer-6c.txt` 로 받는다
+
+   ```text
+   A:  powershell -NoProfile -ExecutionPolicy Bypass -File Test-Transfer.ps1 -Listen
+   B:  powershell -NoProfile -ExecutionPolicy Bypass -File Test-Transfer.ps1 -Connect 10.100.0.1 -GenerateMiB 64
+   ```
+
 2. **B 가 먼저 `quit` 한다.** B 의 `CLOSE` 가 A 에 닿는다. 그 뒤 B 쪽에서는 A 로 아무것도 오지 않는다. **5초 기다린다.** 그 사이 A 의 루프가
    남은 수신을 비운다
-3. A `quit`. A 의 `t6c-1000.pcapng` 창을 Ctrl+C 로 끈다. dumpcap 이 마지막에 내는 `Packets dropped` 를 `a-dumpcap-1000.txt` 에 옮겨 적는다
-4. A: `netstat -s -p udp > a-udp-after-1000.txt`
+3. A `quit`. dumpcap 창을 Ctrl+C 로 끈다. dumpcap 이 마지막에 내는 `Packets dropped` 줄이 `a-dumpcap.txt` 에 남는다
+4. A: `netstat -s -p udp > a-udp-after.txt`
 
 > **왜 B 가 먼저인가.** A 가 먼저 끝나면 B 의 keepalive 와 `PING` 이 A 의 마지막 `recvfrom` 뒤에도 와서 캡처에는 남고 카운터에는
-> 없다. 캡처 유실 0 과 수신 오류 0 으로는 이것을 거르지 못해 정상 구현이 떨어진다. B 가 먼저 끝나면 A 의 종료 때까지 A 로 오는 UDP 가
+> 없다. 캡처 유실 0 으로는 이것을 거르지 못해 정상 구현이 떨어진다. B 가 먼저 끝나면 A 의 종료 때까지 A 로 오는 UDP 가
 > 없다. 제어 평면은 다른 소켓의 TCP 라 캡처 필터(`-f udp`)에도 포트에도 들지 않는다.
 
-**개수는 표의 사다리를 따른다.** 1,000 개로 한 번 돌고, 유실이 0 이면 6-5 를 처음부터 다시 하면서 5,000, 10,000, 50,000 개로 늘린다. 1단계의
-`send 1000 <크기>` 를 크기마다 5번, 10번, 50번 친다. 유실이 처음 0 이 아닌 단계에서 멈추고 그 앞 단계의 개수를 고른다. 단계마다 캡처와
-로그와 증거 파일 이름 끝에 개수를 붙인다(`t6c-5000.pcapng`, `a6c-5000.log`, `a-udp-before-5000.txt`, `a-udp-after-5000.txt`,
-`a-dumpcap-5000.txt`). 덮어쓰면 고른 단계의 유효 구간 증거가 사라진다. 위 명령은 1,000 단계의 이름이다.
-
-판정은 받은 파일로 한다. A 의 로컬 포트 `P` 는 `a6c-1000.log` 의 `socket.bind local=0.0.0.0:<P>` 다.
+판정은 받은 파일로 한다. A 의 로컬 포트 `P` 는 `a6c.log` 의 `socket.bind local=0.0.0.0:<P>` 다.
 
 ```powershell
 $P = <로컬 포트>
-$tx = 0; & 'C:\Program Files\Wireshark\tshark.exe' -r t6c-1000.pcapng -Y "udp.srcport==$P" -T fields -e udp.length | ForEach-Object { $tx += [int]$_ - 8 }
-$rx = 0; & 'C:\Program Files\Wireshark\tshark.exe' -r t6c-1000.pcapng -Y "udp.dstport==$P" -T fields -e udp.length | ForEach-Object { $rx += [int]$_ - 8 }
+$tx = 0; & 'C:\Program Files\Wireshark\tshark.exe' -r t6c.pcapng -Y "udp.srcport==$P" -T fields -e udp.length | ForEach-Object { $tx += [int]$_ - 8 }
+$rx = 0; & 'C:\Program Files\Wireshark\tshark.exe' -r t6c.pcapng -Y "udp.dstport==$P" -T fields -e udp.length | ForEach-Object { $rx += [int]$_ - 8 }
 "capture tx=$tx rx=$rx"
-Select-String -Path a6c-1000.log -Pattern '^INFO counter name=(tx_bytes|rx_bytes|tx_datagrams|rx_datagrams) ' | Select-Object -Last 4
+Select-String -Path a6c.log -Pattern '^INFO counter name=(tx_bytes|rx_bytes|tx_datagrams|rx_datagrams) ' | Select-Object -Last 4
 ```
 
-**통과: dumpcap 유실 0, `a-udp-before-1000.txt` 와 `a-udp-after-1000.txt` 의 수신 오류(`Receive Errors`) 가 같고, 마지막 `tx_bytes`, `rx_bytes` 가
-캡처의 합과 같다.** 유실이나 수신 오류가 늘었으면 실패가 아니라 버리고 다시 잰다. **카운터와의 대조는 2026-10-22 에 돌렸고 수신 오류가 늘어 판정하지 못했다.** 다시 하기 전에 정할 것은 `docs/kor/plan.md` 에 있다. tshark 합산
-명령은 2026-10-14 시험 1 의 캡처로 돌려 값이 나오는 것만 봤다. 그 빌드에는 바이트 카운터가 없었다.
+**통과: `a-dumpcap.txt` 의 유실이 0 이고, 마지막 `tx_bytes`, `rx_bytes` 가 캡처의 합과 같다.** 유실이 0 이 아니면 실패가 아니라 버리고
+다시 잰다. `rx` 의 캡처 합이 `rx_bytes` 보다 크면 `a-udp-before.txt` 와 `a-udp-after.txt` 의 수신 오류(`Receive Errors`)를 본다. 늘었으면
+버리고 다시 재고, 같으면 실패다.
 
 ## 모으기
 
@@ -288,6 +292,6 @@ Select-String -Path a6c-1000.log -Pattern '^INFO counter name=(tx_bytes|rx_bytes
 | 3 | 상대의 `results\*.json` |
 | 4 | A·B 의 `results\*.json` |
 | 5 | `a5.log`, `b5.log`, 양쪽 `records\*.log`, A 의 `t5.pcapng` |
-| 6 | `a6.log`, `b6.log`, 양쪽 `records\*.log`, 6-0 의 출력, A 의 `t6.pcapng`, 개수 단계마다의 `t6c-<개수>.pcapng`, `a6c-<개수>.log`, `b6c-<개수>.log`, `a-udp-before-<개수>.txt`, `a-udp-after-<개수>.txt`, `a-dumpcap-<개수>.txt`, B 의 `b-transfer.txt` 와 `ping` 출력 |
+| 6 | `a6.log`, `b6.log`, 양쪽 `records\*.log`, 6-0 의 출력, A 의 `t6.pcapng`, 6-5 의 `t6c.pcapng`, `a6c.log`, `b6c.log`, `a-dumpcap.txt`, `a-udp-before.txt`, `a-udp-after.txt`, B 의 `b-transfer.txt`, `b-transfer-6c.txt` 와 `ping` 출력 |
 
 양쪽 모두 키트 폴더에 생긴다. nat-probe JSON 은 그 아래 `results\` 에 생긴다.

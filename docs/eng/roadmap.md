@@ -1222,15 +1222,27 @@ Two Windows machines communicate using virtual IPs only.
 |------|------|
 | Counting basis | **UDP payload bytes including the tunnel header.** Ethernet, IP, and UDP headers are not counted |
 | Measurement point | The client counts the bytes returned by successful `sendto`/`recvfrom` (`tx_bytes`, `rx_bytes` of `concurrency.md` chapter 3). The capture filters by that socket's local UDP port on the same machine. The counters do not distinguish peers or packet types, so the capture does not either |
-| Sample condition | **Generated traffic,** not game traffic. That process carries no game or other application traffic (Measurement boundary below). The session's control packets may mix in, and the counters and the capture both count them. It sends a fixed count and stops. Sizes are 20 / 576 / 1452 bytes from the Phase 5 boundary table. These sizes are within `MAX_DATAGRAM`, so no receive fails with `WSAEMSGSIZE` |
+| Sample condition | **Generated traffic,** not game traffic. It is one 64 MiB file transfer with the same tool as the file transfer item above. The peer sends to the measuring side. That process carries no other application traffic (Measurement boundary below). The session's control packets may mix in, and the counters and the capture both count them |
+| Network condition | **The two PCs' private subnets do not overlap.** If they do, put one side on a network in another range, such as a phone hotspot |
 | Measurement boundary | **The whole lifetime of the measuring client process.** The capture is started before the client starts and stopped after it exits. The counters start at 0, so the full dump at exit is the sum over that interval. **The peer exits first, and the measuring side exits a few seconds later.** The other way round, the peer's keepalives arrive after the measuring side's last receive and are left only in the capture. The counters accumulate from process start and keepalive and `PING` flow even when idle, so cutting in the middle leaves no way to align the counter difference with the capture boundary. The procedure is [`field-test/README.md`](../../field-test/README.md) test 6 |
-| Count | **Still empty. Decide it at test time and write it in this cell.** Try 1,000 / 5,000 / 10,000 / 50,000 in order and pick the largest value for which capture loss is reported as 0. The ladder is only a search grid; the chosen value is what the verdict uses. It depends on the machine and capture setup and cannot be invented in advance |
-| Valid interval | Judge **only in an interval where the capture tool reports 0 loss.** On the receive side the operating system's UDP receive error statistics (`netstat -s -p udp`) must not rise in that interval either. A datagram dropped from the socket buffer is in the capture but not in `recvfrom`. If either is non-zero, it is not a failure; discard and measure again |
-| Pass condition | Byte sums match in the valid interval. If the capture sum is **greater** than the counter sum, it is a failure. On the send side bytes were sent uncounted, and on the receive side the valid interval already excluded socket buffer drops, so bytes were received uncounted. It is a counting bug |
+| Valid interval | Judge **only in an interval where the capture tool reports 0 loss.** If it is non-zero, it is not a failure; discard and measure again |
+| Pass condition | Byte sums match in the valid interval. If the capture sum is **greater** than the counter sum: on the send side bytes were sent uncounted, which is a failure. On the receive side, if the operating system's UDP receive error statistics (`netstat -s -p udp`) rose in that interval, it is not a failure; discard and measure again. A datagram dropped from the socket buffer is in the capture but not in `recvfrom`. If they did not rise, bytes were received uncounted, which is a failure. Both are counting bugs |
 | Packet count | **Recorded for reference only.** The counters are `tx_datagrams` and `rx_datagrams`. With UDP segmentation offload on, the capture sees a different number of datagrams. The byte sum is still the same |
 
   **What this test does not guarantee.** Accuracy in an interval where the capture experiences loss is
   not judged. This test says nothing about counting accuracy under high load
+
+  > **Why a file transfer.** The console `send` stops with `WSAEWOULDBLOCK` when the socket send buffer
+  > fills. At large sizes only a few dozen datagrams go out per command, so it cannot reach a useful
+  > count. A file transfer runs to the end because TCP resends what is lost, and it produces tens of
+  > thousands of datagrams.
+  >
+  > **Why a network condition.** If the peer's private candidate is inside the own subnet, a `HELLO` goes
+  > to that address during the punch. If no device has that address, the datagram may be counted because
+  > `sendto` succeeded and still never reach the wire. In a measurement where both homes' routers used
+  > the same range, only the send counter exceeded the capture, by multiples of the `HELLO` size. This
+  > behavior was not confirmed, so the condition avoids it instead of changing the verdict rule. The
+  > rationale is [ADR 0032](decisions/0032-byte-count-check-uses-a-file-transfer.md).
 
 ---
 

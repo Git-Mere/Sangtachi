@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1~6 은 끝났다. Phase 7 은 두 기기 검증의 6-5 만 남았다. 아래 "다음에 할 일" 이 순서다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 1~7 은 끝났다. 다음은 Phase 8 이다 |
 | 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 사람이 직접 하는 실측. 두 번째 기기나 시연 상대가 있어야 한다 |
 | 대기 | 이 파일 "대기 중인 것" | 실측 밖의 대기 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
@@ -15,11 +15,7 @@
 
 ## 다음에 할 일
 
-Phase 7 이다. 범위와 검증은 [`roadmap.md`](roadmap.md) Phase 7 이 갖는다. 아래가 끝나면 Phase 7 이 닫히고 다음은 Phase 8 이다.
-
-| 순서 | 무엇 | 왜 |
-|:--:|------|-----|
-| 1 | 6-5 다시 재기 | `roadmap.md` Phase 7 의 바이트 대조. 64 MiB 전송으로 대조하고 A 를 휴대폰 핫스팟에 붙여 잰다([ADR 0032](decisions/0032-바이트-대조를-파일-전송으로-한다.md)). 절차는 `field-test/README.md` 6-5, 순서는 `field-test/required-test.md`. 저장소 소유자가 시점을 알려 준다 |
+Phase 8 이다. 범위, 착수 전에 정할 것, 검증은 [`roadmap.md`](roadmap.md) Phase 8 이 갖는다. 무엇부터 할지는 저장소 소유자와 정한다.
 
 ## 대기 중인 것
 

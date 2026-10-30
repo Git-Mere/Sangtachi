@@ -45,6 +45,7 @@ add_executable(sangtachi_tests
     platform/random_test.cpp
     platform/record_file_test.cpp
     platform/resolve_test.cpp
+    platform/session_end_test.cpp
     platform/stdout_test.cpp
     platform/tcp_test.cpp
     platform/wait_test.cpp
@@ -52,6 +53,8 @@ add_executable(sangtachi_tests
     tunnel/replay_test.cpp
     tunnel/data_sender_test.cpp
     tunnel/tunnel_test.cpp
+    ui/gui_ui_test.cpp
+    ui/view_test.cpp
     testbuild/instrument_test.cpp
     # 시험 빌드 장치는 core 에 없다. 단위 시험을 위해 여기서 컴파일한다 (ADR 0023)
     ${PROJECT_SOURCE_DIR}/client/src/testbuild/instrument.cpp

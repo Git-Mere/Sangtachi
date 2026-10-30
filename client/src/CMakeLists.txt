@@ -30,6 +30,8 @@ target_sources(sangtachi_core PRIVATE
     tunnel/roster_publisher.cpp
     tunnel/router.cpp
     tunnel/tunnel.cpp
+    ui/gui_ui.cpp
+    ui/view.cpp
 )
 
 # 플랫폼 원본. OS 헤더(windows.h, winsock2.h, bcrypt.h ...)를 포함하는 원본은 전부
@@ -42,6 +44,7 @@ if(WIN32)
         platform/win32/random.cpp
         platform/win32/record_file.cpp
         platform/win32/resolve.cpp
+        platform/win32/session_end.cpp
         platform/win32/stdout.cpp
         platform/win32/tcp.cpp
         platform/win32/tun.cpp

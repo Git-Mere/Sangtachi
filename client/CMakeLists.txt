@@ -1,7 +1,8 @@
 # 클라이언트 (spec.md C-1, C-2: Windows 10/11 x64, C++20, MSVC)
 #
 # sangtachi_core  main() 을 뺀 전부. 시험 실행 파일이 이것을 링크한다.
-# sangtachi_client  main() 만 얹은 실행 파일.
+# sangtachi_client  main() 과 프로세스 본체(src/client_process.cpp)를 얹은 실행 파일.
+# sangtachi_gui     SANGTACHI_BUILD_GUI 일 때만. 같은 본체를 작업 스레드에서 돌리는 Qt 창 실행 파일.
 #
 # main() 을 라이브러리에 넣지 않는 이유는 Catch2 가 자기 main() 을 제공하기 때문이다.
 # 두 개가 같이 링크되면 시험 실행 파일이 만들어지지 않는다.
@@ -54,6 +55,7 @@ add_subdirectory(src)
 
 add_executable(sangtachi_client
     src/main.cpp
+    src/client_process.cpp
 )
 
 # 시험 빌드 장치는 실행 파일에만 컴파일한다. core 에 넣지 않는다 (testbuild/instrument.hpp, ADR 0023).
@@ -84,6 +86,37 @@ target_include_directories(sangtachi_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}
 # 배포 빌드의 관리자 권한 요구. 근거는 최상위 CMakeLists.txt 의 SANGTACHI_REQUIRE_ADMIN 에 있다.
 if(SANGTACHI_REQUIRE_ADMIN)
     target_link_options(sangtachi_client PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+endif()
+
+# GUI 실행 파일 (architecture.md 3.5 GUI 실행 파일, ADR 0034). 콘솔 실행 파일과 같은 폴더에 생겨 아래의 세 파일을
+# 같이 쓴다. Qt 는 이 대상에만 링크한다. core 와 시험 실행 파일은 Qt 를 모른다.
+if(SANGTACHI_BUILD_GUI)
+    # 창에 서버 칸이 없고 인자도 받지 않으므로 기본값이 없으면 늘 기동 실패다 (ADR 0034).
+    if(SANGTACHI_DEFAULT_SERVER STREQUAL "")
+        message(FATAL_ERROR "SANGTACHI_BUILD_GUI needs -DSANGTACHI_DEFAULT_SERVER=<name or IPv4>[:<port>]. The GUI has no server field (ADR 0034)")
+    endif()
+    find_package(Qt6 REQUIRED COMPONENTS Widgets)
+
+    add_executable(sangtachi_gui WIN32
+        src/ui/gui_main.cpp
+        src/ui/main_window.cpp
+        src/client_process.cpp
+    )
+    if(SANGTACHI_TEST_BUILD)
+        target_compile_definitions(sangtachi_gui PRIVATE SANGTACHI_TEST_BUILD)
+        target_sources(sangtachi_gui PRIVATE src/testbuild/instrument.cpp)
+    endif()
+    target_link_libraries(sangtachi_gui
+        PRIVATE sangtachi_core
+        PRIVATE sangtachi_warnings
+        PRIVATE Qt6::Widgets
+    )
+    # Qt 의 emit, signals, slots 매크로를 끈다. log.hpp 의 sangtachi::emit 을 Qt 의 emit 매크로가 지운다.
+    target_compile_definitions(sangtachi_gui PRIVATE QT_NO_KEYWORDS)
+    target_include_directories(sangtachi_gui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated_client")
+    if(SANGTACHI_REQUIRE_ADMIN)
+        target_link_options(sangtachi_gui PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
+    endif()
 endif()
 
 # 실행 파일 옆에 두는 것 셋 (architecture.md 7장 어댑터 수명). 클라이언트는 wintun.dll 을 실행 파일의

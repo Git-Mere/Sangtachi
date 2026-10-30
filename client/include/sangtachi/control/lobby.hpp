@@ -268,6 +268,10 @@ struct GuideLine {
     std::string text;  // 줄바꿈 없음
 };
 
+// 로비 명령이 거부된 사유(WARN console.rejected 의 reason)마다 사람에게 보이는 안내 한 줄 (architecture.md 3.5
+// 로비 안내). 앞에 공백 두 칸이 붙는다. GUI 는 같은 문장을 상태 줄에 쓴다.
+[[nodiscard]] std::string_view rejected_guide(std::string_view reason) noexcept;
+
 // 로비 명령이 아니고 quit, counters, send 도 아닌 줄을 받았을 때의 안내.
 inline constexpr std::string_view kUnknownCommandGuide =
     "  Unknown command. Type help to see the commands.";
@@ -352,6 +356,12 @@ struct SessionEvent {
 // 기록 줄의 `role` 값 (architecture.md 9장 줄 형식).
 [[nodiscard]] std::string_view to_token(LobbyRole role) noexcept;
 
+// 마지막으로 낸 FAIL 줄의 코드와 <상대>. 줄은 fail_line(code, peer) 와 같다.
+struct LastFail {
+    FailCode code = FailCode::kControlPlaneExchangeFailed;
+    std::string peer;  // 비면 `-` 다 (fail_line)
+};
+
 class Lobby {
 public:
     // name 은 처음 표시 이름이다 (architecture.md 3.5 --name). 다음 host 와 join 이 이것을 싣는다.
@@ -401,6 +411,16 @@ public:
     [[nodiscard]] const std::vector<std::uint32_t>& departed() const noexcept { return departed_; }
     // 활성 세션이 있는 쌍의 수.
     [[nodiscard]] std::size_t active_pairs() const noexcept;
+    // 이 참가에서 받은 방 코드, 자신의 peer_id, 자신의 가상 IP (create_room, join_room 의 성공 응답). 받기 전과
+    // 로비에서는 비었거나 0 이다.
+    [[nodiscard]] const std::string& room_id() const noexcept { return room_id_; }
+    [[nodiscard]] std::uint32_t peer_id() const noexcept { return peer_id_; }
+    [[nodiscard]] std::uint32_t virtual_ip() const noexcept { return local_vip_; }
+    // 플레이어가 get_peers 응답에서 본 호스트의 peer_id.
+    [[nodiscard]] std::optional<std::uint32_t> host_peer() const noexcept { return host_peer_; }
+    // 낸 FAIL 줄의 수와 마지막 줄. 시도가 끝나도 지우지 않는다. GUI 의 상태 줄이 쓴다 (concurrency.md 6장 화면 큐).
+    [[nodiscard]] std::uint32_t fail_count() const noexcept { return fail_count_; }
+    [[nodiscard]] const LastFail& last_fail() const noexcept { return last_fail_; }
 
 private:
     class Batch;
@@ -430,6 +450,8 @@ private:
     void run_due(Batch& out);
     void retry_or_fail(Batch& out);
     void fail(Batch& out, FailCode code);
+    // FAIL 줄을 내고 fail_count, last_fail 에 적는다. FAIL 줄은 모두 여기로 낸다.
+    void print_fail(Batch& out, FailCode code, std::string_view peer = kNoPeer);
     // 세션 없이 끝나는 시도면 수립 줄을 낸다 (위 "기록 줄").
     void record_unfinished(Batch& out, std::string_view result);
     void end_attempt(Batch& out, std::string_view reason, bool leave_room = true);
@@ -487,6 +509,10 @@ private:
     std::optional<std::uint32_t> host_peer_;     // get_peers 응답에서 본 호스트
 
     std::map<std::uint32_t, Pair> pairs_;  // 이 방에서 연 쌍. 키는 상대 peer_id
+
+    // 시도와 따로 산다.
+    std::uint32_t fail_count_ = 0;
+    LastFail last_fail_;
 
     std::vector<std::string> armed_;
 };

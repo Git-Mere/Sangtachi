@@ -26,7 +26,7 @@ Each section header states its verification status.
 | **Partly measured** | The command was run, but **the pass condition is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
-Currently 7 sections are measured, 3 partly measured, 2 unverified, 1 human-checked (section 10).
+Currently 7 sections are measured, 4 partly measured, 1 unverified, 1 human-checked (section 10).
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
 `commit_history/` and `field-test/`. This document holds only the current spec and the
@@ -53,7 +53,8 @@ section states its criterion.
 
 End-to-end verification on a freshly reset PC belongs to Phase 8 demo preparation and is not the
 completion condition of this document. Among the automatic handling by the client, that
-of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. The Qt bundling of section 4 is not done yet.
+of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. The Qt and VC++ runtime bundling of section 4 is done by
+`scripts/package-gui.ps1`. Checking on a PC without them remains.
 
 ## 1. Administrator rights
 
@@ -74,6 +75,9 @@ Double-clicking it in Explorer brings up the UAC consent prompt, and launching i
 process. That build needs an elevated shell even when launched with `--no-adapter`. Test builds do not include it. Tests launch from a
 non-elevated shell with `--no-adapter`, and look at the startup failure of the criterion below. On this machine, launching that build from a
 non-elevated shell was seen to be refused. The decision is [ADR 0030](decisions/0030-startup-input-and-console-screen.md).
+
+**The GUI executable gets the same manifest.** If UAC consent is refused, Windows does not create the process. So no window appears and
+there is no message at all. The decision is [ADR 0034](decisions/0034-decisions-before-phase-8.md).
 
 ```powershell
 ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -413,11 +417,10 @@ adapter gave `1`. The original errors were all `Category=ObjectNotFound`, and th
 ## 4. Distribution packaging
 
 **Status: partly measured.** The Wintun subsection was run in the build and in
-`scripts/adapter-check.ps1`. Qt has not been brought in yet. That subsection states its reason and
-when it gets verified.
+`scripts/adapter-check.ps1`. The Qt subsection was seen only on this machine. The remaining check is
+written in that subsection.
 
-Two runtimes ship with the distribution: Wintun, which opens the virtual adapter, and Qt, which
-draws the GUI.
+Three runtimes ship with the distribution: Wintun, which opens the virtual adapter, Qt, which draws the GUI, and the VC++ runtime, which Qt and the executable use.
 
 **The process must be able to write to the distribution folder.** The local record file is
 created in a `records` folder next to the executable and the log file in a `logs` folder, and
@@ -523,25 +526,52 @@ two conditions **separately** and say which one is the cause.
 
 ### Qt runtime
 
-**Reason it is unverified.** Qt has not been brought in yet. That is Phase 8 work. There is no
-distribution to check.
+**Status: partly measured.** The distribution was built and the window was seen to come up on this machine. It has not yet been run on a PC without Qt installed.
 
 **Premise.** The Qt runtime ships with the distribution. [`spec.md`](spec.md) FR-15 fixes what the
 GUI does, and without the runtime none of it can come up.
 
-**Pass criterion.** The GUI comes up from the distribution alone on a target PC with no separate Qt
-installation. The user is not asked to install a development environment.
+**What is decided.** The decision is [ADR 0034](decisions/0034-decisions-before-phase-8.md).
 
-**Owner: person (at build time).** What gets bundled is decided when the distribution is built.
+| Item | Value |
+|------|-----|
+| Version | Qt 6.12.0 |
+| Module | Qt Widgets |
+| Linking | Dynamic. `windeployqt` gathers the Qt DLLs and plugins of the distribution |
+| Licence | LGPLv3. The distribution includes Qt's `LICENSE` as `LICENSE-Qt.txt` and the notice as `NOTICE.txt` |
+| Executable in the distribution | Only `sangtachi_gui.exe`. The console executable is not included |
+| Not included | Qt components the window does not use: translations, software OpenGL, the D3D and DXC compilers, network, SVG, image formats, icon engines, and touch input plugins |
+| VC++ runtime | The installer is not included; the DLLs are placed next to the executable. Only what the executables and DLLs in the distribution actually import is included |
 
-**Verified in Phase 8.** The Qt version, the link mode, the licence terms, the list of files to
-bundle and their size, and the check commands are not decided yet. Whether the approval covers them
-was not communicated either ([ADR 0007](decisions/0007-gui-core-scope-qt.md)). Until those are
-decided this subsection does not judge a pass.
+**How to build it.** [`scripts/package-gui.ps1`](../../scripts/package-gui.ps1) does the release build (which embeds the server address and the administrator manifest) and
+gathers the distribution in one go. At the end it runs a closure check. Every DLL imported by the executables and DLLs in the distribution must be in the distribution or
+in Windows, and the VC++ runtime and Qt are not assumed to be in Windows. If even one is missing, it fails.
+
+```powershell
+pwsh -File scripts/package-gui.ps1 -Server <name or IPv4> -QtDir <Qt kit root>
+```
+
+`-QtDir` is the root of the MSVC 64-bit kit (the parent of the folder that holds `bin\windeployqt.exe`).
+
+**The distribution.** This is the one built on this machine. 16 files, 30,155,983 bytes.
+
+| Group | Files | Bytes |
+|------|------|------:|
+| Our files | `sangtachi_gui.exe`, `wintun.dll`, `Test-SubnetOverlap.ps1`, `Initialize-FirewallRules.ps1` | 1,008,561 |
+| Qt | `Qt6Core.dll`, `Qt6Gui.dll`, `Qt6Widgets.dll`, `platforms\qwindows.dll`, `styles\qmodernwindowsstyle.dll` | 27,919,384 |
+| VC++ runtime | `msvcp140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` | 1,182,880 |
+| Notices | `LICENSE-Qt.txt`, `NOTICE.txt` | 45,158 |
+
+**Pass criterion.** The GUI comes up from the distribution alone on a target PC with no separate Qt or VC++ runtime
+installation. The user is not asked to install a development environment. Both are installed on this machine, so it cannot decide this condition. The closure
+check above only finds missing DLLs and does not stand in for this condition.
+
+**Owner: person (at build time).** What gets bundled is decided when the distribution is built. `windeployqt` gathers it.
 
 ## 5. Minecraft server bind address
 
-**Status: unverified.** The Minecraft server has not been run yet. That is Phase 8 work.
+**Status: partly measured.** A player connected to `10.100.0.1:25565` and entered the world
+([`experiments.md`](experiments.md) 3.1 First Session). The check commands below were not run.
 
 If `server-ip` in `server.properties` is set to **another interface's address**, connections
 arriving at the virtual IP `10.100.0.1:25565` are refused. Left empty, it binds to all interfaces.
@@ -1065,8 +1095,8 @@ If the binary was changed right before the demo, run it once more with that file
 |---|------|-----|------|
 | 1 | Administrator rights. Release builds have the manifest ask for UAC consent | person | every run |
 | 2 | Firewall rules (the client creates and verifies, a person removes) | client + person | right after adapter creation |
-| 3 | Leftover cleanup | client | at start |
-| 4 | Bundling the Wintun and Qt runtimes. Checking the Wintun signature | build + client (check at run time) | when making the distribution and at run time |
+| 3 | Leftover cleanup | client | at start. The GUI does it after showing the window |
+| 4 | Bundling the Wintun, Qt, and VC++ runtimes. Checking the Wintun signature | build + client (check at run time) | when making the distribution and at run time |
 | 5 | `server.properties` | person | when first setting up the server |
 | 6 | EC2 security group and bind address | person | when setting up the instance |
 | 7 | Subnet overlap check | client | before creating the adapter |
@@ -1077,8 +1107,8 @@ If the binary was changed right before the demo, run it once more with that file
 | 12 | Java path exception | person | after updating Java |
 | 13 | SmartScreen bypass | person | first run on the demo PC |
 
-**Of the items the client owns, the Qt bundling of item 4 is not implemented yet.** Qt
-comes in at the time section 4 states. The "Who" of each row copies the `Owner:` line of that
+**The Qt and VC++ runtime bundling of item 4 is done by `scripts/package-gui.ps1`.** Checking on a PC without
+the runtimes remains in section 4 Qt runtime. The "Who" of each row copies the `Owner:` line of that
 section.
 
 ## 15. Usability limits

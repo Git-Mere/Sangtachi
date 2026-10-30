@@ -120,7 +120,7 @@ python tools/docgate/docgate.py --claims
 ```
 
 최종 판정은 `VERDICT: pass`여야 한다.
-끊긴 링크 허용 예외는 Phase 9 산출물 `experiments.md`뿐이다.
+끊긴 링크 허용 예외는 없다.
 
 살아 있는 문서에는 감사 날짜나 감사 식별자를 넣지 않는다. 현재 사양만 기록한다.
 과목 메타데이터처럼 문서 자체의 정체성을 나타내는 날짜는 허용한다.

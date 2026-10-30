@@ -49,12 +49,18 @@ There are two reasons.
 
 | Thread | Responsibility | Shared state |
 |--------|------|-----------|
-| `[loop]` | UDP receive, Wintun receive, console commands, timers, session state, routing, all sending | **No tunnel state.** Shares only one end of four queues (telemetry, console, control request, control response) and the shutdown/cleanup events |
+| `[loop]` | UDP receive, Wintun receive, console commands, timers, session state, routing, all sending | **No tunnel state.** Shares only one end of four queues (telemetry, console, control request, control response) and the shutdown/cleanup events. The GUI build has one more, the screen queue |
 | `[telemetry]` | Consume the metric queue, upload to the telemetry service. Phase 9 onward | One queue |
 | `[console]` | Read standard input. Present only in the console build | One command queue |
 | `[control]` | Control plane TCP calls, DNS resolution. Phase 3 onward | One request queue and one response queue (chapter 8 The `[control]` Thread) |
+| `[gui]` | Qt event loop, the window, human actions. Present only in the GUI build | One command queue and one screen queue, the shutdown/cleanup events |
 
-**`[loop]` is the process main thread.** The rest exist only when that phase has their work.
+**In the console build, `[loop]` is the process main thread.** In the GUI build `[gui]` is the main thread and `[loop]` is a worker
+thread started by `[gui]`. The rest exist only when that phase has their work. The decision is
+[ADR 0034](decisions/0034-decisions-before-phase-8.md).
+
+> **Why.** Qt runs its event loop on the thread that created the window. If window messages were mixed into the `[loop]` wait, Windows'
+> modal loop would hold that thread while the window is dragged or resized, and keepalive would stop.
 
 | Span | Threads |
 |------|---------|
@@ -66,7 +72,13 @@ There are two reasons.
 - `[console]` exists only in the console build. `[loop]` cannot block on standard input, so a
   separate thread reads it and pushes to a queue. The table above is the console build's composition
   - It stays after Phase 6 because it has to accept the lobby commands ([`architecture.md`](architecture.md) 3.5 Startup Inputs)
-  - The thread composition of the GUI build is not decided yet. It is an open item left by ADR 0007
+- `[gui]` exists only in the GUI build, and that build has no `[console]`. The GUI build's composition is `[gui]`, `[loop]`, `[control]`
+  from Phase 8, and `[telemetry]` joins from Phase 9
+  - `[gui]` takes the place of `[console]`. It turns window actions into the same command lines as the console, pushes them to the same
+    command queue, and signals the same event. [`architecture.md`](architecture.md) 3.5 Startup Inputs owns which action is which command
+  - **The rest of startup all runs on the `[loop]` worker thread.** Opening the log and record files, waiting for the control server name
+    to resolve (`[control]` resolves it), resolving the STUN server names, preparing the adapter and cleaning up leftovers, binding the
+    socket, the loop, and the cleanup of chapter 7 Shutdown. Meanwhile `[gui]` draws the window. Name resolution and adapter preparation block for several seconds each
 - `[telemetry]` comes late because the place to upload to appears then. The telemetry service
   and the upload thread are deliverables of the same phase ([`roadmap.md`](roadmap.md))
 - When the adapter arrives in Phase 6, the Wintun read event joins the `[loop]` wait set
@@ -85,7 +97,7 @@ WaitForMultipleObjects(n, handles, FALSE, timeout_ms)
 | 0 | Shutdown event | `CreateEvent` (manual reset) | Always |
 | 1 | UDP socket event | `WSACreateEvent` + `WSAEventSelect(sock, ev, FD_READ)` | Always |
 | 2 | Wintun read event | `WintunGetReadWaitEvent(session)` | Phase 6 onward. Absent when started with `--no-adapter` |
-| 3 | Console command event | `CreateEvent` (auto reset). Signaled by `[console]` | Console build |
+| 3 | Console command event | `CreateEvent` (auto reset). Signaled by `[console]`, or by `[gui]` in the GUI build | Always |
 | 4 | Control response event | `CreateEvent` (auto reset). Signaled by `[control]` after pushing to the response queue | Phase 3 onward |
 
 **The numbers above are logical ranks, not array indices.** `WaitForMultipleObjects`
@@ -97,7 +109,7 @@ array and keep a separate mapping from logical source to actual index.
 |------|:---:|-----|
 | Phase 1~2 | 3 | |
 | Phase 3~5 | 4 | the control response event joins |
-| Phase 6 onward | 5 | the Wintun event joins. 4 with `--no-adapter`. This counts the console build. The GUI build is the open item in chapter 1, Threads |
+| Phase 6 onward | 5 | the Wintun event joins. 4 with `--no-adapter`. The GUI build is also 5. `[gui]` signals the command event |
 
 `timeout_ms` is computed as below. **Do not subtract first.**
 
@@ -513,6 +525,25 @@ expires. A remote service outage tears down the tunnel.
 telemetry outage from blocking the control plane; inside the client, only thread isolation
 stops the upload from blocking `[loop]`.
 
+**The GUI build's command queue is the same queue.** The producer is `[gui]` instead of `[console]`.
+
+**The screen queue exists only in the GUI build.** It is the same kind of ring, with `[loop]` as producer and `[gui]` as consumer. One entry is the whole state the window shows.
+It holds whether it is in the lobby, the role, whether a control request is outstanding, the name, the room code, the own virtual IP, the member list, the last failure line and its number, and the preparation and shutdown stage.
+
+- The queue has 4 slots. `[loop]` uses at most 2 of them and leaves the other 2 for the final state after the loop ends (shutting down, finished, or failed). Once the
+  loop ends, there is no later iteration to push again
+- `[loop]` pushes the first entry before it enters the loop, and after that pushes a new entry only on an iteration where the state changed. The lobby has no timer, so the first
+  iteration does not come until the next event
+- **The last state is not dropped even when the queue is full.** `[loop]` holds the entry it could not push and pushes it again on the next iteration. If the state changes again in the meantime, the held
+  entry is replaced with the new one. `[loop]` does not wait. If it holds an entry, it runs one more iteration after `GUI_POLL_MS`
+- Each time `[gui]` reads, it drains the queue and draws only the last entry. A failure line is shown anew only when its number changed
+- `[loop]` does not wake `[gui]`. `[gui]` reads the queue with a timer every `GUI_POLL_MS` (100ms)
+
+> **Why not wake it.** A Qt queued call takes the lock of the receiving thread's event queue. That would bring a lock into `[loop]`. 100ms is not noticeable on a screen a
+> human watches, and the T-7 decision deadline is in seconds.
+
+> **Why the whole state.** If events were carried one by one, losing just one would leave the screen wrong from then on. Carrying the whole state means that even if an intermediate entry is lost, the last
+> entry corrects the screen. The failure line is also put in the state so it is not lost.
 
 ---
 
@@ -590,6 +621,23 @@ so before that (8) is `[telemetry]` only.
   clean up, so nothing is lost.
 - Cleanup of the adapter, virtual IP address, and route, and handling of leftovers after
   abnormal exit, are in [`windows-prereq.md`](windows-prereq.md) section 3.
+
+### Shutdown in the GUI Build
+
+**The GUI build does not install a console control handler.** There is no console, so there is no signal to receive. `[gui]` creates the
+shutdown event and the cleanup-complete event before starting the worker thread, so that closing the window during preparation still
+triggers shutdown. The `shutdown()` order above is one set with the console build.
+
+| Trigger | What `[gui]` does |
+|------|-------------------|
+| Closing the window | Does not close the window right away. Signals the shutdown event and shows `Closing...`. Does not block `[gui]`. When the screen queue reports that cleanup finished, it closes the window and joins the worker thread |
+| Logoff, system shutdown (`WM_ENDSESSION`) | Signals the shutdown event, then waits for the cleanup-complete event up to the same 3 seconds as the table above before returning. Once it returns, Windows may end the process |
+
+- Adapter preparation and scripts during preparation are not stopped midway. If the window is closed, shutdown follows after that step
+  finishes
+- If `[loop]` ends without a human closing the window, the same dialog as a startup failure is shown after cleanup finishes, and closing
+  it ends the process. This is the case of losing the adapter or `[control]` stopping
+- The `_exit` of the join bound above is the same in the GUI build. Cleanup has already finished, so the window disappears on the spot
 
 ### Lobby
 

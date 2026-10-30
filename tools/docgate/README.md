@@ -40,11 +40,10 @@ python tools/docgate/docgate.py --root .   # 루트 지정
 
 **카운터를 구현하면 `PENDING_COUNTERS` 에서 그 이름을 뺀다.** 빼지 않으면 게이트가 떨어진다.
 
-## 예외 셋
+## 예외 둘
 
 | 상수 | 지금 값 | 뜻 |
 |------|---------|-----|
-| `ALLOWED_DANGLING` | `docs/kor/experiments.md`, `docs/eng/experiments.md` | 끊긴 채로 두어도 되는 링크. Phase 9 산출물이라 아직 없다 |
 | `KOR_ONLY` | `docs/kor/plan.md` | 미러 짝이 **없어도** 되는 문서. `docs/eng` 에 **있으면** 결함이다 |
 | `PENDING_COUNTERS` | 이름과 들어올 Phase. 값은 `docgate.py` 에 있다 | 문서에는 있고 코드에는 아직 없어도 되는 카운터 |
 

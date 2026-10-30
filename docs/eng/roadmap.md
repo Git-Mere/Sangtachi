@@ -1254,12 +1254,17 @@ Two Windows machines communicate using virtual IPs only.
 
 ### Tasks
 
-- **At the start of Phase 8, re-measure with `tools/nat-probe`.** Before setting up the demo
-  environment, confirm that the direct-connection verdict still holds
-  ([ADR 0001](decisions/0001-no-direct-connection-fallback.md))
-- **Re-measure once more just before the demo.** A same-day check. The direct-connection verdict is
-  an observation at a point in time and can be invalidated by a router replacement or an ISP
-  configuration change
+- **Rehearse twice before the demo.** On the same network pair as the demo, create and join a room with
+  the client and go as far as connecting to Minecraft. Once a few days before, while there is still time
+  to respond, and once on the day of the demo. The direct-connection verdict is an observation at a point
+  in time and can be invalidated by a router replacement or an ISP configuration change
+  - If a rehearsal fails, use `tools/nat-probe` to tell whether the cause is mapping, filtering, or timing
+  - These rehearsals replace the Phase 8 preparation and the just-before-demo re-measurement of
+    [ADR 0001](decisions/0001-no-direct-connection-fallback.md). The rationale is
+    [ADR 0034](decisions/0034-decisions-before-phase-8.md)
+- **Measure the mapping lifetime of the demo networks.** Both the host's mobile hotspot and the
+  player's home Wi-Fi. The procedure is test 3 of
+  [`field-test/README.md`](../../field-test/README.md)
 - Run a Minecraft Java server on the host
 - The player connects to the host's virtual IP
 - Confirm login and world entry
@@ -1271,29 +1276,18 @@ Two Windows machines communicate using virtual IPs only.
   the tunnel** ([`protocol.md`](protocol.md) 5.7 ROSTER). What that status means is set by the FR-15
   note under the FR table of `spec.md`. Sending, receiving, and validating the roster are Phase 4
   deliverables; this Phase only displays it
-- **Decide the GUI thread model first.** Before this Phase starts, decide which of the Qt event
-  loop and the `[loop]` main thread rule of [`concurrency.md`](concurrency.md) chapter 1 Threads
-  is the main thread, and write it in `concurrency.md`. [ADR 0007](decisions/0007-gui-core-scope-qt.md)
-  left it open
-- **Decide the startup input path the GUI uses.** The built-in default control server address, the
-  default name, and the console lobby guide were decided by [ADR 0030](decisions/0030-startup-input-and-console-screen.md)
-  ([`architecture.md`](architecture.md) 3.5 Startup Inputs). What remains is how the window takes
-  those values and commands, and how it shows the room code and the failure line on standard output
-- **Before starting, fix the relation between GUI operation and the control plane rate limit.** When
-  a person clicks buttons quickly, calls pile up from the same source. Today the limit is owned by
-  [`control_plane.md`](control_plane.md) 6.4 Rate Limit and that document does not cover the GUI.
-  Decide whether the window blocks it or shows the error it got, and write it in that place
-- **Before starting, fix when privilege elevation and leftover cleanup happen in the GUI.**
-  [`windows-prereq.md`](windows-prereq.md) 14 Automatic and manual puts administrator rights on the
-  person every time they run it and leftover cleanup on the client at startup. In release builds the
-  manifest asks for elevation before the run (ADR 0030). What the window shows when elevation is
-  refused, and whether leftover cleanup is before or after the window appears, is missing
-- **Before starting, check the distribution form of the Qt runtime.** After confirming what gets
-  attached to the distribution and how much the execution premise grows, fix
-  [`windows-prereq.md`](windows-prereq.md) 4 Distribution packaging (ADR 0007)
+- **What had to be decided before starting was decided by [ADR 0034](decisions/0034-decisions-before-phase-8.md).** The GUI thread
+  model is owned by [`concurrency.md`](concurrency.md) chapter 1 Threads, the values the window takes and its screen by
+  [`architecture.md`](architecture.md) 3.5 Startup Inputs, the relation between the buttons and the rate limit by
+  [`control_plane.md`](control_plane.md) 6.4 Rate Limit, and elevation refusal, the timing of leftover cleanup, and the Qt runtime by
+  [`windows-prereq.md`](windows-prereq.md) 1, 4, and 14
+- **Measure the file list and size when building the Qt distribution for the first time.** Write what `windeployqt` gathered in
+  `windows-prereq.md` 4 Qt runtime
 - **Measure whether host shutdown fits inside the OS grace period.** Measure whether the up to four
-  `CLOSE` messages sent per session plus adapter cleanup finish inside the 3-second grace of
-  `CTRL_CLOSE_EVENT`. This is measuring, not deciding (`concurrency.md` chapter 7 Shutdown)
+  `CLOSE` messages sent per session plus adapter cleanup finish inside 3 seconds. This is measuring,
+  not deciding (`concurrency.md` chapter 7 Shutdown)
+  - The console build is measured by closing the console window, via `CTRL_CLOSE_EVENT`
+  - The GUI build measures the `WM_ENDSESSION` path with a logoff
 
 ### Deliverable
 
@@ -1307,6 +1301,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - **When one player is cut, the other player's member list shows that member as disconnected**
   (the last condition of T-7). The judgement deadline is the moment the host learns of the
   disconnect plus one roster period (`protocol.md` 5.7 ROSTER)
+  - There are three machines: one host and two players. The only way a player learns another player's state is the roster
   - A clean shutdown makes it the moment the host receives `CLOSE` (`protocol.md` 5.6 CLOSE)
   - Killing the process makes it the moment of the idle timeout (`protocol.md` chapter 11 Timers)
   - Run each of the two once. Running only one leaves one disconnect verdict path untested
@@ -1323,7 +1318,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 | Item | Definition |
 |------|------|
 | What is measured | Game-displayed latency is the value the Minecraft client shows; tunnel RTT is the `PING`/`PONG` measurement. **They do not measure the same thing.** The game value is an application-layer round trip and sits on top of the tunnel |
-| Measurement point | The game value is read from the screen; the tunnel value is read from the client log |
+| Measurement point | The game value is read from the network graph on the F3 debug screen of the player-side Minecraft; the tunnel value is read from the client log |
 | Sample condition | At least 20 each over the same interval. Log the start and end of the interval. **This is not a claim of statistical sufficiency; it is the minimum condition for a record.** The game-displayed latency updates about once a second, so collecting 20 takes roughly 1 minute |
 | Statistics | Median and interquartile range. Mean and standard deviation are not used |
 | What is judged | **Measurement consistency. Not quality.** No matter how large the game latency is, this criterion alone does not fail it. Perceived quality is judged by the propagation test below |
@@ -1332,7 +1327,11 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 
   **What this criterion does not guarantee.** No absolute latency ceiling is guaranteed. Perceived
   quality is judged only by the propagation test below
-- Attempt 20 block placements and 20 chat messages; all propagate to the other client within 2 seconds
+- Place blocks and chat several times; there is no noticeable delay before they appear on the other client. The repository owner
+  watches and judges this directly
+- **Record the behavior when Wi-Fi drops.** It is not judged. Turn off the player-side Wi-Fi for about 10 seconds and about 60
+  seconds. 60 seconds exceeds the 50-second idle timeout ([`protocol.md`](protocol.md) chapter 11 Timers). Write down what happens to
+  the session state on both sides, the `FAIL` lines, and the Minecraft connection
 
 ---
 
@@ -1348,6 +1347,15 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
   authenticate, upload period, retention period, and DynamoDB table design. **Do not implement
   before deciding.** The separation contract itself is already held by
   [`architecture.md`](architecture.md) 3.4 Telemetry Service
+- **The telemetry service also produces the aggregation and the graphs.** On top of collection, the service produces the aggregation and
+  the graphs that go into [`experiments.md`](experiments.md). A human writes the interpretation and the limitations. The following are
+  decided before starting
+  - What is uploaded. The raw logs contain both sides' public addresses and candidates. Pseudonymizing what is uploaded follows
+    required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
+  - How each trial's environment (same LAN, home network, hotspot, campus network) is marked. The GUI takes no arguments
+  - The library that draws the graphs. If a deployed process uses it, it is a product dependency under [`spec.md`](spec.md) NFR-5
+  - The wording of [`spec.md`](spec.md) FR-14. Today it states only metric reporting
+  - Resources on the same instance. Aggregation and graphs raise the risk of the resource isolation item below
 - **Before starting, fix the resource isolation method within one instance.** The two services run
   on the same EC2 instance, so if telemetry exhausts disk or CPU the control plane stalls with it.
   Having no dependency by design is not the same as having isolated resources (`architecture.md` 3.4
@@ -1365,7 +1373,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - Compare successful and failed NAT traversal cases (by observed mapping behavior, not NAT type)
 - Visualize experimental results
 - Document limitations
-- Write [`experiments.md`](experiments.md)
+- Put the Phase 9 measurements and analysis in [`experiments.md`](experiments.md)
 
 ### Test Environments
 

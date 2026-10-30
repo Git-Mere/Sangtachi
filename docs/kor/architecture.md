@@ -89,6 +89,9 @@
 | `platform/tun` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper), 관리자 권한 확인, 서브넷 충돌과 방화벽 규칙 스크립트 실행. 7장 어댑터 수명 | **Wintun (승인 완료)**, IP Helper |
 | `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
+| `ui/gui_ui` | GUI 빌드의 `ClientUi`. 작업 스레드에서 화면 큐에 넣고, 기동 중의 `ERROR` 줄을 모으고, 정리 완료 이벤트를 신호한다. Qt 를 쓰지 않는다 | 없음 |
+| `platform/session_end` | 창 메시지가 로그오프나 시스템 종료(`WM_ENDSESSION`)인지 가린다 (`concurrency.md` 7장 GUI 빌드의 종료) | Win32 |
+| `ui/view` | 화면 큐의 항목에서 창에 보일 것을 만든다. 멤버 줄, 상태 줄의 문구, 버튼을 켜는 규칙이다. Qt 를 쓰지 않아 시험 실행 파일이 링크한다 ([ADR 0034](decisions/0034-phase-8-착수-전-결정.md)) | 없음 |
 | `loop` | 이벤트 루프 한 바퀴, 대기 집합, 소스별 비우기 예산, 콘솔 명령 처리. 구조는 `concurrency.md` 2·3장 | 없음 |
 | `timer` | 주기 타이머 집합과 다음 대기 타임아웃 계산 (`concurrency.md` 4장) | 없음 |
 | `console` | `[console]` 스레드의 줄 큐와 그 수명 (`concurrency.md` 6장 텔레메트리 격리가 그 큐 정책을 함께 갖는다). 콘솔 빌드에만 있다 | 없음 |
@@ -116,10 +119,8 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 [ADR 0010](decisions/0010-플랫폼-이식-이음새.md)이 갖는다. `tools/platformgate/` 가 그 규칙을
 판정하고, **현재 그 자리에 무엇이 있는지는 10장 레포 구조의 트리가 갖는다.**
 
-**`ui/main_window` 가 어느 스레드에서 도는지는 정하지 않았다.** Qt 는 자기 이벤트 루프를
-갖고 `concurrency.md` 1장 스레드는 `[loop]` 를 프로세스 주 스레드로 정했다. 둘의 관계는
-[ADR 0007](decisions/0007-gui-핵심-범위-qt.md)이 미결로 두었고, 정하는 시점은
-[`roadmap.md`](roadmap.md) Phase 8 이 갖는다.
+**`ui/main_window` 는 GUI 스레드에서 돈다.** GUI 빌드에서는 그 스레드가 프로세스 주 스레드이고 `[loop]` 는 작업 스레드다.
+스레드 구성은 `concurrency.md` 1장 스레드가 갖는다.
 
 **모든 UDP 송수신은 하나의 로컬 소켓을 공유하고, 그 소켓은 하나의 수신 루프가 배타적으로
 소유한다.** 이 제약은 Phase 2 시점부터 지켜야 한다.
@@ -417,6 +418,44 @@ Phase 1 의 송수신 확인에 쓰던 시험용 입력은 두지 않는다. 근
 
 **반례 목록은 시험이 갖는다.** IPv4 리터럴, 포트 범위, `--room` 의 케이스 표는
 `tests/` 에 있다. 문서에 두면 같은 표를 두 곳에서 맞춰야 하고, 반례는 구현이 자라면서 는다.
+
+**GUI 실행 파일.** `sangtachi_gui.exe` 는 명령줄 인자를 받지 않는다. 창이 받는 값은 이름과 방 코드 둘이다. 제어 서버 주소는 빌드
+기본값만 쓰고, STUN 서버는 위 기본 목록을 쓰고, 어댑터는 늘 만든다. 기본값이 빈 채로 GUI 대상을 설정하면 설정이 멈춘다. 결정은
+[ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다.
+
+콘솔의 명령과 줄이 창에서 무엇이 되는지다. 규칙은 콘솔과 한 벌이다. 창의 조작은 같은 명령으로 `[loop]` 에 들어간다
+([`concurrency.md`](concurrency.md) 1장 스레드).
+
+| 콘솔 | 창 |
+|------|-----|
+| `--name`, `name <이름>` | 이름 칸. 기본 이름을 미리 채운다. 로비에 있을 때만 고칠 수 있다. 형식 검사는 `--name` 과 같고, 틀리면 요청을 보내지 않고 사유를 상태 줄에 보인다 |
+| `host` | 방 만들기 버튼 |
+| `join <방 코드>` | 방 코드 칸과 참가 버튼. 형식 검사는 `--room` 과 같다 |
+| `leave` | 방 나가기 버튼 |
+| `quit` | 창 닫기. 확인을 묻지 않는다 |
+| `help`, `counters` | 없다 |
+| `ROOM` 줄 | 방 코드 표시와 복사 버튼 |
+| `FAIL` 줄 | 창 안의 상태 줄. 실패 코드, `<상대>`, 8장의 문장을 모두 보인다 |
+| 로비 안내와 방 안내 | 창의 상태. 방에 있으면 방 코드, 이름, 자기 가상 IP 를 보인다 |
+| `Loading...` | 준비가 끝날 때까지 `Loading...` 을 보이고 버튼을 끈다 |
+| 기동 실패의 창 | 대화 상자. `ERROR` 줄과 로그 파일 이름을 보이고, 닫으면 끝난다. 사람이 닫지 않았는데 끝날 때도 같다(`concurrency.md` 7장 GUI 빌드의 종료) |
+
+- 방 만들기와 참가 버튼은 로비에 있고 미결 제어 요청이 없을 때만 켜진다. 위 로비 명령의 "받는 때" 와 같다. 속도 제한과의 관계는
+  [`control_plane.md`](control_plane.md) 6.4 속도 제한이 갖는다
+- 준비가 끝나기 전(`Loading...`)과 종료 중에는 모든 버튼과 칸이 꺼진다
+- 이름과 방 코드 칸의 앞뒤 공백을 지우지 않는다. 형식이 틀리면 요청을 보내지 않고 콘솔의 거부 안내와 같은 문장을 상태 줄에 보인다.
+  명령을 보내면 그 안내를 지운다
+- 콘솔의 다른 거부 안내는 창에 보이지 않는다. 버튼이 위 규칙대로 꺼지므로 받지 않는 때의 명령이 가지 않는다
+- 대화 상자는 기동 중이나 끝나기 직전의 마지막 `ERROR` 줄을 보이고, 512바이트에서 자른다. 준비 중에 창을 닫았어도 기동이
+  실패하면 대화 상자를 보인다
+- 표준 출력과 표준 오류는 없다. 로그는 9장 로그 출력의 로그 파일로만 간다. 로컬 기록 파일은 콘솔 빌드와 같다
+- 창을 닫으면 정리가 끝날 때까지 `Closing...` 을 보인다
+
+**멤버 목록.** 방에 있으면 멤버마다 이름, 가상 IP, 연결 상태를 한 줄씩 보인다. 출처는 명부다([`protocol.md`](protocol.md) 5.7
+ROSTER). 플레이어는 받아들인 마지막 명부를, 호스트는 자기가 보내는 명부를 보인다. 연결 상태는 비트 0 의 두 값뿐이다. 자기 줄에는 `(you)` 를
+붙인다. 명부에서 빠진 멤버는 줄을 지운다. 창은 명부에 없는 상태를 만들지 않는다.
+
+> **왜.** 명부는 표시 전용이다. 창이 나간 멤버를 따로 남기면 명부와 화면이 다른 것을 말한다.
 
 ---
 
@@ -1091,7 +1130,8 @@ Sangtachi/
 +-- client/
 |   +-- include/         adapter.hpp 는 어댑터 상수와 루프가 보는 면 (7장 어댑터 수명)
 |   +-- src/
-|   |   +-- main.cpp
+|   |   +-- main.cpp     콘솔 실행 파일
+|   |   +-- client_process.cpp 기동부터 정리까지. 콘솔과 GUI 실행 파일이 각자 컴파일한다
 |   |   +-- args.cpp     기동 인자 파싱 (3.5)
 |   |   +-- loop.cpp     이벤트 루프와 콘솔 명령 (concurrency.md 2·3장)
 |   |   +-- timer.cpp    타이머 집합 (concurrency.md 4장)
@@ -1100,13 +1140,13 @@ Sangtachi/
 |   |   +-- counters.cpp 카운터 표 (9장)
 |   |   +-- record.cpp   로컬 기록 파일의 줄과 쓰기 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file, tun
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, session_end, hash, random, resolve, interfaces, record_file, tun
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (시험 빌드에서만)
 |   |   +-- telemetry/   telemetry
-|   |   +-- ui/          main_window
+|   |   +-- ui/          view, gui_ui, main_window, gui_main (GUI 실행 파일)
 |   |   +-- control/     control_client
 |   +-- CMakeLists.txt
 +-- control-server/      모듈 책임은 control_plane.md 7.1
@@ -1131,7 +1171,7 @@ Sangtachi/
 |   |   +-- protocol.md          터널 프로토콜 확정본
 |   |   +-- control_plane.md     제어 평면 확정본
 |   |   +-- concurrency.md       동시성 모델 확정본
-|   |   +-- experiments.md       실험 설계와 측정 결과 (Phase 9에서 작성)
+|   |   +-- experiments.md       실측 결과와 그 한계
 |   |   +-- audit-history/       전면 설계 점검 기록 보관소
 |   |   +-- decisions/           설계 결정 기록. ADR 과 first_design.md
 |   |   +-- commit_history/      작업 단위 변경 기록

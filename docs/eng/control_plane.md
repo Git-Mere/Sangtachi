@@ -1463,6 +1463,15 @@ guessing blocks the other person's normal requests.** A campus network is like t
 - The alternative (not counting requests that carry a token) leaves `unauthorized` guessing open,
   so it is not used
 
+**The GUI does not block separately on the window side.** When the buttons are enabled is owned by
+[`architecture.md`](architecture.md) 3.5 Startup Inputs. A received failure is shown on the same failure line as any other failure.
+There is no wait time that blocks the buttons for a few seconds after a failure. The rationale is
+[ADR 0034](decisions/0034-decisions-before-phase-8.md).
+
+> **Why.** The budget counts only failure responses. The buttons are disabled while a request is outstanding, so pressing them quickly
+> does not pile up requests. What spends the budget is entering a wrong room code again and again, and slowing that down is the purpose of
+> this section.
+
 ### 6.5 TTL
 
 | Item | `ttl` value |

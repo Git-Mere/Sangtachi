@@ -41,6 +41,11 @@ set(SANGTACHI_DEFAULT_SERVER "" CACHE STRING "Control server compiled in as the 
 # Windows 가 프로세스를 만들지 않는다. 시험 빌드는 켜지 않는다. 시험이 관리자가 아닌 셸에서 --no-adapter 로 띄운다.
 option(SANGTACHI_REQUIRE_ADMIN "Embed a requireAdministrator manifest (distribution builds only)" OFF)
 
+# GUI 실행 파일 sangtachi_gui (architecture.md 3.5 GUI 실행 파일, ADR 0034). 켤 때만 Qt 6 Widgets 를 찾는다. 기본
+# 빌드와 시험 빌드는 Qt 없이 돈다. Qt 의 자리는 설정할 때 CMAKE_PREFIX_PATH 로 준다. 켜면 SANGTACHI_DEFAULT_SERVER 가
+# 필요하다.
+option(SANGTACHI_BUILD_GUI "Build the Qt Widgets GUI executable sangtachi_gui (needs Qt 6 and SANGTACHI_DEFAULT_SERVER)" OFF)
+
 add_subdirectory(client)
 
 if(SANGTACHI_BUILD_TESTS)

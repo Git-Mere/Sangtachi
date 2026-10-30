@@ -69,6 +69,9 @@ public:
     void run(Millis now, const Connected& connected);
 
     [[nodiscard]] std::uint32_t generation() const noexcept { return generation_; }
+    // 지금 보내는 명부. generation 칸은 0 이다(위 generation() 이 값이다). 켜지 않았으면 비어 있다. 호스트의 멤버
+    // 목록이 이것을 보인다 (architecture.md 3.5).
+    [[nodiscard]] const std::optional<Roster>& current() const noexcept { return last_; }
 
 private:
     struct Schedule {

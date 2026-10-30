@@ -129,7 +129,7 @@ public:
     void attach_adapter(adapter::Port* port) noexcept { adapter_ = port; }
 
     // drain_wintun 이 읽은 패킷을 하나씩 넘길 곳. 받은 바이트열은 그 호출 안에서만 유효하다.
-    // 제품 경로는 main.cpp 가 tunnel::Tunnel::send_data 에 잇는다 (concurrency.md 3장 route_and_send). 비워 두면
+    // 제품 경로는 client_process.cpp 가 tunnel::Tunnel::send_data 에 잇는다 (concurrency.md 3장 route_and_send). 비워 두면
     // 세고 버린다.
     void set_adapter_handler(std::function<void(std::span<const std::byte> packet)> handler) {
         on_adapter_packet_ = std::move(handler);
@@ -180,7 +180,7 @@ public:
     }
 
     // 터널 후보로 분류된 데이터그램을 넘길 곳 (protocol.md 8장 검증 파이프라인). 제품 경로는
-    // tunnel::Tunnel::on_datagram 이다 (main.cpp). 비워 두면 아무것도 하지 않는다.
+    // tunnel::Tunnel::on_datagram 이다 (client_process.cpp). 비워 두면 아무것도 하지 않는다.
     void set_tunnel_handler(DatagramHandler handler) { on_tunnel_ = std::move(handler); }
 
     // 세션 타이머의 자리 (protocol.md 11장, concurrency.md 4장). 세션은 마감을 스스로 들고,

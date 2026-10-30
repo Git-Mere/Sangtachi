@@ -993,8 +993,10 @@ TEST_CASE("session: ROSTER records the generation, accepts resends and rejects s
     std::vector<std::byte> buf(200);
     buf.resize(tunnel::encode_roster(roster, buf));
     sangtachi::testing::LogCapture logs;
+    REQUIRE_FALSE(f.session.last_roster().has_value());
     REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 2), kT0).accepted());
     REQUIRE(f.session.last_roster_generation() == 5u);
+    REQUIRE(f.session.last_roster() == roster);
     // 같은 값은 재송신이다. 받아들이고 세지 않으며 roster 줄을 다시 내지 않는다 (5.7 3번, ADR 0024)
     REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 3), kT0).accepted());
     REQUIRE(f.count(Counter::DropRosterStale) == 0);
@@ -1024,6 +1026,10 @@ TEST_CASE("session: ROSTER records the generation, accepts resends and rejects s
     REQUIRE(f.rx(make_rx(PacketType::kRoster, buf, kPeerEpoch, 6), kT0).dropped ==
             Counter::DropRosterStale);
     REQUIRE(f.session.last_roster_generation() == 6u);
+    // 버린 명부는 남지 않는다. 받아들인 마지막 것이 남는다
+    REQUIRE(f.session.last_roster().has_value());
+    REQUIRE(f.session.last_roster()->generation == 6u);
+    REQUIRE(f.session.last_roster()->members[0].name_view() == "host");
     REQUIRE(logs.with_event("roster").size() == 2);
 }
 

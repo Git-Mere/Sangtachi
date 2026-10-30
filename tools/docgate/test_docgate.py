@@ -185,11 +185,6 @@ class TestGate(GateCase):
         write(self.root, "docs/kor/sub/plan.md", "# Plan\n")
         self.assertFalse(self.run_gate().ok)
 
-    def test_allowed_dangling_link_passes(self) -> None:
-        self.build(kor=CLEAN_KOR.replace("(other.md)", "(experiments.md)"),
-                   eng=CLEAN_ENG.replace("(other.md)", "(experiments.md)"))
-        self.assertTrue(self.run_gate().ok)
-
     def test_link_to_existing_directory_passes(self) -> None:
         write(self.root, "docs/kor/decisions/0001-가.md", "# 가\n")
         write(self.root, "docs/eng/decisions/0001-a.md", "# A\n")
@@ -403,12 +398,6 @@ class TestLinkRules(GateCase):
         report = self.run_gate()
         self.assertFalse(report.ok)
         self.assertTrue(any("저장소 밖" in f.detail for f in report.findings))
-
-    def test_experiments_exception_only_at_the_mirror_location(self) -> None:
-        self.build(kor=CLEAN_KOR.replace("(other.md)", "(../../nowhere/experiments.md)"),
-                   eng=CLEAN_ENG.replace("(other.md)", "(../../nowhere/experiments.md)"))
-        report = self.run_gate()
-        self.assertFalse(report.ok, report.text())
 
     def test_reference_definition_is_resolved(self) -> None:
         self.build(kor=CLEAN_KOR.replace("[링크](other.md)", "[링크][표]\n\n[표]: gone.md"),

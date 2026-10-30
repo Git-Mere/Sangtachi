@@ -420,6 +420,19 @@ private:
         }
         // STUN 결과가 오면 Sim 은 STUN 을 끝난 것으로 본다.
         CHECK(lobby.request_pending() == in_flight.has_value());
+        // 화면 큐의 실패 줄 (concurrency.md 6장). 낸 FAIL 줄마다 하나씩 세고, 마지막 값이 마지막 줄과 같다.
+        std::uint32_t fails = 0;
+        const std::string* last_fail = nullptr;
+        for (const auto& line : printed) {
+            if (line.rfind("FAIL ", 0) == 0) {
+                ++fails;
+                last_fail = &line;
+            }
+        }
+        CHECK(lobby.fail_count() == fails);
+        if (last_fail != nullptr) {
+            CHECK(fail_line(lobby.last_fail().code, lobby.last_fail().peer) == *last_fail);
+        }
     }
 
     int nonce_counter_ = 0;

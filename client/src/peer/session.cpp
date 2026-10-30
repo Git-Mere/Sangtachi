@@ -715,6 +715,7 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
                 break;
             }
             last_generation_ = roster->generation;
+            last_roster_ = *roster;
             const std::string members = tunnel::format_roster_members(*roster);
             const LogField fields[] = {
                 field("peer_id", static_cast<std::uint64_t>(config_.peer_id)),

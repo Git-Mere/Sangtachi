@@ -265,6 +265,8 @@ public:
     [[nodiscard]] std::optional<std::uint32_t> last_roster_generation() const noexcept {
         return last_generation_;
     }
+    // 마지막으로 받아들인 명부 (protocol.md 5.7). 플레이어의 멤버 목록이 이것을 보인다 (architecture.md 3.5).
+    [[nodiscard]] const std::optional<tunnel::Roster>& last_roster() const noexcept { return last_roster_; }
     [[nodiscard]] std::optional<SessionFailure> failure() const noexcept { return failure_; }
     [[nodiscard]] std::optional<tunnel::CloseReason> peer_close_reason() const noexcept {
         return peer_close_reason_;
@@ -361,6 +363,7 @@ private:
     std::size_t rtt_samples_ = 0;
 
     std::optional<std::uint32_t> last_generation_;  // 5.7 수신 검증 3번
+    std::optional<tunnel::Roster> last_roster_;     // 그 generation 의 명부
 
     struct ProbePath {
         network::Endpoint to;

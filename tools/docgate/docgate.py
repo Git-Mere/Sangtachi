@@ -53,13 +53,6 @@ from urllib.parse import unquote
 KOR = "kor"
 ENG = "eng"
 
-# 끊긴 채로 두어도 되는 링크. 전체 경로로 적는다. 이름만으로 두면 깊이가 다른 엉뚱한
-# 링크까지 통과한다. `experiments.md` 는 roadmap.md Phase 9 의 산출물이라 아직 없다.
-ALLOWED_DANGLING = {
-    f"docs/{KOR}/experiments.md",
-    f"docs/{ENG}/experiments.md",
-}
-
 # 한국어만 두는 문서. 전체 경로로 적는다. 미러 짝이 없어도 결함으로 세지 않는다.
 # `plan.md` 는 다음 세션 인수인계용이라 번역해 둘 이유가 없고, 번역이 늦으면 오히려 낡은
 # 상태를 두 곳에 두게 된다. **eng 쪽에 같은 문서가 있으면 그것은 결함이다.** 예외는
@@ -713,8 +706,6 @@ def run(root: Path, *, counters: bool = True,
                 problem = resolve_link(path.parent, target, root)
                 if problem is None:
                     continue
-                if problem.startswith("끊긴 링크") and _relative_to_root(path.parent, target, root) in ALLOWED_DANGLING:
-                    continue
                 report.findings.append(Finding("link", f"{where}:{number}", problem))
             for number, line in _body_lines(text):
                 for phrase, pattern in CLAIM_PATTERNS[language]:
@@ -725,14 +716,6 @@ def run(root: Path, *, counters: bool = True,
         report.findings += counter_findings(root, PENDING_COUNTERS if pending is None else pending)
 
     return report
-
-
-def _relative_to_root(base_dir: Path, target: str, root: Path) -> str:
-    """예외 목록과 대조할 저장소 기준 경로. 대조할 수 없으면 빈 문자열."""
-    try:
-        return (base_dir / target).resolve().relative_to(root).as_posix()
-    except (ValueError, OSError):
-        return ""
 
 
 def main(argv: list[str] | None = None) -> int:

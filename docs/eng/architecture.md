@@ -91,6 +91,9 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `platform/tun` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper), administrator check, running the subnet conflict and firewall rule scripts. Chapter 7 Adapter lifetime | **Wintun (approved)**, IP Helper |
 | `telemetry/telemetry` | Metric collection, local buffering, transmission to the telemetry service | None |
 | `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
+| `ui/gui_ui` | The `ClientUi` of the GUI build. On the worker thread it puts entries into the screen queue, collects the `ERROR` lines during startup, and signals the cleanup-complete event. It does not use Qt | None |
+| `platform/session_end` | Tells whether a window message is a logoff or system shutdown (`WM_ENDSESSION`) (`concurrency.md` chapter 7 Shutdown in the GUI Build) | Win32 |
+| `ui/view` | Builds what the window shows from an entry of the screen queue: the member lines, the status line wording, and the rules that enable buttons. It does not use Qt, so the test executable links it ([ADR 0034](decisions/0034-decisions-before-phase-8.md)) | None |
 | `loop` | One loop iteration, the wait set, the per-source drain budget, console command handling. `concurrency.md` chapters 2 and 3 own the structure | None |
 | `timer` | The periodic timer set and the next wait timeout calculation (`concurrency.md` chapter 4) | None |
 | `console` | The line queue of the `[console]` thread and its lifetime (`concurrency.md` chapter 6 Telemetry Isolation also owns that queue policy). Present only in the console build | None |
@@ -120,10 +123,8 @@ implementation sits in `platform/win32/`. **Source files that include OS headers
 decision. `tools/platformgate/` decides that rule, and **what is in that place right now is
 owned by the tree in chapter 10 Repository Structure.**
 
-**Which thread `ui/main_window` runs on is not decided.** Qt has its own event loop, and
-`concurrency.md` chapter 1 Threads made `[loop]` the process main thread. The relation between the
-two is left open by [ADR 0007](decisions/0007-gui-core-scope-qt.md), and
-[`roadmap.md`](roadmap.md) Phase 8 owns when it is decided.
+**`ui/main_window` runs on the GUI thread.** In the GUI build that thread is the process main thread and `[loop]` is a worker thread.
+`concurrency.md` chapter 1 Threads owns the thread layout.
 
 **All UDP send/receive shares one local socket, and one receive loop owns that socket
 exclusively.** This constraint holds from Phase 2 onward.
@@ -474,6 +475,48 @@ process still starts. But a value that is neither `host` nor `player` is a forma
 **The tests own the counterexample list.** The case tables for IPv4 literals, the port range,
 and `--room` live in `tests/`. Keeping them in the document means matching the same
 table in two places, and counterexamples grow as the implementation grows.
+
+**GUI executable.** `sangtachi_gui.exe` takes no command-line arguments. The window takes two values: the name and the room code. The control
+server address uses only the build default, the STUN servers use the default list above, and the adapter is always created. Configuring
+the GUI target with an empty default stops the configuration. The decision is
+[ADR 0034](decisions/0034-decisions-before-phase-8.md).
+
+What the console commands and lines become in the window. The rules are one set with the console. Actions in the window enter `[loop]` as
+the same commands ([`concurrency.md`](concurrency.md) chapter 1 Threads).
+
+| Console | Window |
+|------|-----|
+| `--name`, `name <name>` | The name field. Prefilled with the default name. Editable only in the lobby. The format check is the same as `--name`; if it is wrong, no request is sent and the reason is shown on the status line |
+| `host` | The create room button |
+| `join <room code>` | The room code field and the join button. The format check is the same as `--room` |
+| `leave` | The leave room button |
+| `quit` | Closing the window. It does not ask for confirmation |
+| `help`, `counters` | None |
+| `ROOM` line | The room code display and a copy button |
+| `FAIL` line | The status line inside the window. It shows the failure code, `<counterpart>`, and the chapter 8 sentence |
+| Lobby guide and room guide | The window state. In a room it shows the room code, the name, and the own virtual IP |
+| `Loading...` | Shows `Loading...` and disables the buttons until preparation finishes |
+| The startup failure window | A dialog. It shows the `ERROR` line and the log file name, and closing it ends the process. The same applies when the process ends without a human closing it (`concurrency.md` chapter 7 Shutdown in the GUI Build) |
+
+- The create room and join buttons are enabled only in the lobby with no outstanding control request. This is the same as "When it is
+  accepted" of the lobby commands above. [`control_plane.md`](control_plane.md) 6.4 Rate Limit owns the relation to rate limiting
+- Before preparation finishes (`Loading...`) and during shutdown, every button and field is disabled
+- Leading and trailing spaces in the name and room code fields are not trimmed. If the format is wrong, no request is sent and the status line shows the same sentence as the console's rejection guide.
+  Sending a command clears that guide
+- The console's other rejection guides are not shown in the window. The buttons are disabled per the rules above, so a command does not go out when it is not accepted
+- The dialog shows the last `ERROR` line from startup or from just before the end, cut at 512 bytes. Even if the window was closed during preparation, the dialog is shown
+  if startup fails
+- There is no standard output or standard error. Logs go only to the log file of chapter 9 Log Output. The local record file is the same
+  as in the console build
+- When the window is closed, `Closing...` is shown until cleanup finishes
+
+**Member list.** In a room, one line per member shows the name, the virtual IP, and the connection state. The source is the roster
+([`protocol.md`](protocol.md) 5.7 ROSTER). A player shows the last roster it accepted, and the host shows the roster it sends. The
+connection state is only the two values of bit 0. The own line gets `(you)`. A member dropped from the roster has its line removed. The
+window makes no state that is not in the roster.
+
+> **Why.** The roster is display-only. If the window kept departed members separately, the roster and the screen would say different
+> things.
 
 ---
 
@@ -1232,7 +1275,8 @@ Sangtachi/
 +-- client/
 |   +-- include/         adapter.hpp holds the adapter constants and the face the loop sees (chapter 7 Adapter lifetime)
 |   +-- src/
-|   |   +-- main.cpp
+|   |   +-- main.cpp     console executable
+|   |   +-- client_process.cpp startup through cleanup. The console and GUI executables each compile it
 |   |   +-- args.cpp     startup argument parsing (3.5)
 |   |   +-- loop.cpp     event loop and console commands (concurrency.md chapters 2 and 3)
 |   |   +-- timer.cpp    timer set (concurrency.md chapter 4)
@@ -1241,13 +1285,13 @@ Sangtachi/
 |   |   +-- counters.cpp counter table (chapter 9)
 |   |   +-- record.cpp   local record file lines and writes (chapter 9)
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, hash, random, resolve, interfaces, record_file, tun
+|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, session_end, hash, random, resolve, interfaces, record_file, tun
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (test build only)
 |   |   +-- telemetry/   telemetry
-|   |   +-- ui/          main_window
+|   |   +-- ui/          view, gui_ui, main_window, gui_main (GUI executable)
 |   |   +-- control/     control_client
 |   +-- CMakeLists.txt
 +-- control-server/      module responsibilities are in control_plane.md 7.1
@@ -1272,7 +1316,7 @@ Sangtachi/
 |   |   +-- protocol.md          confirmed tunnel protocol
 |   |   +-- control_plane.md     confirmed control plane
 |   |   +-- concurrency.md       confirmed concurrency model
-|   |   +-- experiments.md       experiment design and measurement results (written in Phase 9)
+|   |   +-- experiments.md       measured results and their limits
 |   |   +-- audit-history/       archive of full design audit records
 |   |   +-- decisions/           design decision records. ADRs and first_design.md
 |   |   +-- commit_history/      per-commit change records

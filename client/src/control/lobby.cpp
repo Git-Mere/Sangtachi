@@ -174,7 +174,8 @@ std::vector<LogField> rejected_fields(std::string_view reason, LobbyCommandKind 
     return fields;
 }
 
-// 로비 명령이 거부된 사유마다 사람에게 보이는 안내 (architecture.md 3.5 로비 안내).
+}  // namespace
+
 std::string_view rejected_guide(std::string_view reason) noexcept {
     if (reason == "in_lobby")        return "  You are not in a room.";
     if (reason == "not_in_lobby")    return "  Not available while in a room. Type leave first.";
@@ -186,6 +187,8 @@ std::string_view rejected_guide(std::string_view reason) noexcept {
     if (reason == "bad_name")        return "  A name is 1-16 letters, digits or _.";
     return "  That command is not available now. Type help to see the commands.";
 }
+
+namespace {
 
 constexpr std::string_view kRule = "  ==================================================";
 
@@ -526,7 +529,7 @@ void Lobby::fail(Batch& out, FailCode code) {
         end_room(out);
         return;
     }
-    out.push(PrintLine{fail_line(code)});
+    print_fail(out, code);
     if (code != FailCode::kStunDiscoveryFailed) {
         // STUN 실패의 session.failed 는 StunClient 가 이미 냈다 (network/stun_client.hpp).
         std::vector<LogField> fields;
@@ -535,6 +538,12 @@ void Lobby::fail(Batch& out, FailCode code) {
     }
     record_unfinished(out, to_token(code));
     end_attempt(out, "failed");
+}
+
+void Lobby::print_fail(Batch& out, FailCode code, std::string_view peer) {
+    out.push(PrintLine{fail_line(code, peer)});
+    ++fail_count_;
+    last_fail_ = LastFail{code, std::string(peer)};
 }
 
 void Lobby::record_unfinished(Batch& out, std::string_view result) {
@@ -550,7 +559,7 @@ void Lobby::end_room(Batch& out) {
         return;
     }
     room_ended_ = true;
-    out.push(PrintLine{fail_line(FailCode::kControlPlaneExchangeFailed)});
+    print_fail(out, FailCode::kControlPlaneExchangeFailed);
     {
         std::vector<LogField> fields;
         fields.push_back(field("code", to_token(FailCode::kControlPlaneExchangeFailed)));
@@ -940,7 +949,7 @@ void Lobby::close_pair(Batch& out, std::uint32_t peer_id, std::optional<FailCode
     it->second.active = false;
     disarm(out, punch_timer(peer_id));
     if (failure) {
-        out.push(PrintLine{fail_line(*failure, it->second.name)});
+        print_fail(out, *failure, it->second.name);
     }
     if (role_ == LobbyRole::kPlayer) {
         // 플레이어는 실패면 FAIL 뒤, CLOSED 면 그대로 로비로 간다 (concurrency.md 7장 로비).

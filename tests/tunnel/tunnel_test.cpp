@@ -1639,6 +1639,22 @@ TEST_CASE("roster: entering CONNECTED is one change and one send", "[tunnel][ros
     REQUIRE(r.members[1].name_view() == "Alice");
 }
 
+TEST_CASE("roster: current is the roster being sent, and empty when not hosting", "[tunnel][roster]") {
+    TunnelFixture f;
+    REQUIRE_FALSE(f.tunnel.roster().current().has_value());
+    host_with_alice(f);
+    f.connect();
+    f.tunnel.run_timers(f.now);
+    const auto sent = rosters(f);
+    REQUIRE(sent.size() == 1);
+    REQUIRE(f.tunnel.roster().current().has_value());
+    auto expected = decoded(sent[0]);
+    expected.generation = 0;  // current 의 generation 칸은 0 이다
+    REQUIRE(*f.tunnel.roster().current() == expected);
+    f.tunnel.leave_room(f.now);
+    REQUIRE_FALSE(f.tunnel.roster().current().has_value());
+}
+
 TEST_CASE("roster: a change is resent twice 5s apart, then every 15s", "[tunnel][roster]") {
     TunnelFixture f;
     host_with_alice(f);

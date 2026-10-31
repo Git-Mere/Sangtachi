@@ -15,14 +15,16 @@
 
 ## 다음에 할 일
 
-Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다. GUI 는 만들었고 아래는 사람이 확인할 것과 실측이다.
+Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다. 같은 기기에서 사람이 보는 GUI 와 콘솔 확인은
+끝났다. 콘솔 창 닫기로 잰 호스트 종료도 끝났다. 남은 것은 아래다.
 
-1. **소유자가 관리자 권한으로 직접 본다.** 자동 시험이 닿지 않는 경로다
-   - GUI 배포물(`scripts/package-gui.ps1` 의 산출물)을 띄워 `Loading...` 뒤 버튼이 켜지는지. 첫 화면 상태를 루프 전에 넘기는 경로다
-   - 방 만들기, 같은 기기의 콘솔 실행 파일을 `--no-adapter` 로 띄워 플레이어로 참가, 멤버 표와 `(you)`, 방 코드 복사, 방 나가기, 창 닫기의 `Closing...`
-   - 콘솔 실행 파일을 인자 없이 띄워 입력 자리 표시 `> `, 로비 안내, `help`, `name x`, `quit`. 시험 스크립트는 표준 출력을 리다이렉트해 이 경로를 돌지 않는다
-2. Qt 와 VC++ 런타임을 설치하지 않은 PC 에서 GUI 배포물이 뜨는지 본다(`windows-prereq.md` 4절 Qt 런타임의 통과 조건)
-3. 호스트 종료가 3초 안에 드는지 잰다. 콘솔 창 닫기와 GUI 로그오프 둘 다다(`roadmap.md` Phase 8 작업)
+1. **Qt 런타임 통과 조건을 닫는다.** 친구 PC 에서 GUI 배포물이 떴다. 그 PC 에 Qt 와 VC++ 런타임이 없었는지는 확인하지
+   않았다. VC++ 런타임은 설치돼 있었을 가능성이 높다. Windows Sandbox 처럼 둘 다 없는 깨끗한 Windows 에서 띄워 보면 [`windows-prereq.md`](windows-prereq.md) 4절 Qt 런타임의 "검증: 부분 실측" 을 고친다
+2. **GUI 로그오프로 호스트 종료를 잰다.** 플레이어를 다른 기기에 두고 돈다. `required-test.md` 의 같은 이름의 행이다
+3. **콘솔 클라이언트의 로그오프 거동을 조사한다.** 같은 기기 시험에서 GUI 호스트와 함께 띄운 콘솔 플레이어(`--no-adapter`)가
+   로그오프 때 Windows 이벤트 `winsrvext` 100 "delaying system shutdown after 5000 milliseconds" 를 남겼다. 그 로그에는
+   `attempt.end reason=shutdown` 이 없고, 세션은 호스트의 `CLOSE` 로 끝났다. [`concurrency.md`](concurrency.md) 7장 종료의
+   `CTRL_LOGOFF_EVENT` 처리대로 돌았는지 확인되지 않았다. 원인은 아직 모른다
 4. 두 기기 이상의 실측. `required-test.md` 가 갖는다
 
 `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성은 Phase 9 착수 전에 정한다(`roadmap.md` Phase 9).

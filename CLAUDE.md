@@ -54,6 +54,7 @@ docs/eng/    영어 미러
 - 실행 환경/배포 전제: `windows-prereq.md`, `linux-prereq.md`
 - 과거 설계 판단이 필요한 경우: 관련 `decisions/` ADR
 - 직전 변경의 맥락이 필요한 경우: 관련 `commit_history/`
+- 비슷한 증상을 겪은 적이 있는지 볼 경우: 관련 `issue_history/`
 
 현재 진행 상태와 남은 작업의 단일 출처는 `plan.md`다.
 과거 기록을 현재 상태의 출처로 사용하지 않는다.
@@ -92,18 +93,21 @@ docs/eng/    영어 미러
 audit-history/
 commit_history/
 decisions/
+issue_history/
 ```
 
 - `audit-history/`: 당시 감사 결과
 - `commit_history/`: 당시 변경, 결정, 검증, 리뷰 결과
 - `decisions/`: ADR. 선택한 결정과 버린 대안 및 trade-off
+- `issue_history/`: 조사가 필요했던 결함과 환경 문제. 증상, 조사, 원인, 처리, 결과
 
 기록 문서는 과거 사실이므로 현재 사양이 바뀌어도 다시 쓰지 않는다.
 결정을 뒤집으면 기존 ADR을 수정하지 않고 새 ADR을 만든다.
+이슈는 닫히기 전(미해결, 우회)에만 상태와 결과를 갱신한다. 닫힌 이슈가 다시 나오면 새 번호로 쓴다.
 `first_design.md`는 최초 기획 기록이며 수정하지 않는다.
 
 살아 있는 문서는 `audit-history/` 또는 `commit_history/`를 현재 규칙의 출처로 링크하지 않는다.
-`decisions/` 링크는 허용한다. 다만 현재 값과 규칙의 최종 출처는 항상 살아 있는 문서다.
+`decisions/`, `issue_history/` 링크는 허용한다. 다만 현재 값과 규칙의 최종 출처는 항상 살아 있는 문서다.
 
 ## 문서 수정 규칙
 
@@ -149,6 +153,7 @@ docs/{kor,eng}/commit_history/YYYY-MM-DD/NN-주제.md
 - 리뷰 지적을 반영하거나 기각한 이유
 
 설계 결정은 `docs/{kor,eng}/decisions/`의 ADR로 남긴다.
+조사가 필요했던 결함이나 환경 문제는 `docs/{kor,eng}/issue_history/NNNN-제목.md` 로 남긴다. 쓰는 기준과 형식은 그 폴더의 `README.md` 가 갖는다.
 
 ## CLAUDE.md 변경
 

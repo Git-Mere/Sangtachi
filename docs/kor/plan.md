@@ -20,9 +20,10 @@ Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-�
 
 1. **Linux 콘솔 클라이언트의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 구현과 두 방향 검증(`roadmap.md` Phase 8
    작업의 같은 항목)은 끝났다. Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다. 남은 것은 아래다
-   - `mere-galaxy` 의 `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지울지 소유자에게 묻는다. 두 기기 실측에 그 기기를 계속 쓰면 그 뒤에 묻는다
-   - `mere-galaxy` 의 Wi-Fi 절전을 실측 동안 껐다(`iw dev wlo1 set power_save off`). 재부팅하면 켜진다. 켜져 있으면 무선 지연이 평균 96ms 까지
-     오른다. 실측 전에 다시 끄거나 유선을 쓴다
+   - `mere-galaxy` 는 두 기기 실측에 계속 쓴다. 실측이 끝나면 아래 둘을 같이 정리한다(소유자 결정)
+     - `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지운다
+     - Wi-Fi 절전을 되돌린다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 지금은 `iw dev wlo1 set power_save off` 로 꺼 두었다. 재부팅하면 켜지므로 실측 전에 확인한다.
+       켜져 있으면 무선 지연이 평균 96ms 까지 오른다
    - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`)을 깔았다. 두 기기 실측의 Linux 호스트로 쓴다
    - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다
 2. **Qt 런타임 통과 조건을 닫는다.** 친구 PC 에서 GUI 배포물이 떴다. 그 PC 에 Qt 와 VC++ 런타임이 없었는지는 확인하지

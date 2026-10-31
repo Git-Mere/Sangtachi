@@ -25,7 +25,7 @@ ADR 0010 이 정한 규칙 하나를 명령으로 옮긴 것이다.
 
 OS 헤더인지는 아래 `OS_HEADERS` 이름 목록으로만 판정한다. **허용 목록이 아니다.**
 목록에 없는 헤더는 OS 헤더로 단정하지 않고 아무 말도 하지 않는다 (CLAUDE.md 문서 규칙 7:
-모르면 판정 불가가 기본값이다). `<sys/epoll.h>` 나 `<pthread.h>` 를 새로 쓰기 시작하면
+모르면 판정 불가가 기본값이다). `<sys/mman.h>` 나 `<dlfcn.h>` 를 새로 쓰기 시작하면
 이 목록에 손으로 넣어야 한다. **넣기 전까지 게이트는 그것을 잡지 못한다.**
 
 ## 정해 둔 것
@@ -113,6 +113,32 @@ OS_HEADERS = {
     "netioapi.h",
     "objbase.h",
     "shlwapi.h",
+    # POSIX 와 Linux (ADR 0035). ISO C 표준 헤더이기도 한 signal.h, time.h 는 넣지 않는다. 중립 원본이
+    # 써도 이식성이 깨지지 않는다.
+    "unistd.h",
+    "fcntl.h",
+    "poll.h",
+    "pthread.h",
+    "netdb.h",
+    "ifaddrs.h",
+    "arpa/inet.h",
+    "netinet/in.h",
+    "net/if.h",
+    "net/if_arp.h",
+    "sys/socket.h",
+    "sys/ioctl.h",
+    "sys/stat.h",
+    "sys/time.h",
+    "sys/types.h",
+    "sys/random.h",
+    "sys/epoll.h",
+    "sys/eventfd.h",
+    "linux/if.h",
+    "linux/if_addr.h",
+    "linux/if_link.h",
+    "linux/if_tun.h",
+    "linux/netlink.h",
+    "linux/rtnetlink.h",
 }
 
 # 검사 대상 확장자. 소문자로 적고 비교도 소문자로 한다.

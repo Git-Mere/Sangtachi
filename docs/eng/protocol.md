@@ -669,8 +669,15 @@ Logging is handled by `socket.error` of `architecture.md` chapter 9. The counter
 the "keepalive local send error" row of the metric table in chapter 9 of that document.
 
 The option names in this section are the Windows implementation. What has to be honoured is not the
-name but the intent written beside it. What another OS uses to obtain the same intent is not decided by
-this document ([ADR 0010](decisions/0010-platform-porting-seams.md) seam 1).
+name but the intent written beside it ([ADR 0010](decisions/0010-platform-porting-seams.md) seam 1).
+The Linux console client obtains the same intent as below ([ADR 0035](decisions/0035-linux-console-client.md)).
+
+| Windows | Linux |
+|---------|-------|
+| `SO_EXCLUSIVEADDRUSE` | Nothing is turned on. No other socket can bind to the port of a socket that did not turn on `SO_REUSEADDR` or `SO_REUSEPORT` |
+| Turning off `SIO_UDP_CONNRESET` | Nothing to do. A UDP socket that did not call `connect()` does not raise ICMP errors as receive errors unless `IP_RECVERR` is turned on |
+| Applied `SO_RCVBUF` value | The kernel reports twice the requested value. The value read is recorded as is |
+| `WSAEMSGSIZE` (a datagram larger than the receive buffer) | Pass `MSG_TRUNC` to `recvfrom` to get the real length. If it is larger than the buffer, it is handled by the same path |
 
 ---
 

@@ -1281,6 +1281,11 @@ Two Windows machines communicate using virtual IPs only.
   [`architecture.md`](architecture.md) 3.5 Startup Inputs, the relation between the buttons and the rate limit by
   [`control_plane.md`](control_plane.md) 6.4 Rate Limit, and elevation refusal, the timing of leftover cleanup, and the Qt runtime by
   [`windows-prereq.md`](windows-prereq.md) 1, 4, and 14
+- **Linux console client** ([ADR 0035](decisions/0035-linux-console-client.md)). It lets the two-machine verification run with a Windows machine and a Linux
+  machine. The execution prerequisites are owned by [`linux-prereq.md`](linux-prereq.md)
+  - Verification: run a Windows host with a Linux player, and a Linux host with a Windows player, once each. Check joining the room,
+    virtual IP `ping` in both directions, and that the peer receives `CLOSE` when one side ends with a shutdown signal. When Linux is
+    the host, also check the Minecraft connection
 - **Measure the file list and size when building the Qt distribution for the first time.** Write what `windeployqt` gathered in
   `windows-prereq.md` 4 Qt runtime
 - **Measure whether host shutdown fits inside the OS grace period.** Measure whether the up to four
@@ -1463,7 +1468,6 @@ Start only if Phases 1-9 finish with time to spare. Do not proceed at the expens
 | Automatic reconnection | |
 | Virtual network with 6 or more parties | One room caps at 5 ([ADR 0006](decisions/0006-star-topology-no-relay.md)). Above that, the router structure has to be extended |
 | UDP-based game validation | Further proof that the tunnel is game-agnostic |
-| Linux interoperability | The places that get rewritten are the five seams ([ADR 0010](decisions/0010-platform-porting-seams.md)) |
 
 ---
 

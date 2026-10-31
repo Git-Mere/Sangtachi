@@ -1,7 +1,7 @@
 #pragma once
 
 // 인터페이스 열거와 기본 경로 조회 (protocol.md 10.1 후보 수집과 위생).
-// 구현은 client/src/platform/win32/ 에 있다 (ADR 0010).
+// 구현은 client/src/platform/win32/ 와 client/src/platform/linux/ 에 있다 (ADR 0010, ADR 0035).
 //
 // **OS 가 준 값을 옮겨 담기만 한다.** 판정(활성, 제외, 자기 서브넷 집합, 기본 경로, 등록 목록)은
 // 하나도 하지 않는다. 판정은 peer/candidates.hpp 의 순수 함수가 하고, 시험은 이 함수 대신 같은 모양의
@@ -16,11 +16,13 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace sangtachi::platform {
 
-// 인터페이스 식별자 16바이트. Windows 의 GUID 를 메모리 배치 그대로 담는다. 비교에만 쓴다.
+// 인터페이스 식별자 16바이트. 비교에만 쓴다. Windows 는 GUID 를 메모리 배치 그대로 담고, Linux 는 인터페이스
+// 이름을 0 으로 채워 담는다(IFNAMSIZ 가 16 이다).
 using InterfaceGuid = std::array<std::uint8_t, 16>;
 
 // 인터페이스의 운영 상태. 값은 IF_OPER_STATUS 의 순서와 같다(1부터). 10.1 이 보는 것은 kUp 하나다.
@@ -90,5 +92,9 @@ struct RouteQuery {
 //
 // 0.0.0.0/0 이 아닌 줄은 담지 않는다. 그 줄마다 인터페이스 메트릭을 묻는 비용을 치를 이유가 없다.
 [[nodiscard]] RouteQuery query_ipv4_default_routes();
+
+// 로그에 싣는 식별자 표기 (`adapter.open guid=`). Windows 는 `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, Linux 는
+// 인터페이스 이름이다.
+[[nodiscard]] std::string interface_id_text(const InterfaceGuid& id);
 
 }  // namespace sangtachi::platform

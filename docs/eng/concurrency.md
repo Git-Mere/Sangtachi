@@ -142,6 +142,19 @@ this chapter is not a place to fix but a place to rewrite
 ([ADR 0010](decisions/0010-platform-porting-seams.md) seam 2). The order and the budget of One Loop
 Iteration below hold in that place too.
 
+**Waiting in the Linux console client** ([ADR 0035](decisions/0035-linux-console-client.md)). The ranks, the dense array, and `next_timeout`
+above stay the same. Only the primitives differ.
+
+| Windows | Linux |
+|---------|-------|
+| `WaitForMultipleObjects` | `poll`. If several are ready, it returns the one with the lowest index |
+| Event (`CreateEvent`) | A pair of non-blocking pipes. Signalling writes 1 byte to the write end. If the pipe is full and the write fails, the event is taken as already signalled |
+| Auto reset | The pipe is drained when the wait returns that event. Several signals in between are merged into one |
+| Manual reset | Not drained. It stays signalled |
+| UDP socket event | Wait on the socket itself. It is ready while there is something left to read |
+| Wintun read event | Wait on the file descriptor of the TUN device |
+| Empty array, more than 64, invalid handle | Fails without waiting. If even one descriptor is invalid (`POLLNVAL`), the whole wait fails |
+
 ---
 
 ## 3. One Loop Iteration
@@ -411,6 +424,9 @@ list.
   effectively no wraparound (about 580 million years). Only RTT measurement uses
   `QueryPerformanceCounter`, and **values from the two clocks are never compared with each
   other.**
+- Linux uses `CLOCK_BOOTTIME` for the millisecond clock and `CLOCK_MONOTONIC` for the RTT clock. The
+  millisecond clock is not `CLOCK_MONOTONIC` so that, like `GetTickCount64()`, time spent in sleep also
+  passes. The idle timeout does not stall across a sleep
 - The timer set is small. The table in [`protocol.md`](protocol.md) chapter 11 Timers has no more
   than twenty kinds, and the cap on the number of sessions one process holds is a single digit
   (`protocol.md` 8.5 Transmit-Side Validation). That holds even with the sessions kept in a terminal state
@@ -570,6 +586,20 @@ keeps the join bound is not this value but the `_exit` below. The reason for 1.5
 | `CTRL_C_EVENT`, `CTRL_BREAK_EVENT` | signal the event and return `TRUE` immediately |
 | `CTRL_CLOSE_EVENT`, `CTRL_LOGOFF_EVENT`, `CTRL_SHUTDOWN_EVENT` | signal the shutdown event, then wait for the cleanup-complete event up to inside the OS grace period (3 seconds) before returning |
 
+**The Linux console client receives signals** ([ADR 0035](decisions/0035-linux-console-client.md)). The four signals below are blocked on every
+thread, and a dedicated thread receives them with `sigwaitinfo` and handles them as the row of the table
+above. Nothing waits inside a signal handler. If the thread the signal is delivered to is `[loop]`,
+cleanup stalls. `SIGPIPE` is ignored.
+
+| Signal | Row of the table above |
+|------|------------|
+| `SIGINT` | `CTRL_C_EVENT` |
+| `SIGQUIT` | `CTRL_BREAK_EVENT` |
+| `SIGHUP` (terminal closed) | `CTRL_CLOSE_EVENT` |
+| `SIGTERM` | `CTRL_SHUTDOWN_EVENT` |
+
+On Linux the process does not end when the handler returns. The 3-second wait remains but does no harm. There is no separate signal that corresponds to logoff.
+
 **A control signal not in the table is not handled.** The handler returns `FALSE` and passes it to the
 next handler. Hanging shutdown on a signal whose meaning is unknown is worse.
 
@@ -619,6 +649,9 @@ so before that (8) is `[telemetry]` only.
   until the user types one more line. Signal the shutdown event, leave it, and let process exit
   take care of it. `[console]` owns only the command queue and has no external resources to
   clean up, so nothing is lost.
+  **On Linux, standard input is read with `read`, not through stdio.** A blocked stdio read keeps
+  holding the stdin lock, and process exit (`exit`) waits for that lock, so it does not finish until
+  the next input arrives.
 - Cleanup of the adapter, virtual IP address, and route, and handling of leftovers after
   abnormal exit, are in [`windows-prereq.md`](windows-prereq.md) section 3.
 

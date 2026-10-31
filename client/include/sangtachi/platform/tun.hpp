@@ -1,11 +1,11 @@
 #pragma once
 
-// Wintun 어댑터와 그 주변의 OS 호출 (architecture.md 7장 어댑터 수명).
-// 구현은 client/src/platform/win32/tun.cpp 다 (ADR 0010 이음새 3).
+// 가상 어댑터와 그 주변의 OS 호출 (architecture.md 7장 어댑터 수명).
+// 구현은 client/src/platform/win32/tun.cpp(Wintun) 와 client/src/platform/linux/tun.cpp(TUN) 다 (ADR 0010 이음새 3).
 //
 // **[loop] 가 부른다** (concurrency.md 5장 상태 소유). 기동 단계는 [loop] 를 시작하기 전에 main 이
-// 부른다. 판정을 하나도 하지 않는다. 서브넷 충돌과 방화벽 규칙의 판정은 스크립트가 하고 여기서는 그
-// 종료 코드를 옮긴다 (windows-prereq.md 7절, 2절).
+// 부른다. Windows 는 판정을 하나도 하지 않는다. 서브넷 충돌과 방화벽 규칙의 판정은 스크립트가 하고 여기서는 그
+// 종료 코드를 옮긴다 (windows-prereq.md 7절, 2절). Linux 의 서브넷 판정은 platform/linux/subnet_check.hpp 다.
 
 #include "sangtachi/adapter.hpp"
 #include "sangtachi/platform/interfaces.hpp"
@@ -29,11 +29,11 @@ struct OsFailure {
 // 관리자 권한으로 돌고 있는가 (windows-prereq.md 1절). 조회가 실패하면 거짓이다.
 [[nodiscard]] bool is_elevated() noexcept;
 
-// 어댑터 기동 단계가 실행 파일 옆에서 찾는 파일 셋 (architecture.md 7장 어댑터 수명). 이 순서로 확인한다.
-inline constexpr std::string_view kAdapterFiles[] = {"wintun.dll", "Test-SubnetOverlap.ps1",
-                                                     "Initialize-FirewallRules.ps1"};
+// 어댑터 기동 단계가 실행 파일 옆에서 찾는 파일 (architecture.md 7장 어댑터 수명). 이 순서로 확인한다.
+// Windows 는 wintun.dll 과 스크립트 둘이고 Linux 는 없다.
+[[nodiscard]] std::span<const std::string_view> adapter_files() noexcept;
 
-// kAdapterFiles 가운데 실행 파일 옆에 일반 파일로 없는 것. 실행 파일 경로를 얻지 못하면 셋 다다.
+// adapter_files() 가운데 실행 파일 옆에 일반 파일로 없는 것. 실행 파일 경로를 얻지 못하면 전부다.
 [[nodiscard]] std::vector<std::string_view> missing_adapter_files();
 
 // 서브넷 충돌 검사의 결과 (windows-prereq.md 7절). 스크립트의 종료 코드 0, 1, 2 와 같다.
@@ -51,7 +51,7 @@ struct SubnetCheck {
 };
 
 // 실행 파일 옆의 Test-SubnetOverlap.ps1 을 Windows PowerShell 로 돌린다. 30초 안에 끝나지 않으면
-// 프로세스를 끝내고 kUnknown 이다.
+// 프로세스를 끝내고 kUnknown 이다. Linux 는 같은 판정표를 netlink 자료에 직접 적용한다 (linux-prereq.md 4절).
 [[nodiscard]] SubnetCheck run_subnet_check(std::string_view target);
 
 // 방화벽 규칙의 검증과 만들기 결과 (windows-prereq.md 2절 클라이언트가 만드는 규칙). 스크립트의 종료 코드
@@ -60,6 +60,7 @@ enum class FirewallVerdict {
     kPass,     // 0
     kFail,     // 1. 검사가 어긋났거나 만들지 못했다
     kUnknown,  // 2, 그 밖의 코드, 또는 스크립트를 돌리지 못했다
+    kSkipped,  // 검사하지 않았다. Linux 는 방화벽을 만지지 않는다 (linux-prereq.md 5절)
 };
 
 struct FirewallCheck {
@@ -72,7 +73,7 @@ struct FirewallCheck {
 };
 
 // 실행 파일 옆의 Initialize-FirewallRules.ps1 을 Windows PowerShell 로 돌린다. 어댑터가 선 뒤에 부른다.
-// 60초 안에 끝나지 않으면 프로세스를 끝내고 kUnknown 이다.
+// 60초 안에 끝나지 않으면 프로세스를 끝내고 kUnknown 이다. Linux 는 늘 kSkipped 다.
 [[nodiscard]] FirewallCheck run_firewall_check();
 
 // 주소 하나를 붙인 결과.
@@ -117,7 +118,8 @@ public:
     // 부른다. 두 번 불러도 된다. 주소나 경로를 지우지 못했으면 그 실패를 돌려준다. 어댑터는 그래도 닫는다.
     [[nodiscard]] OsFailure close() noexcept;
 
-    // 이 어댑터의 실제 GUID 와 LUID. GUID 는 adapter::kGuid 를 요청해서 받은 값이다.
+    // 이 어댑터의 실제 GUID 와 LUID. GUID 는 adapter::kGuid 를 요청해서 받은 값이다. Linux 는 GUID 자리에
+    // 장치 이름(interfaces.hpp), LUID 자리에 인터페이스 번호를 담는다.
     [[nodiscard]] const InterfaceGuid& guid() const noexcept { return guid_; }
     [[nodiscard]] std::uint64_t luid() const noexcept { return luid_; }
 

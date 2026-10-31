@@ -112,6 +112,8 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `platform/record_file` | Creates the `records` folder and the record file under the executable folder, and writes one line with one write call. UTC wall clock and PID (chapter 9 Local Record File) | Win32 |
 | `control/control_client` | Control plane HTTP/JSON calls and DNS resolution. Owned by the `[control]` thread (`concurrency.md` chapter 8 The `[control]` Thread). Operations and encoding are in [`control_plane.md`](control_plane.md) | Winsock2 |
 
+**The external dependency column is for the Windows implementation.** The Linux console client differs only in the sources under `platform/`, and their dependencies are POSIX and Linux kernel APIs. The placement is in chapter 10 Target Structure, and the decision is in [ADR 0035](decisions/0035-linux-console-client.md).
+
 The client is a single process. Thread composition and state ownership are in `concurrency.md`.
 
 The names in the table above are **where the public header sits**, and that name points at the
@@ -795,6 +797,18 @@ The exit code and `ERROR` line of a startup failure are the same as "Argument er
 
 `windows-prereq.md` 7 says to run the section 3 cleanup before the subnet check. What that cleanup targets is an address and route left on our live adapter. Our adapter was seen not to remain after the process ends (same document, 3), so our adapter does not exist at the subnet check. An address stored against the same GUID may remain, but without the adapter there is no route for it either. That is why that address is deleted right after the adapter is created.
 
+**Adapter lifetime of the Linux console client.** The order of the table above is the same; what each step uses differs. The values and procedure of each step are in [`linux-prereq.md`](linux-prereq.md).
+
+| Step of the table above | Linux |
+|-------------------------|-------|
+| Check the files next to the executable | There are no files to check |
+| Administrator rights | Check that `CAP_NET_ADMIN` is held (`linux-prereq.md` 2) |
+| Subnet conflict check | The client decides by itself (same document, 4) |
+| `wintun.dll` hash check | None |
+| Create the adapter | Open the TUN device, set its MTU and bring it up (same document, 3) |
+| Firewall rule verification | Not done (same document, 5) |
+| Attaching and deleting the address, shutdown | The same. The kernel creates the on-link route when the device is up. The client creates it only when it is missing |
+
 **Players do not talk to each other over the virtual IP either** ([`spec.md`](spec.md) FR-4).
 The route setup above sends all of `10.100.0.0/24` to the virtual adapter, so a packet a player
 sends to another player's address still enters the adapter. What drops that packet is not the
@@ -954,7 +968,9 @@ e.g. C:\Sangtachi\records\20261007T123456Z-4812.log
 - The executable folder is the path of the running executable as returned by the OS
   (`GetModuleFileNameW`) with its last component removed. Links are not resolved and the path is
   not normalized; it is used as received. The current working folder is not used
-- The path is handled with wide-character APIs. A path containing Korean is used as is. If the
+- Linux reads `/proc/self/exe`. The kernel gives a path with links already resolved, so when started
+  through a symbolic link it is the folder of the executable the link points to. The path separator is `/`
+- Windows handles the path with wide-character APIs. Linux uses the bytes it receives as is. A path containing Korean is used as is. If the
   full path cannot be obtained (including truncation because the buffer is too small), it is the
   same as the open failure below
 - If the `records` folder does not exist, it is created
@@ -1176,7 +1192,7 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (remote candidates as `ip:port` joined by commas) | `spec.md` M-3, Phase 3 `get_peers` verification |
 | `timer.tick` | `name`, `elapsed_ms` (milliseconds actually elapsed since the previous expiry) | Phase 1 drain budget, Phase 3 `[loop]` survival while the control plane is dead |
 | `record.open` | `file` (the name of the local record file, without the folder) | Phase 4 record check, `spec.md` M-6 |
-| `adapter.firewall` | `verdict` (`pass`), `created` (names of the rules created this time joined with commas, `-` if none) | Phase 7 creation and reuse of the firewall rules ([`windows-prereq.md`](windows-prereq.md) 2) |
+| `adapter.firewall` | `verdict` (`pass`. On Linux it is `skipped` and `created` below is absent), `created` (names of the rules created this time joined with commas, `-` if none) | Phase 7 creation and reuse of the firewall rules ([`windows-prereq.md`](windows-prereq.md) 2) |
 | `adapter.error` | `reason`. With `reason=missing_file`: `file` (missing file names joined with commas). With `reason=firewall`: `verdict` (`fail` or `unknown`), `exit_code`, `failed` (`<rule name or policy>:<check>` joined with commas), `unknown` (undecidable items of the same shape), `op`, `code` | Phase 7 startup failure of firewall rule verification (same section) |
 | `data.tx` | `to` (destination virtual IP), `len`, `sha256` (the inner packet just before encapsulation). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
 | `data.rx` | `from` (peer virtual IP), `len`, `sha256` (the byte string the payload hook received). **Test build only** | Phase 4-5 `DATA` round-trip match (M-5) |
@@ -1286,6 +1302,8 @@ Sangtachi/
 |   |   +-- record.cpp   local record file lines and writes (chapter 9)
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
 |   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, session_end, hash, random, resolve, interfaces, record_file, tun
+|   |   |   +-- posix/   What Linux and macOS can share. wait, udp_socket, tcp, wsa (empty implementation), console_ctrl, session_end, hash, random, resolve, stdout, record_file
+|   |   |   +-- linux/   clock, exe_path, interfaces, tun (ADR 0035)
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
@@ -1336,6 +1354,7 @@ The two language trees hold the same files. When editing a document, modify both
 | Windows IP Helper / NetIO API | IP address and route configuration of the virtual adapter. **Wintun does not provide this.** Interface enumeration and default route lookup for local candidates (`platform/interfaces`) | OS built-in |
 | Winsock2 | Windows standard socket API | OS built-in |
 | Windows CNG (`BCryptHash`) | The `wintun.dll` hash check and the SHA-256 of chapter 9 `data.tx` and `data.rx` | OS built-in |
+| POSIX, Linux TUN (`/dev/net/tun`), rtnetlink | Sockets, waits, the virtual adapter, address and route setup, and interface and route lookup of the Linux console client. SHA-256 is implemented directly ([ADR 0035](decisions/0035-linux-console-client.md)) | OS built-in |
 | Public STUN servers | Binding Response. The server is not implemented, only used | External public service |
 | Python standard library | `asyncio`, `json` | Standard library |
 | AWS SDK for Python (`boto3`) | DynamoDB access for the control server and the telemetry service | **Approved** |
@@ -1362,6 +1381,6 @@ The following are deliberately left out of the initial architecture. When they b
 - **6 or more members and a player-to-player mesh**: a room holds at most 5 members and tunnels
   are established only between the host and each player ([`spec.md`](spec.md) FR-4). 6 or more
   is a stretch goal.
-- **macOS / mobile**: not supported. Linux only gets an interoperability review if time remains.
-  The scope is not widened, but **the places rewritten when porting are fixed as five seams**
+- **macOS / mobile**: not supported. Linux supports the console client only ([ADR 0035](decisions/0035-linux-console-client.md)).
+  **The places rewritten when porting are fixed as five seams**
   ([ADR 0010](decisions/0010-platform-porting-seams.md)).

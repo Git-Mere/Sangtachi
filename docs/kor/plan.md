@@ -18,14 +18,21 @@
 Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다. 같은 기기에서 사람이 보는 GUI 와 콘솔 확인은
 끝났다. 콘솔 창 닫기로 잰 호스트 종료도 끝났다. 남은 것은 아래다.
 
-1. **Qt 런타임 통과 조건을 닫는다.** 친구 PC 에서 GUI 배포물이 떴다. 그 PC 에 Qt 와 VC++ 런타임이 없었는지는 확인하지
+1. **Linux 콘솔 클라이언트의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 구현과 두 방향 검증(`roadmap.md` Phase 8
+   작업의 같은 항목)은 끝났다. Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다. 남은 것은 아래다
+   - `mere-galaxy` 의 `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지울지 소유자에게 묻는다. 두 기기 실측에 그 기기를 계속 쓰면 그 뒤에 묻는다
+   - `mere-galaxy` 의 Wi-Fi 절전을 실측 동안 껐다(`iw dev wlo1 set power_save off`). 재부팅하면 켜진다. 켜져 있으면 무선 지연이 평균 96ms 까지
+     오른다. 실측 전에 다시 끄거나 유선을 쓴다
+   - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`)을 깔았다. 두 기기 실측의 Linux 호스트로 쓴다
+   - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다
+2. **Qt 런타임 통과 조건을 닫는다.** 친구 PC 에서 GUI 배포물이 떴다. 그 PC 에 Qt 와 VC++ 런타임이 없었는지는 확인하지
    않았다. VC++ 런타임은 설치돼 있었을 가능성이 높다. Windows Sandbox 처럼 둘 다 없는 깨끗한 Windows 에서 띄워 보면 [`windows-prereq.md`](windows-prereq.md) 4절 Qt 런타임의 "검증: 부분 실측" 을 고친다
-2. **GUI 로그오프로 호스트 종료를 잰다.** 플레이어를 다른 기기에 두고 돈다. `required-test.md` 의 같은 이름의 행이다
-3. **콘솔 클라이언트의 로그오프 거동을 조사한다.** 같은 기기 시험에서 GUI 호스트와 함께 띄운 콘솔 플레이어(`--no-adapter`)가
+3. **GUI 로그오프로 호스트 종료를 잰다.** 플레이어를 다른 기기에 두고 돈다. `required-test.md` 의 같은 이름의 행이다
+4. **콘솔 클라이언트의 로그오프 거동을 조사한다.** 같은 기기 시험에서 GUI 호스트와 함께 띄운 콘솔 플레이어(`--no-adapter`)가
    로그오프 때 Windows 이벤트 `winsrvext` 100 "delaying system shutdown after 5000 milliseconds" 를 남겼다. 그 로그에는
    `attempt.end reason=shutdown` 이 없고, 세션은 호스트의 `CLOSE` 로 끝났다. [`concurrency.md`](concurrency.md) 7장 종료의
    `CTRL_LOGOFF_EVENT` 처리대로 돌았는지 확인되지 않았다. 원인은 아직 모른다
-4. 두 기기 이상의 실측. `required-test.md` 가 갖는다
+5. 두 기기 이상의 실측. `required-test.md` 가 갖는다
 
 `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성은 Phase 9 착수 전에 정한다(`roadmap.md` Phase 9).
 

@@ -21,7 +21,7 @@
 | 11 | `client/src/Platform/x.cpp` (경로 대소문자) | 위반. 허용 자리가 아니다 |
 | 12 | `#include <Windows.h>` (헤더 이름 대소문자) | 센다 |
 | 13 | 빈 파일 | 결함 아님 |
-| 14 | 목록에 없는 헤더 (`<pthread.h>`, `<sys/epoll.h>`) | 판정하지 않는다 |
+| 14 | 목록에 없는 헤더 (`<dlfcn.h>`, `<sys/mman.h>`) | 판정하지 않는다 |
 | 15 | 경로가 붙은 `<winrt/windows.h>` | 판정하지 않는다 |
 | 16 | `#include "windows.h"` (따옴표) | 센다 |
 | 17 | `#   include\t<windows.h>` (공백 변형) | 센다 |
@@ -287,7 +287,7 @@ class TestHeaderNames(unittest.TestCase):
 
     def test_unlisted_header_is_not_judged(self) -> None:
         # 케이스 14. 모르는 헤더를 OS 헤더로 단정하지 않는다.
-        for name in ("pthread.h", "sys/epoll.h", "string", "sangtachi/hash.hpp", "unistd.h"):
+        for name in ("dlfcn.h", "sys/mman.h", "string", "sangtachi/hash.hpp", "termios.h"):
             self.assertFalse(platformgate.is_os_header(name), name)
 
     def test_prefixed_path_is_not_judged(self) -> None:
@@ -390,10 +390,24 @@ class TestPlacement(GateCase):
                          ["client/include/sangtachi/hash.hpp:1:bcrypt.h",
                           "client/src/hash.cpp:1:windows.h"])
 
+    def test_posix_headers_are_judged_like_windows_headers(self) -> None:
+        # ADR 0035: POSIX 와 Linux 헤더도 platform/ 밖에서는 위반이고, 경로형 이름도 그대로 맞춘다.
+        self.build()
+        write(self.root, "client/src/platform/posix/wait.cpp", "#include <poll.h>\n#include <unistd.h>\n")
+        write(self.root, "client/src/platform/linux/tun.cpp", "#include <linux/if_tun.h>\n")
+        self.assertTrue(self.run_gate().ok, self.run_gate().text())
+        write(self.root, "client/src/loop.cpp", "#include <sys/socket.h>\n")
+        write(self.root, "client/include/sangtachi/loop.hpp", "#include <pthread.h>\n")
+        report = self.run_gate()
+        self.assertFalse(report.ok)
+        self.assertEqual(self.headers(report),
+                         ["client/include/sangtachi/loop.hpp:1:pthread.h",
+                          "client/src/loop.cpp:1:sys/socket.h"])
+
     def test_unlisted_header_outside_platform_passes(self) -> None:
         # 케이스 14. 판정하지 않는다는 것은 통과한다는 뜻이다. README 에 적어 둔다.
         self.build()
-        write(self.root, "client/src/hash.cpp", "#include <pthread.h>\n#include <sys/epoll.h>\n")
+        write(self.root, "client/src/hash.cpp", "#include <dlfcn.h>\n#include <sys/mman.h>\n")
         self.assertTrue(self.run_gate().ok)
 
     def test_other_suffixes_are_not_checked(self) -> None:

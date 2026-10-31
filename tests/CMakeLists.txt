@@ -13,52 +13,70 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-add_executable(sangtachi_tests
-    adapter_loop_test.cpp
-    args_test.cpp
-    crt_report_guard.cpp
-    console_test.cpp
-    counters_test.cpp
-    hash_test.cpp
-    log_test.cpp
-    loop_test.cpp
-    record_test.cpp
-    timer_test.cpp
-    spsc_ring_test.cpp
-    control/channel_test.cpp
-    control/exchange_test.cpp
-    control/http_test.cpp
-    control/json_test.cpp
-    control/lobby_test.cpp
-    control/ops_test.cpp
-    control/runner_test.cpp
-    network/endpoint_test.cpp
-    network/stun_test.cpp
-    network/stun_client_test.cpp
-    network/udp_socket_test.cpp
-    network/wsa_test.cpp
-    peer/candidates_test.cpp
-    peer/epoch_test.cpp
-    peer/session_test.cpp
-    platform/console_ctrl_test.cpp
-    platform/interfaces_test.cpp
-    platform/random_test.cpp
-    platform/record_file_test.cpp
-    platform/resolve_test.cpp
-    platform/session_end_test.cpp
-    platform/stdout_test.cpp
-    platform/tcp_test.cpp
-    platform/wait_test.cpp
-    tunnel/packet_test.cpp
-    tunnel/replay_test.cpp
-    tunnel/data_sender_test.cpp
-    tunnel/tunnel_test.cpp
-    ui/gui_ui_test.cpp
-    ui/view_test.cpp
-    testbuild/instrument_test.cpp
-    # 시험 빌드 장치는 core 에 없다. 단위 시험을 위해 여기서 컴파일한다 (ADR 0023)
-    ${PROJECT_SOURCE_DIR}/client/src/testbuild/instrument.cpp
-)
+# Windows 는 시험 전부를 돈다. Linux 는 새로 쓴 플랫폼 원본의 시험과 이식 없이 컴파일되는 플랫폼 시험만
+# 돈다. 공용 코드의 시험은 Windows 에서 통과한 것으로 본다 (ADR 0035 결정 9).
+if(WIN32)
+    add_executable(sangtachi_tests
+        adapter_loop_test.cpp
+        args_test.cpp
+        crt_report_guard.cpp
+        console_test.cpp
+        counters_test.cpp
+        hash_test.cpp
+        log_test.cpp
+        loop_test.cpp
+        record_test.cpp
+        timer_test.cpp
+        spsc_ring_test.cpp
+        control/channel_test.cpp
+        control/exchange_test.cpp
+        control/http_test.cpp
+        control/json_test.cpp
+        control/lobby_test.cpp
+        control/ops_test.cpp
+        control/runner_test.cpp
+        network/endpoint_test.cpp
+        network/stun_test.cpp
+        network/stun_client_test.cpp
+        network/udp_socket_test.cpp
+        network/wsa_test.cpp
+        peer/candidates_test.cpp
+        peer/epoch_test.cpp
+        peer/session_test.cpp
+        platform/console_ctrl_test.cpp
+        platform/interfaces_test.cpp
+        platform/random_test.cpp
+        platform/record_file_test.cpp
+        platform/resolve_test.cpp
+        platform/session_end_test.cpp
+        platform/stdout_test.cpp
+        platform/tcp_test.cpp
+        platform/wait_test.cpp
+        tunnel/packet_test.cpp
+        tunnel/replay_test.cpp
+        tunnel/data_sender_test.cpp
+        tunnel/tunnel_test.cpp
+        ui/gui_ui_test.cpp
+        ui/view_test.cpp
+        testbuild/instrument_test.cpp
+        # 시험 빌드 장치는 core 에 없다. 단위 시험을 위해 여기서 컴파일한다 (ADR 0023)
+        ${PROJECT_SOURCE_DIR}/client/src/testbuild/instrument.cpp
+    )
+else()
+    add_executable(sangtachi_tests
+        hash_test.cpp
+        network/posix_udp_socket_test.cpp
+        platform/interfaces_test.cpp
+        platform/linux_subnet_check_test.cpp
+        platform/linux_tun_test.cpp
+        platform/posix_console_ctrl_test.cpp
+        platform/posix_record_file_test.cpp
+        platform/posix_wait_test.cpp
+        platform/random_test.cpp
+        platform/resolve_test.cpp
+        platform/wait_test.cpp
+    )
+endif()
 
 target_link_libraries(sangtachi_tests
     PRIVATE sangtachi_core

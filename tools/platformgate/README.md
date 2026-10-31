@@ -37,10 +37,14 @@ VERDICT: pass
 ## OS 헤더 목록은 허용 목록이 아니다
 
 **목록에 없는 헤더는 판정하지 않는다.** OS 헤더로 단정하지도, 아니라고 단정하지도 않고
-아무 말도 하지 않는다. 즉 **통과한다.** 지금 목록은 14개다.
+아무 말도 하지 않는다. 즉 **통과한다.** 지금 목록은 38개다.
 
-`windows.h`, `winsock2.h`, `ws2tcpip.h`, `ws2spi.h`, `mswsock.h`, `mstcpip.h`, `iphlpapi.h`,
+Windows: `windows.h`, `winsock2.h`, `ws2tcpip.h`, `ws2spi.h`, `mswsock.h`, `mstcpip.h`, `iphlpapi.h`,
 `bcrypt.h`, `ncrypt.h`, `wincrypt.h`, `wintun.h`, `netioapi.h`, `objbase.h`, `shlwapi.h`
+
+POSIX 와 Linux (ADR 0035): `unistd.h`, `fcntl.h`, `poll.h`, `pthread.h`, `netdb.h`, `ifaddrs.h`, `arpa/inet.h`, `netinet/in.h`, `net/if.h`, `net/if_arp.h`, `sys/socket.h`, `sys/ioctl.h`, `sys/stat.h`, `sys/time.h`, `sys/types.h`, `sys/random.h`, `sys/epoll.h`, `sys/eventfd.h`, `linux/if.h`, `linux/if_addr.h`, `linux/if_link.h`, `linux/if_tun.h`, `linux/netlink.h`, `linux/rtnetlink.h`
+
+ISO C 표준 헤더이기도 한 `signal.h`, `time.h` 는 넣지 않는다. 중립 원본이 써도 이식성이 깨지지 않는다.
 
 새 OS 헤더를 쓰기 시작하면 `platformgate.py` 의 `OS_HEADERS` 에 손으로 넣는다. 넣기 전까지
 게이트는 그것을 잡지 못한다. 목록을 늘릴 때 시험도 같이 늘린다.

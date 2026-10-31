@@ -2,13 +2,13 @@
 
 #include "sangtachi/log.hpp"
 #include "sangtachi/network/stun.hpp"
+#include "sangtachi/platform/console_ctrl.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/protocol_constants.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <iostream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -483,7 +483,7 @@ void run_console_reader(std::shared_ptr<ConsoleSession> session) {
         return;
     }
     std::string line;
-    while (!session->stopped() && std::getline(std::cin, line)) {
+    while (!session->stopped() && platform::read_stdin_line(line)) {
         session->queue().try_push(std::move(line));
         platform::signal_event(session->event());
     }

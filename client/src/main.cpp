@@ -55,7 +55,7 @@ public:
             return;
         }
         std::string guide = "  Keep these files in the same folder as sangtachi_client.exe:";
-        for (const auto name : sangtachi::platform::kAdapterFiles) {
+        for (const auto name : sangtachi::platform::adapter_files()) {
             guide += " ";
             guide += name;
         }

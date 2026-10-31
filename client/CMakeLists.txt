@@ -7,15 +7,15 @@
 # main() 을 라이브러리에 넣지 않는 이유는 Catch2 가 자기 main() 을 제공하기 때문이다.
 # 두 개가 같이 링크되면 시험 실행 파일이 만들어지지 않는다.
 
-# 대상은 Windows 하나다 (spec.md C-1, C-2). 다른 곳에서는 설정 단계에서 멈춘다.
+# 대상은 Windows 와 Linux 콘솔이다 (spec.md C-1, C-2, ADR 0035). 다른 곳에서는 설정 단계에서 멈춘다.
 #
-# OS 헤더를 포함하는 원본은 전부 src/platform/win32/ 아래에 있고 다른 플랫폼의 짝은
-# 없다. 그대로 설정하면 원본 목록과 링크 목록이 없는 API 를 가리킨 채 빌드가 진행된다.
-if(NOT WIN32)
+# OS 헤더를 포함하는 원본은 src/platform/ 아래에 OS 마다 있다. 짝이 없는 OS 를 그대로 설정하면
+# 원본 목록과 링크 목록이 없는 API 를 가리킨 채 빌드가 진행된다.
+if(NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR
-        "Sangtachi client targets Windows 10/11 x64 only (spec.md C-1, C-2). "
-        "Platform sources live under client/src/platform/win32/ and no other port exists. "
-        "See docs/kor/decisions/0010-플랫폼-이식-이음새.md")
+        "Sangtachi client targets Windows 10/11 x64 and the Linux console only (spec.md C-1, C-2). "
+        "Platform sources live under client/src/platform/{win32,posix,linux}/. "
+        "See docs/kor/decisions/0035-linux-콘솔-클라이언트.md")
 endif()
 
 add_library(sangtachi_core STATIC)
@@ -28,28 +28,35 @@ target_link_libraries(sangtachi_core
     PRIVATE sangtachi_warnings
 )
 
-# OS 라이브러리는 플랫폼 조건 아래 둔다. 위 FATAL_ERROR 가 이미 막지만, 링크 목록이
-# 어느 플랫폼의 것인지를 파일에 드러내는 것이 이 조건의 일이다.
+# OS 라이브러리는 플랫폼 조건 아래 둔다. 링크 목록이 어느 플랫폼의 것인지를 파일에 드러내는 것이
+# 이 조건의 일이다.
 if(WIN32)
     target_link_libraries(sangtachi_core
         PUBLIC ws2_32   # Winsock2 (src/platform/win32/wsa.cpp, udp_socket.cpp)
         PUBLIC bcrypt   # CNG SHA-256 (src/platform/win32/hash.cpp)
         PUBLIC iphlpapi # IP Helper 인터페이스 열거와 경로 조회 (src/platform/win32/interfaces.cpp)
     )
+else()
+    # std::thread 와 신호 스레드(src/platform/posix/console_ctrl.cpp)가 pthread 를 쓴다.
+    find_package(Threads REQUIRED)
+    target_link_libraries(sangtachi_core PUBLIC Threads::Threads)
 endif()
 
-# Wintun 배포물 (windows-prereq.md 4절). 설정할 때 받아서 판정한다. 판정을 지나지 못하면 설정이 멈춘다.
-include(Wintun)
-sangtachi_fetch_wintun()
+# Wintun 은 Windows 의 어댑터다. Linux 는 커널의 TUN 을 쓰므로 받을 것이 없다 (ADR 0035).
+if(WIN32)
+    # Wintun 배포물 (windows-prereq.md 4절). 설정할 때 받아서 판정한다. 판정을 지나지 못하면 설정이 멈춘다.
+    include(Wintun)
+    sangtachi_fetch_wintun()
 
-# 실행 시 확인의 기대값. 값의 출처는 cmake/Wintun.cmake 하나이고 여기서 헤더로 옮긴다.
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/sangtachi/wintun_expected.hpp"
-     CONTENT "#pragma once\n\n// cmake/Wintun.cmake 에서 만든다. 고치지 않는다.\n\n#include <string_view>\n\nnamespace sangtachi::platform {\ninline constexpr std::string_view kWintunDllSha256 = \"@SANGTACHI_WINTUN_DLL_SHA256@\";\n}  // namespace sangtachi::platform\n"
-     @ONLY)
-target_include_directories(sangtachi_core PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/generated"
-    "${SANGTACHI_WINTUN_INCLUDE}"
-)
+    # 실행 시 확인의 기대값. 값의 출처는 cmake/Wintun.cmake 하나이고 여기서 헤더로 옮긴다.
+    file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/sangtachi/wintun_expected.hpp"
+         CONTENT "#pragma once\n\n// cmake/Wintun.cmake 에서 만든다. 고치지 않는다.\n\n#include <string_view>\n\nnamespace sangtachi::platform {\ninline constexpr std::string_view kWintunDllSha256 = \"@SANGTACHI_WINTUN_DLL_SHA256@\";\n}  // namespace sangtachi::platform\n"
+         @ONLY)
+    target_include_directories(sangtachi_core PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        "${SANGTACHI_WINTUN_INCLUDE}"
+    )
+endif()
 
 add_subdirectory(src)
 
@@ -124,8 +131,12 @@ endif()
 #
 # configure_file 로 둔다. 원본이 바뀌면 CMake 가 다시 설정하면서 다시 복사한다. 링크 뒤에 복사하면
 # 스크립트만 고친 빌드가 낡은 판정을 실행 파일 옆에 남긴다. 실행 파일은 Ninja 에서 이 폴더에 생긴다.
-configure_file("${SANGTACHI_WINTUN_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/wintun.dll" COPYONLY)
-configure_file("${PROJECT_SOURCE_DIR}/tools/winprereq/Test-SubnetOverlap.ps1"
-               "${CMAKE_CURRENT_BINARY_DIR}/Test-SubnetOverlap.ps1" COPYONLY)
-configure_file("${PROJECT_SOURCE_DIR}/tools/winprereq/Initialize-FirewallRules.ps1"
-               "${CMAKE_CURRENT_BINARY_DIR}/Initialize-FirewallRules.ps1" COPYONLY)
+#
+# Linux 는 옆에 둘 파일이 없다. TUN 은 커널에 있고, 서브넷 검사는 클라이언트가 직접 하고, 방화벽은 만지지 않는다 (ADR 0035).
+if(WIN32)
+    configure_file("${SANGTACHI_WINTUN_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/wintun.dll" COPYONLY)
+    configure_file("${PROJECT_SOURCE_DIR}/tools/winprereq/Test-SubnetOverlap.ps1"
+                   "${CMAKE_CURRENT_BINARY_DIR}/Test-SubnetOverlap.ps1" COPYONLY)
+    configure_file("${PROJECT_SOURCE_DIR}/tools/winprereq/Initialize-FirewallRules.ps1"
+                   "${CMAKE_CURRENT_BINARY_DIR}/Initialize-FirewallRules.ps1" COPYONLY)
+endif()

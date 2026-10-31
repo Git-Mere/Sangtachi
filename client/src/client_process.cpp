@@ -89,23 +89,6 @@ void emit_socket_error(std::string_view op, int code) {
     emit_op_error(op, static_cast<std::uint64_t>(code));
 }
 
-std::string guid_text(const sangtachi::platform::InterfaceGuid& g) {
-    // Windows GUID 의 메모리 배치에서 표기 순서로 (Data1, Data2, Data3 은 리틀 엔디언).
-    constexpr int kOrder[] = {3, 2, 1, 0, -1, 5, 4, -1, 7, 6, -1, 8, 9, -1, 10, 11, 12, 13, 14, 15};
-    constexpr char kHex[] = "0123456789ABCDEF";
-    std::string out = "{";
-    for (const int i : kOrder) {
-        if (i < 0) {
-            out += '-';
-            continue;
-        }
-        out += kHex[g[static_cast<std::size_t>(i)] >> 4];
-        out += kHex[g[static_cast<std::size_t>(i)] & 0x0F];
-    }
-    out += '}';
-    return out;
-}
-
 // architecture.md 7장 어댑터 수명의 기동 단계. 0 이면 tun 에 어댑터가 들었다. 그 밖의 값은 기동
 // 실패의 종료 코드다. 실패마다 `adapter.error` 줄 하나를 낸다.
 int open_adapter(std::unique_ptr<sangtachi::platform::TunDevice>& tun, sangtachi::ClientUi& ui) {
@@ -169,7 +152,7 @@ int open_adapter(std::unique_ptr<sangtachi::platform::TunDevice>& tun, sangtachi
     tun = std::move(opened.device);
     const sangtachi::LogField fields[] = {
         field("name", sangtachi::adapter::kName),
-        field("guid", guid_text(tun->guid())),
+        field("guid", sangtachi::platform::interface_id_text(tun->guid())),
         field("luid", tun->luid()),
         field("mtu", static_cast<std::uint64_t>(sangtachi::protocol::kAdapterMtu)),
     };
@@ -179,6 +162,12 @@ int open_adapter(std::unique_ptr<sangtachi::platform::TunDevice>& tun, sangtachi
     // 하기 때문이다. 판정은 스크립트의 종료 코드이고 unknown 은 통과가 아니다. 어긋나면 어댑터를 닫고
     // 끝난다(부르는 쪽이 tun 을 버린다).
     const auto firewall = sangtachi::platform::run_firewall_check();
+    if (firewall.verdict == sangtachi::platform::FirewallVerdict::kSkipped) {
+        // Linux 는 방화벽을 만지지 않는다. 호스트의 인바운드는 사람이 연다 (linux-prereq.md 5절).
+        const sangtachi::LogField skipped_fields[] = {field("verdict", std::string_view("skipped"))};
+        sangtachi::emit(LogLevel::Info, "adapter.firewall", skipped_fields);
+        return 0;
+    }
     const auto joined = [](const std::vector<std::string>& items) {
         std::string out;
         for (const auto& item : items) {
@@ -361,7 +350,8 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     // 8.4 를 통과한 DATA 가 갈 곳 (concurrency.md 3장의 표). 어댑터가 있으면 두 빌드 모두 주입한다.
     // 어댑터가 없으면 제품 빌드는 훅을 비워 drop_no_sink 이고, 시험 빌드는 그 칸에 `data.rx` 와 에코
     // 응답기를 붙인다 (ADR 0023).
-    sangtachi::tunnel::DataSender* sender_slot = nullptr;  // 훅이 에코를 넘길 곳. 아래에서 채운다
+    // 제품 빌드는 훅이 없어 읽는 곳이 없다. g++ 의 unused-but-set 경고를 막는다.
+    [[maybe_unused]] sangtachi::tunnel::DataSender* sender_slot = nullptr;  // 훅이 에코를 넘길 곳. 아래에서 채운다
     sangtachi::tunnel::TunnelDeps tunnel_deps;
     if (tun != nullptr) {
         // 실패는 inject_packet 이 센다. 재시도하지 않는다 (concurrency.md 3장 주입 실패).

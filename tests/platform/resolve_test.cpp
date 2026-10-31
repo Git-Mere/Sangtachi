@@ -102,6 +102,8 @@ TEST_CASE("resolve: localhost resolves to an IPv4 loopback address", "[platform]
     REQUIRE(endpoint->port() == 19302);
 }
 
+// Winsock 초기화라는 전제가 Windows 에만 있다. POSIX 소켓은 초기화가 없다 (ADR 0035).
+#ifdef _WIN32
 TEST_CASE("resolve: a name needs Winsock but a literal does not", "[platform][resolve]") {
     // 초기화가 없으면 getaddrinfo 는 WSANOTINITIALISED 로 실패한다. 그때도 터지지 않고
     // 값 없음으로 돌아온다.
@@ -119,6 +121,7 @@ TEST_CASE("resolve: a name needs Winsock but a literal does not", "[platform][re
 
     REQUIRE_FALSE(resolve_ipv4("localhost", 3478).has_value());
 }
+#endif
 
 TEST_CASE("resolve: numeric-looking hosts never reach the name path", "[platform][resolve]") {
     // 우리 parse_ipv4 가 거부한 옛 IPv4 표기가 getaddrinfo 로 새 나가면 사용자가 친 것과

@@ -110,6 +110,8 @@
 | `platform/record_file` | 실행 파일 폴더 아래 `records` 폴더와 기록 파일을 만들고, 줄 하나를 쓰기 호출 하나로 쓴다. UTC 벽시계와 PID (9장 로컬 기록 파일) | Win32 |
 | `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
 
+**외부 의존 열은 Windows 구현의 것이다.** Linux 콘솔 클라이언트는 `platform/` 아래 원본만 다르고 그 의존은 POSIX 와 Linux 커널 API 다. 배치는 10장 목표 구조, 결정은 [ADR 0035](decisions/0035-linux-콘솔-클라이언트.md) 가 갖는다.
+
 클라이언트는 단일 프로세스다. 스레드 구성과 상태 소유는 `concurrency.md` 가 갖는다.
 
 위 표의 이름은 **공개 헤더의 자리**이고 그 이름이 책임을 가리킨다. 그 책임을 어느 OS 의
@@ -703,6 +705,18 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 
 `windows-prereq.md` 7절은 3절 정리를 서브넷 검사보다 먼저 하라고 한다. 그 정리가 겨누는 것은 살아 있는 우리 어댑터에 남은 주소와 경로다. 프로세스가 끝나면 우리 어댑터가 남지 않는 것을 봤으므로(같은 문서 3절) 서브넷 검사 때 우리 어댑터는 없다. 같은 GUID 에 저장된 주소가 남았을 수 있지만 어댑터가 없으면 그 경로도 없다. 그래서 그 주소는 어댑터를 만든 직후에 지운다.
 
+**Linux 콘솔 클라이언트의 어댑터 수명.** 위 표의 순서는 같고 무엇으로 하는지가 다르다. 각 단계의 값과 절차는 [`linux-prereq.md`](linux-prereq.md) 가 갖는다.
+
+| 위 표의 단계 | Linux |
+|--------------|-------|
+| 실행 파일 옆 파일 확인 | 확인할 파일이 없다 |
+| 관리자 권한 | `CAP_NET_ADMIN` 이 있는지 본다(`linux-prereq.md` 2절) |
+| 서브넷 충돌 검사 | 클라이언트가 직접 판정한다(같은 문서 4절) |
+| `wintun.dll` 해시 확인 | 없다 |
+| 어댑터 만들기 | TUN 장치를 열고 MTU 를 정하고 올린다(같은 문서 3절) |
+| 방화벽 규칙 검증 | 하지 않는다(같은 문서 5절) |
+| 주소 붙이기, 떼기, 종료 | 같다. on-link 경로는 장치가 올라가 있으면 커널이 만든다. 없을 때만 클라이언트가 만든다 |
+
 **플레이어끼리는 가상 IP 로도 통신하지 않는다** ([`spec.md`](spec.md) FR-4). 위 경로 설정이
 `10.100.0.0/24` 전체를 가상 어댑터로 보내므로 플레이어가 다른 플레이어의 주소로 보낸 패킷도
 어댑터까지는 들어온다. 그 패킷을 버리는 것은 운영체제가 아니라 클라이언트의 라우팅 표이고,
@@ -844,7 +858,9 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 - 실행 파일 폴더는 OS 가 돌려주는 실행 중인 실행 파일의 경로(`GetModuleFileNameW`)에서 마지막 구성
   요소를 뺀 것이다. 링크를 풀거나 경로를 정규화하지 않고 받은 그대로 쓴다. 현재 작업 폴더를 쓰지
   않는다
-- 경로는 와이드 문자 API 로 다룬다. 한글이 든 경로도 그대로 쓴다. 경로를 끝까지 얻지 못하면(버퍼가
+- Linux 는 `/proc/self/exe` 를 읽는다. 커널이 링크를 이미 푼 경로를 주므로 심볼릭 링크로 띄우면 링크가 가리키는 실행 파일의
+  폴더가 된다. 경로 구분자는 `/` 다
+- Windows 는 경로를 와이드 문자 API 로 다룬다. Linux 는 받은 바이트 그대로 쓴다. 한글이 든 경로도 그대로 쓴다. 경로를 끝까지 얻지 못하면(버퍼가
   모자라 잘린 경우 포함) 아래 열기 실패와 같다
 - `records` 폴더가 없으면 만든다
 - 기동 시각은 `YYYYMMDDTHHMMSSZ` 꼴의 UTC 다. PID 는 10진수다
@@ -1038,7 +1054,7 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `control.peers` | `peer_id`, `virtual_ip`, `candidates` (상대 후보 `ip:port` 를 쉼표로 이어 붙인 것) | `spec.md` M-3, Phase 3 `get_peers` 검증 |
 | `timer.tick` | `name`, `elapsed_ms` (직전 만료로부터 실제로 흐른 밀리초) | Phase 1 drain 예산, Phase 3 제어 평면 사망 중 `[loop]` 생존 |
 | `record.open` | `file` (로컬 기록 파일의 이름. 폴더를 빼고) | Phase 4 기록 확인, `spec.md` M-6 |
-| `adapter.firewall` | `verdict` (`pass`), `created` (이번에 만든 규칙 이름을 쉼표로 이은 것. 없으면 `-`) | Phase 7 방화벽 규칙의 만들기와 재사용 ([`windows-prereq.md`](windows-prereq.md) 2절) |
+| `adapter.firewall` | `verdict` (`pass`. Linux 는 `skipped` 이고 아래 `created` 가 없다), `created` (이번에 만든 규칙 이름을 쉼표로 이은 것. 없으면 `-`) | Phase 7 방화벽 규칙의 만들기와 재사용 ([`windows-prereq.md`](windows-prereq.md) 2절) |
 | `adapter.error` | `reason`. `reason=missing_file` 이면 `file` (없는 파일 이름을 쉼표로 이은 것). `reason=firewall` 이면 `verdict` (`fail` 또는 `unknown`), `exit_code`, `failed` (`<규칙 이름 또는 policy>:<검사>` 를 쉼표로 이은 것), `unknown` (같은 모양의 판정 불가), `op`, `code` | Phase 7 방화벽 규칙 검증의 기동 실패 (같은 절) |
 | `data.tx` | `to` (목적지 가상 IP), `len`, `sha256` (캡슐화 직전의 내부 패킷). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
 | `data.rx` | `from` (상대 가상 IP), `len`, `sha256` (페이로드 훅이 받은 바이트열). **시험 빌드에만 있다** | Phase 4~5 `DATA` 왕복 일치(M-5) |
@@ -1141,6 +1157,8 @@ Sangtachi/
 |   |   +-- record.cpp   로컬 기록 파일의 줄과 쓰기 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
 |   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, session_end, hash, random, resolve, interfaces, record_file, tun
+|   |   |   +-- posix/   Linux 와 macOS 가 같이 쓸 수 있는 것. wait, udp_socket, tcp, wsa(빈 구현), console_ctrl, session_end, hash, random, resolve, stdout, record_file
+|   |   |   +-- linux/   clock, exe_path, interfaces, tun (ADR 0035)
 |   |   +-- network/     endpoint, stun, stun_client
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
@@ -1191,6 +1209,7 @@ Sangtachi/
 | Windows IP Helper / NetIO API | 가상 어댑터의 IP 주소와 라우트 설정. **Wintun은 이 기능을 제공하지 않는다.** 로컬 후보를 위한 인터페이스 열거와 기본 경로 조회 (`platform/interfaces`) | OS 기본 제공 |
 | Winsock2 | Windows 기본 소켓 API | OS 기본 제공 |
 | Windows CNG (`BCryptHash`) | `wintun.dll` 해시 확인과 9장 `data.tx`, `data.rx` 의 SHA-256 | OS 기본 제공 |
+| POSIX, Linux TUN(`/dev/net/tun`), rtnetlink | Linux 콘솔 클라이언트의 소켓, 대기, 가상 어댑터, 주소와 경로 설정, 인터페이스와 경로 조회. SHA-256 은 직접 구현한다 ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)) | OS 기본 제공 |
 | 공개 STUN 서버 | Binding Response 응답. 서버는 구현하지 않고 이용만 한다 | 외부 공개 서비스 |
 | Python 표준 라이브러리 | `asyncio`, `json` | 표준 라이브러리 |
 | AWS SDK for Python (`boto3`) | 제어 서버와 텔레메트리 서비스의 DynamoDB 접근 | **승인됨** |
@@ -1213,6 +1232,6 @@ Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, 
 - **완전한 ICE**: 초기에는 최소 연결 수립 절차만. Phase 9에서 ICE 개념과 비교 분석만 수행.
 - **6명 이상과 플레이어 간 메시**: 한 방은 최대 5명이고 터널은 호스트와 각 플레이어 사이에만
   맺는다 ([`spec.md`](spec.md) FR-4). 6자 이상은 스트레치 목표다.
-- **macOS / 모바일**: 지원하지 않는다. Linux는 시간이 남으면 상호 운용성만 검토.
-  범위는 넓히지 않되 **이식할 때 다시 쓰는 자리는 이음새 다섯으로 고정했다**
+- **macOS / 모바일**: 지원하지 않는다. Linux 는 콘솔 클라이언트만 지원한다([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)).
+  **이식할 때 다시 쓰는 자리는 이음새 다섯으로 고정했다**
   ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md)).

@@ -18,6 +18,7 @@
 #include "sangtachi/platform/wait.hpp"
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace sangtachi::platform {
@@ -96,5 +97,11 @@ bool signal_cleanup_done() noexcept;
 
 // 표준 입력에서 한 줄을 읽고 버린다. 끝(EOF)이나 오류면 바로 돌아온다.
 void wait_for_enter() noexcept;
+
+// 표준 입력에서 한 줄을 읽는다 (`[console]`). `std::getline(std::cin, line)` 과 같은 뜻이다. 줄바꿈은 떼고, 끝(EOF)
+// 앞에 줄바꿈 없이 남은 것도 한 줄이다. 끝이나 오류에서 읽은 것이 없으면 거짓이다.
+//
+// Linux 판은 stdio 를 거치지 않는다 (concurrency.md 7장 종료의 `[console]`).
+[[nodiscard]] bool read_stdin_line(std::string& line);
 
 }  // namespace sangtachi::platform

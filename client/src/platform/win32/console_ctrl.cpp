@@ -10,6 +10,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <iostream>
+#include <string>
 
 namespace sangtachi::platform {
 namespace {
@@ -132,6 +134,10 @@ void wait_for_enter() noexcept {
     char buffer[256];
     DWORD read = 0;
     (void)::ReadFile(input, buffer, sizeof(buffer), &read, nullptr);
+}
+
+bool read_stdin_line(std::string& line) {
+    return static_cast<bool>(std::getline(std::cin, line));
 }
 
 }  // namespace sangtachi::platform

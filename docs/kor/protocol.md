@@ -602,9 +602,16 @@ WSAIoctl(sock, SIO_UDP_CONNRESET, &off, sizeof(off), nullptr, 0, &bytes, nullptr
 로그는 `architecture.md` 9장의 `socket.error`가 맡는다. 카운터는 그 문서 9장의 지표 표
 "keepalive 로컬 송신 오류" 가 읽는 값이기도 하다.
 
-이 절의 옵션 이름은 Windows 구현이다. 지켜야 하는 것은 이름이 아니라 그 옆에 적은 의도다.
-같은 의도를 다른 OS 에서 무엇으로 얻는지는 이 문서가 정하지 않는다
-([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 1).
+이 절의 옵션 이름은 Windows 구현이다. 지켜야 하는 것은 이름이 아니라 그 옆에 적은 의도다
+([ADR 0010](decisions/0010-플랫폼-이식-이음새.md) 이음새 1). Linux 콘솔 클라이언트는 같은 의도를 아래로 얻는다
+([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)).
+
+| Windows | Linux |
+|---------|-------|
+| `SO_EXCLUSIVEADDRUSE` | 아무것도 켜지 않는다. `SO_REUSEADDR` 와 `SO_REUSEPORT` 를 켜지 않은 소켓의 포트에는 다른 소켓이 bind 하지 못한다 |
+| `SIO_UDP_CONNRESET` 끄기 | 할 것이 없다. `connect()` 하지 않은 UDP 소켓은 `IP_RECVERR` 를 켜지 않는 한 ICMP 오류를 수신 오류로 올리지 않는다 |
+| `SO_RCVBUF` 적용값 | 커널이 요청값의 두 배를 보고한다. 읽은 값을 그대로 기록한다 |
+| `WSAEMSGSIZE` (받을 자리보다 큰 데이터그램) | `recvfrom` 에 `MSG_TRUNC` 를 주어 실제 길이를 받는다. 자리보다 크면 같은 경로로 처리한다 |
 
 ---
 

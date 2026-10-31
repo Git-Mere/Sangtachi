@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
@@ -56,5 +57,47 @@ TEST_CASE("hash: the digest is lower case hex only", "[hash]") {
     for (const char c : *got) {
         INFO("character " << c);
         REQUIRE(((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')));
+    }
+}
+
+TEST_CASE("hash: the two block NIST vector matches", "[hash]") {
+    // 448비트 입력은 길이 자리가 첫 블록에 들어가지 않아 패딩이 두 번째 블록으로 넘어간다.
+    const auto data = bytes_of("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq");
+    const auto got = sha256_hex(data);
+    REQUIRE(got.has_value());
+    REQUIRE(*got == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+}
+
+TEST_CASE("hash: one million a matches the NIST vector", "[hash]") {
+    const std::vector<std::byte> data(1000000, std::byte{'a'});
+    const auto got = sha256_hex(data);
+    REQUIRE(got.has_value());
+    REQUIRE(*got == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+}
+
+TEST_CASE("hash: lengths around the padding boundary match", "[hash]") {
+    // 55 는 한 블록에 패딩이 다 들어가는 마지막 길이, 56 은 두 블록이 되는 첫 길이다. 기대값은
+    // Python hashlib 이 같은 입력((i * 7 + 3) mod 256)으로 낸 것이다.
+    struct Vector {
+        std::size_t length;
+        std::string_view digest;
+    };
+    constexpr std::array<Vector, 6> kVectors = {{
+        {55, "e7313d333c272e639f790978283f9eb392e843d0f29b7016828bb1daa4aac70b"},
+        {56, "4324d65f3c103567f5589c710bc08f8523f929a9272e3af36fc968e52abc6c27"},
+        {63, "81c80242132f230c3bd41b3e63bbcff16107339549214a99614ff26664625055"},
+        {64, "39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"},
+        {119, "9ce7368e4daf32341631b492e80359dc9f594b48453cd0dd5bf0b19279cc177e"},
+        {1000, "1e9bc38cbf860b9ec31918b065f9b52476c549a782e0e7990bed8ce3868d2371"},
+    }};
+    for (const Vector& v : kVectors) {
+        std::vector<std::byte> data(v.length);
+        for (std::size_t i = 0; i < v.length; ++i) {
+            data[i] = static_cast<std::byte>((i * 7 + 3) & 0xFFu);
+        }
+        INFO("length " << v.length);
+        const auto got = sha256_hex(data);
+        REQUIRE(got.has_value());
+        REQUIRE(*got == v.digest);
     }
 }

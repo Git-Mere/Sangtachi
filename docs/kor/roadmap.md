@@ -1118,6 +1118,10 @@ Windows 가상 네트워킹은 예상보다 복잡할 수 있다. 이 작업은 
   [`concurrency.md`](concurrency.md) 1장 스레드, 창이 받는 값과 화면은 [`architecture.md`](architecture.md) 3.5 기동 입력,
   버튼과 속도 제한의 관계는 [`control_plane.md`](control_plane.md) 6.4 속도 제한, 승격 거부와 잔존물 정리 시점과 Qt 런타임은
   [`windows-prereq.md`](windows-prereq.md) 1절·4절·14절이 갖는다
+- **Linux 콘솔 클라이언트** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 두 기기 실측을 Windows 기기와 Linux 기기로 할 수
+  있게 한다. 실행 전제는 [`linux-prereq.md`](linux-prereq.md) 가 갖는다
+  - 검증: Windows 호스트와 Linux 플레이어, Linux 호스트와 Windows 플레이어를 각각 한 번씩 돌린다. 방 참가, 두 방향 가상 IP `ping`,
+    종료 신호로 끝낼 때 상대가 `CLOSE` 를 받는 것까지 본다. Linux 가 호스트인 쪽은 Minecraft 접속까지 본다
 - **Qt 배포물을 처음 만들 때 파일 목록과 크기를 잰다.** `windeployqt` 가 모은 것을 `windows-prereq.md` 4절 Qt 런타임에 적는다
 - **호스트 종료가 OS 유예 안에 드는지 잰다.** 세션마다 보내는 `CLOSE` 최대 네 개와 어댑터
   정리가 3초 안에 끝나는지를 측정한다. 정하는 것이 아니라 재는 것이다 (`concurrency.md` 7장 종료)
@@ -1279,7 +1283,6 @@ Phase 1-9가 여유 있게 끝난 경우에만 착수한다. 핵심 P2P 목표�
 | 자동 재연결 | |
 | 6자 이상 가상 네트워크 | 한 방 상한은 5다 ([ADR 0006](decisions/0006-무중계-스타-토폴로지.md)). 그 위는 라우터 구조 확장이 필요하다 |
 | UDP 기반 게임 검증 | 터널의 게임 비종속성 추가 입증 |
-| Linux 상호 운용성 | 다시 쓰는 자리는 이음새 다섯이다 ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md)) |
 
 ---
 

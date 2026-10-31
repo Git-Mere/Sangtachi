@@ -422,10 +422,16 @@ std::vector<std::string> firewall_lines(const std::string& output, std::string_v
 
 }  // namespace
 
+std::span<const std::string_view> adapter_files() noexcept {
+    static constexpr std::string_view kFiles[] = {"wintun.dll", "Test-SubnetOverlap.ps1",
+                                                  "Initialize-FirewallRules.ps1"};
+    return kFiles;
+}
+
 std::vector<std::string_view> missing_adapter_files() {
     std::vector<std::string_view> missing;
     const std::wstring dir = exe_dir();
-    for (const std::string_view name : kAdapterFiles) {
+    for (const std::string_view name : adapter_files()) {
         if (dir.empty()) {
             missing.push_back(name);
             continue;

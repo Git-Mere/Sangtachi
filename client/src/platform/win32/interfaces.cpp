@@ -17,6 +17,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <string>
 #include <vector>
 
 namespace sangtachi::platform {
@@ -181,6 +182,23 @@ RouteQuery query_ipv4_default_routes() {
         }
         out.routes.push_back(Ipv4Route{0, 0, row.InterfaceIndex, row.Metric, iface.Metric});
     }
+    return out;
+}
+
+std::string interface_id_text(const InterfaceGuid& id) {
+    // Windows GUID 의 메모리 배치에서 표기 순서로 (Data1, Data2, Data3 은 리틀 엔디언).
+    constexpr int kOrder[] = {3, 2, 1, 0, -1, 5, 4, -1, 7, 6, -1, 8, 9, -1, 10, 11, 12, 13, 14, 15};
+    constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out = "{";
+    for (const int i : kOrder) {
+        if (i < 0) {
+            out += '-';
+            continue;
+        }
+        out += kHex[id[static_cast<std::size_t>(i)] >> 4];
+        out += kHex[id[static_cast<std::size_t>(i)] & 0x0F];
+    }
+    out += '}';
     return out;
 }
 

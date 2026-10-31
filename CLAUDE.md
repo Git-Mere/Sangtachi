@@ -7,10 +7,10 @@ CSP 400 캡스톤. Windows 우선 direct-first P2P 가상 네트워크.
 - 클라이언트: C++20 / Winsock2 / Wintun
 - 제어 평면: Python / AWS EC2
 - 상태 저장소: Amazon DynamoDB
-- 클라이언트 실행 대상: Windows 10/11 x64
+- 클라이언트 실행 대상: Windows 10/11 x64, Ubuntu 24.04 이상 x64 (콘솔만, ADR 0035)
 - 제어 서버 실행 대상: Linux / AWS EC2
 
-셸이 Linux여도 클라이언트가 Linux에서 빌드되는지는 신경 쓰지 않는다.
+Linux 클라이언트는 콘솔 실행 파일만 지원한다. GUI 와 배포물 패키징은 Windows 만이다.
 
 ## 에이전트 셸 (Prime Agent, Windows)
 
@@ -51,7 +51,7 @@ docs/eng/    영어 미러
 - 터널/STUN 프로토콜: `protocol.md`
 - 스레드/루프/상태 소유권: `concurrency.md`
 - 제어 평면: `control_plane.md`
-- 실행 환경/배포 전제: `windows-prereq.md`
+- 실행 환경/배포 전제: `windows-prereq.md`, `linux-prereq.md`
 - 과거 설계 판단이 필요한 경우: 관련 `decisions/` ADR
 - 직전 변경의 맥락이 필요한 경우: 관련 `commit_history/`
 
@@ -69,6 +69,7 @@ docs/eng/    영어 미러
 | `concurrency.md` | 클라이언트 스레드, 루프, 상태 소유 |
 | `control_plane.md` | 제어 평면 API, 상태 전이, DynamoDB, 서버/클라이언트 계약 |
 | `windows-prereq.md` | 관리자 권한, 방화벽, Wintun/Qt, EC2 등 실행 전제 |
+| `linux-prereq.md` | Linux 콘솔 클라이언트의 권한, TUN, 서브넷 검사, 방화벽 전제 |
 | `plan.md` | 현재 남은 일, 대기 중인 일, 문서 부채 |
 
 충돌 시:
@@ -232,6 +233,7 @@ pwsh -NoProfile -File scripts/test.ps1
 ```
 
 `ctest`의 timeout을 우회하지 않는다.
+Linux 클라이언트 시험은 Linux 빌드 폴더에서 `ctest` 로 돈다. 공용 코드 시험은 Windows 결과로 갈음한다(ADR 0035 결정 9).
 상세 검증 절차는 `sangtachi-validation` skill을 따른다.
 
 ## 리뷰와 커밋

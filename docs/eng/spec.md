@@ -25,6 +25,7 @@ One-sentence definition:
 ### Included
 
 - **C++20 Windows client**: Winsock2-based UDP socket, endpoint representation, logging
+- **Linux console client**: an Ubuntu x64 console executable from the same sources. It includes the virtual adapter and mixes with Windows clients in one room. The GUI is Windows only ([ADR 0035](decisions/0035-linux-console-client.md))
 - **Own STUN client**: Binding Request construction, transaction ID, response parsing, `XOR-MAPPED-ADDRESS` decoding, timeout handling
 - **Python control plane (AWS EC2)**: room create/join, peer registration, virtual IP assignment, display name registration, candidate endpoint exchange
 - **Python telemetry service (AWS EC2)**: receives and stores connection results and performance metrics. **It is a separate service from the control plane.** The boundary contract is in [`architecture.md`](architecture.md) 3.4 Telemetry Service
@@ -59,7 +60,6 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 - Automatic reconnection
 - Six or more parties in one virtual network
 - Validation with a UDP-based game
-- Linux interoperability
 
 ---
 
@@ -77,7 +77,7 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-6 | Clients attempt UDP hole punching toward the exchanged endpoints and establish a direct UDP path without manual port forwarding. Connection establishment is confirmed by **evidence in both directions**. The definition of that evidence is below. |
 | FR-7 | An established session keeps the NAT mapping alive with keepalives and measures RTT with `PING`/`PONG`. Disconnection is judged by an idle timeout (no packets received from the peer), not by transmission failure. |
 | FR-8 | The tunnel protocol uses the 20-byte wire header fixed by [`protocol.md`](protocol.md) (magic, version, type, payload_length, peer_id, session_epoch, sequence), serializes it field by field, and discards packets that fail the receive validation pipeline. |
-| FR-9 | The client creates a virtual adapter with Wintun and configures the assigned virtual IP and the `10.100.0.0/24` route with the Windows IP Helper API. |
+| FR-9 | The client creates a virtual adapter with Wintun and configures the assigned virtual IP and the `10.100.0.0/24` route with the Windows IP Helper API. The Linux console client does the same with a TUN device and rtnetlink ([`linux-prereq.md`](linux-prereq.md)). |
 | FR-10 | The client routes IP packets read from the virtual adapter by destination virtual IP, encapsulates them in `DATA` packets, and sends them over the direct UDP path. |
 | FR-11 | The receiver decapsulates `DATA` packets and injects the original IP packet into the virtual adapter. Before injection it validates inner IPv4 validity, that the inner source IP matches the sending peer's virtual IP, and that the inner destination IP is its own virtual IP. |
 | FR-12 | When a player enters `10.100.0.1:25565` in the Minecraft server address field, the client connects to the server on the remote host. |
@@ -150,8 +150,8 @@ Service.
 
 | ID | Constraint |
 |----|------|
-| C-1 | The client target is Windows 10 / 11 x64. Both development and demonstration are done on Windows. |
-| C-2 | The client language is C++20, built with CMake. Native Windows APIs are used instead of a high-level networking framework. |
+| C-1 | The client targets are Windows 10 / 11 x64 and Ubuntu 24.04 or later x64. Ubuntu is the console executable only. The demonstration is done on Windows. |
+| C-2 | The client language is C++20, built with CMake. Each OS's native APIs are used instead of a high-level networking framework (Windows API, POSIX and Linux API). |
 | C-3 | The control server and telemetry service are written in Python. The deployment target is **two processes on a single AWS EC2 instance** (separate ports) and Amazon DynamoDB. Beyond the standard library, the AWS SDK (`boto3`) is used. `boto3` was approved under NFR-5. |
 | C-4 | Must be completable within one semester. **Phases are not pinned to specific weeks.** Progress speed decides, so fixing a week allocation in the document soon diverges from fact. |
 | C-5 | If scope is exceeded, **remove from the lowest priority first.** The tiers and their cost are set by "Cost of priority removal" below. |

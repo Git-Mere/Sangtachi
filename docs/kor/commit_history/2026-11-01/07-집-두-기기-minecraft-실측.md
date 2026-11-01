@@ -41,7 +41,7 @@
 - 새 계정의 이름으로 받은 `MERE7410` 은 Mojang 에 없었다. 거절된 접속의 서버 로그에서 실제 Java 프로필 이름 `Mere_galaxy` 를 얻었다
 - G 를 핫스팟으로 옮기자 Wi-Fi 절전이 다시 켜져 있었다. 다시 껐다
 - ssh 명령줄에 `pkill -f` 나 `pgrep -f` 의 패턴을 넣으면 그 명령줄을 실행하는 셸도 맞아 ssh 가 먼저 끊겼다. 두 번 겪었다. 그 뒤로는 스크립트 파일로 보냈다
-- 정리 때 G 의 호스트 로그가 `attempt.end reason=shutdown` 뒤 카운터 몇 줄에서 끊겼다. 줄에 시각을 붙이던 파이프를 정리하며 같이 끝낸 탓이다. `Sangtachi` 장치는 사라졌다
+- 정리 때 G 의 표준 오류 사본(`host.err`, 줄에 시각을 붙인 것)이 `attempt.end reason=shutdown` 뒤 카운터 몇 줄에서 끊겼다. 시각을 붙이던 파이프를 정리하며 같이 끝낸 탓이다. 클라이언트 자신의 로그 파일은 `adapter.close` 까지 남았고 `Sangtachi` 장치는 사라졌다
 - 파일 전송 동안 A 가 `socket.error op=sendto code=10035` 를 265번 냈다. `experiments.md` 3.2 의 한계에 적었다
 
 ## 검증

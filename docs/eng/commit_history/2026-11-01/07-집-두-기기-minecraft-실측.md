@@ -41,7 +41,7 @@ and the Linux machine `mere-galaxy` (G) the host. The owner got a second Minecra
 - `MERE7410`, given as the new account's name, did not exist at Mojang. The actual Java profile name `Mere_galaxy` came from the server log of a rejected join
 - When G moved to the hotspot, Wi-Fi power saving was on again. It was turned off again
 - Putting a `pkill -f` or `pgrep -f` pattern on the ssh command line also matched the shell running that command line, so ssh was cut first. This happened twice. After that the commands were sent as script files
-- At cleanup, G's host log stopped a few counter lines after `attempt.end reason=shutdown`. The pipe that stamped times on the lines was ended along with the cleanup. The `Sangtachi` device was gone
+- At cleanup, G's copy of standard error (`host.err`, with times stamped on the lines) stopped a few counter lines after `attempt.end reason=shutdown`. The pipe that stamped the times was ended along with the cleanup. The client's own log file runs through `adapter.close`, and the `Sangtachi` device was gone
 - During the file transfer A wrote `socket.error op=sendto code=10035` 265 times. It is in the limits of `experiments.md` 3.2
 
 ## Verification

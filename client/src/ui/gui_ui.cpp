@@ -19,8 +19,9 @@ std::string ErrorCapture::last() const {
     return last_;
 }
 
-GuiUi::GuiUi(platform::WaitHandle shutdown_event, platform::WaitHandle cleanup_event)
-    : shutdown_event_(shutdown_event), cleanup_event_(cleanup_event) {}
+GuiUi::GuiUi(platform::WaitHandle shutdown_event, platform::WaitHandle cleanup_event,
+             std::function<platform::WaitMillis()> clock)
+    : shutdown_event_(shutdown_event), cleanup_event_(cleanup_event), clock_(std::move(clock)) {}
 
 FileLogSink::WriteFn GuiUi::log_screen() {
     return [errors = errors_](std::string_view line_with_newline) {
@@ -56,6 +57,10 @@ void GuiUi::closing() {
 }
 
 void GuiUi::cleanup_done(std::string_view log_name) {
+    if (session_ending_.load()) {
+        const LogField fields[] = {field("elapsed_ms", clock_() - session_end_at_.load())};
+        emit(LogLevel::Info, "session_end.cleanup", fields);
+    }
     publish_end(user_closed_.load() ? Phase::kClosed : Phase::kEndedByItself, log_name);
     (void)platform::signal_event(cleanup_event_);
 }
@@ -85,6 +90,8 @@ void GuiUi::request_close() {
 }
 
 void GuiUi::end_session() {
+    session_end_at_.store(clock_());
+    session_ending_.store(true);
     user_closed_.store(true);
     (void)platform::run_ctrl_handler(platform::CtrlSignal::Shutdown, shutdown_event_, cleanup_event_,
                                      platform::kCleanupWaitMs);

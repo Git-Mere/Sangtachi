@@ -18,6 +18,7 @@
 #include "sangtachi/ui/view.hpp"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -41,8 +42,9 @@ private:
 class GuiUi final : public ClientUi {
 public:
     // 두 이벤트는 `[gui]` 가 작업 스레드를 띄우기 전에 만든 수동 리셋 이벤트다. 닫는 것도 그쪽이다. 이 객체보다
-    // 오래 산다.
-    GuiUi(platform::WaitHandle shutdown_event, platform::WaitHandle cleanup_event);
+    // 오래 산다. clock 은 session_end.cleanup 의 시간을 잰다. 시험이 바꾼다.
+    GuiUi(platform::WaitHandle shutdown_event, platform::WaitHandle cleanup_event,
+          std::function<platform::WaitMillis()> clock = platform::monotonic_ms);
 
     // ---- 작업 스레드 (ClientUi)
     [[nodiscard]] FileLogSink::WriteFn log_screen() override;
@@ -69,6 +71,7 @@ public:
     // 창 닫기. 종료 이벤트를 신호한다. 기다리지 않는다.
     void request_close();
     // 로그오프와 시스템 종료(WM_ENDSESSION). 종료 이벤트를 신호하고 정리 완료를 kCleanupWaitMs 까지 기다린다.
+    // 정리가 끝나면 cleanup_done 이 여기서부터 걸린 시간을 session_end.cleanup 줄로 낸다 (architecture.md 9장 로그 출력).
     void end_session();
 
     // ---- 여러 스레드
@@ -80,6 +83,10 @@ private:
 
     platform::WaitHandle shutdown_event_;
     platform::WaitHandle cleanup_event_;
+    std::function<platform::WaitMillis()> clock_;
+    // end_session 이 불린 시각. session_ending_ 이 참일 때만 뜻이 있다.
+    std::atomic<platform::WaitMillis> session_end_at_{0};
+    std::atomic<bool> session_ending_{false};
     // log_screen 이 돌려준 함수가 이 객체보다 오래 살 수 있어 따로 든다 (ClientUi::log_screen).
     std::shared_ptr<ErrorCapture> errors_ = std::make_shared<ErrorCapture>();
     ScreenQueue queue_;

@@ -1199,8 +1199,9 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `data.echo` | `rtt_ms` (from the send time at offset 32 of a returned echo to its arrival, in milliseconds). **Test build only** | Phase 4 RTT baseline |
 | `roster` | `generation`, `members` (per member `<peer_id>/<virtual IP>/<bit 0>/<name>`, joined with commas) | Phase 4 `ROSTER` receive check ([`protocol.md`](protocol.md) 5.7) |
 | `session.loss` | `peer_id`, `expected`, `accepted`, `lost` (the session values of [`protocol.md`](protocol.md) 4.5, including the totals of renegotiation segments) | Phase 5 loss and reordering accounting |
+| `session_end.cleanup` | `elapsed_ms` (milliseconds from receiving `WM_ENDSESSION` to when preparing the cleanup-complete signal of (7) in [`concurrency.md`](concurrency.md) chapter 7 Shutdown begins. The time to write this line and the signal itself are not included. Only the GUI build emits it) | Phase 8 whether host shutdown fits inside the OS grace period |
 
-Events not listed here may be added freely. **Only these eighteen keys and their field names do not
+Events not listed here may be added freely. **Only these twenty keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
 **`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From
@@ -1227,6 +1228,7 @@ leaves one `WARN` line at startup.
 | `peer_id` (`counter`) | Decimal integer |
 | `peer_name` (`counter`) | The format of [`control_plane.md`](control_plane.md) 2.7 `name`. `-` if unknown |
 | `peer_id`, `expected`, `accepted`, `lost` (`session.loss`) | Decimal integer |
+| `elapsed_ms` (`session_end.cleanup`) | Decimal milliseconds |
 
 The value formats of the remaining fields are not fixed. They are human-read diagnostics.
 

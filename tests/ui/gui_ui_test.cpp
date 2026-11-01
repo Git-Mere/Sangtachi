@@ -1,5 +1,6 @@
 #include "sangtachi/ui/gui_ui.hpp"
 
+#include "../log_capture.hpp"
 #include "sangtachi/console.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/ui/view.hpp"
@@ -10,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // 시험 케이스 이름은 ASCII 로만 적는다. 이유는 network/wsa_test.cpp 머리에 있다.
 //
@@ -137,6 +139,28 @@ TEST_CASE("gui ui: end session signals shutdown, waits for cleanup and counts as
     const auto got = ui.take_latest();
     REQUIRE(got);
     CHECK(got->phase == Phase::kClosed);
+}
+
+TEST_CASE("gui ui: cleanup after end session logs the time since WM_ENDSESSION", "[ui][gui_ui]") {
+    Events ev;
+    platform::WaitMillis now = 1000;
+    GuiUi ui(ev.shutdown, ev.cleanup, [&now] { return now; });
+    sangtachi::testing::LogCapture log;
+    REQUIRE(platform::signal_event(ev.cleanup));
+    ui.end_session();
+    now = 1150;
+    ui.cleanup_done("x.log");
+    CHECK(log.with_event("session_end.cleanup") ==
+          std::vector<std::string>{"INFO session_end.cleanup elapsed_ms=150"});
+}
+
+TEST_CASE("gui ui: cleanup without end session logs no session end line", "[ui][gui_ui]") {
+    Events ev;
+    GuiUi ui(ev.shutdown, ev.cleanup, [] { return platform::WaitMillis{1000}; });
+    sangtachi::testing::LogCapture log;
+    ui.request_close();
+    ui.cleanup_done("x.log");
+    CHECK(log.with_event("session_end.cleanup").empty());
 }
 
 TEST_CASE("gui ui: install_shutdown_source installs nothing and succeeds", "[ui][gui_ui]") {

@@ -26,12 +26,8 @@ Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-�
        켜져 있으면 무선 지연이 평균 96ms 까지 오른다
    - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`)을 깔았다. 두 기기 실측의 Linux 호스트로 쓴다
    - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다
-2. **GUI 로그오프로 호스트 종료를 잰다.** 플레이어를 다른 기기에 두고 돈다. `required-test.md` 의 같은 이름의 행이다
-3. **콘솔 클라이언트의 로그오프 거동을 조사한다.** 같은 기기 시험에서 GUI 호스트와 함께 띄운 콘솔 플레이어(`--no-adapter`)가
-   로그오프 때 Windows 이벤트 `winsrvext` 100 "delaying system shutdown after 5000 milliseconds" 를 남겼다. 그 로그에는
-   `attempt.end reason=shutdown` 이 없고, 세션은 호스트의 `CLOSE` 로 끝났다. [`concurrency.md`](concurrency.md) 7장 종료의
-   `CTRL_LOGOFF_EVENT` 처리대로 돌았는지 확인되지 않았다. 원인은 아직 모른다
-4. 두 기기 이상의 실측. `required-test.md` 가 갖는다
+2. **GUI 로그오프로 호스트 종료를 잰다.** 플레이어를 다른 기기에 두고 돈다. 플레이어는 `mere-galaxy` 다. `required-test.md` 의 같은 이름의 행이다
+3. 두 기기 이상의 실측. `required-test.md` 가 갖는다
 
 `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성은 Phase 9 착수 전에 정한다(`roadmap.md` Phase 9).
 

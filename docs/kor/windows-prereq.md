@@ -23,7 +23,7 @@
 | **부분 실측** | 명령은 돌렸으나 **통과 조건이 아직 판정되지 않는다.** 무엇이 빠졌는지 적는다 |
 | **미검증** | 돌려 보지 않았다. 사유와 무엇이 있으면 검증되는지 적는다 |
 
-현재 실측 7절, 부분 실측 4절, 미검증 1절, 사람 확인 1절(10절)이다.
+현재 실측 8절, 부분 실측 3절, 미검증 1절, 사람 확인 1절(10절)이다.
 
 **본문에 측정 날짜를 적지 않는다.** 실측의 원본 기록은 `commit_history/` 와
 `field-test/` 에 있다. 이 문서는 현재 사양과 판정 기준만 담는다.
@@ -47,7 +47,7 @@
 
 초기화된 PC에서의 종단 검증은 Phase 8 시연 준비 시점이며 이 문서의 완료 조건이 아니다.
 클라이언트가 하는 자동 처리 가운데 1·2·3·4·7·8·9절의 것은 구현됐다. 4절의 Qt 와 VC++ 런타임
-동봉은 `scripts/package-gui.ps1` 이 한다. 그것이 없는 PC 에서의 확인이 남았다.
+동봉은 `scripts/package-gui.ps1` 이 한다.
 
 ## 1. 관리자 권한
 
@@ -382,8 +382,8 @@ function Invoke-NetQuerySafe([scriptblock]$Query) {
 
 ## 4. 배포물 패키징
 
-**검증: 부분 실측.** Wintun 소절은 빌드와 `scripts/adapter-check.ps1` 에서 돌렸다. Qt 소절은
-이 기기에서만 봤다. 남은 확인은 그 소절에 적는다.
+**검증: 실측.** Wintun 소절은 빌드와 `scripts/adapter-check.ps1` 에서 돌렸다. Qt 소절은 배포물로 띄운 GUI 프로세스의
+모듈 목록으로 판정했다.
 
 배포물에 함께 넣는 런타임은 셋이다. 가상 어댑터를 여는 Wintun, GUI 를 그리는 Qt, 그리고 Qt 와 실행 파일이 쓰는 VC++ 런타임이다.
 
@@ -481,7 +481,8 @@ finally {
 
 ### Qt 런타임
 
-**검증: 부분 실측.** 배포물을 만들고 이 기기에서 창이 뜨는 것을 봤다. Qt 를 설치하지 않은 PC 에서는 아직 띄우지 않았다.
+**검증: 실측.** 배포물을 만들고 이 기기에서 띄운 GUI 프로세스의 모듈 목록으로 아래 통과 조건을 판정했다. Qt 와 VC++ 런타임을
+설치하지 않은 PC 에서는 띄우지 않았다.
 
 **전제.** 배포물에 Qt 런타임이 함께 들어간다. GUI 로 하는 동작은 [`spec.md`](spec.md)
 FR-15 가 정하고, 런타임이 빠지면 그 동작을 띄울 수 없다.
@@ -517,9 +518,32 @@ pwsh -File scripts/package-gui.ps1 -Server <이름 또는 IPv4> -QtDir <Qt 키�
 | VC++ 런타임 | `msvcp140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` | 1,182,880 |
 | 고지 | `LICENSE-Qt.txt`, `NOTICE.txt` | 45,158 |
 
-**통과 조건.** Qt 와 VC++ 런타임을 따로 설치하지 않은 대상 PC 에서 배포물만으로 GUI 가 뜬다. 사용자에게 개발 환경 설치를
-요구하지 않는다. 이 기기에는 둘 다 설치돼 있어 이 조건을 판정하지 못한다. 위 닫힘 검사는 빠진 DLL 을 찾을 뿐이고 이 조건을
-대신하지 않는다.
+**통과 조건.** 배포물만으로 GUI 가 뜬다. 사용자에게 Qt, VC++ 런타임, 개발 환경 설치를 요구하지 않는다. 배포물의
+`sangtachi_gui.exe` 로 창을 띄운 채 그 프로세스가 불러온 모듈을 보고 판정한다. 배포물 폴더 밖에서 온 모듈이 모두 Windows
+구성요소이면 통과다. Windows 구성요소는 서명이 유효하고(`Valid`) 서명자의 이름(`CN`)이 정확히 `Microsoft Windows` 인 파일이다.
+
+```powershell
+$p = Get-Process sangtachi_gui
+$dist = Split-Path $p.Path
+$p.Modules | Where-Object { -not $_.FileName.StartsWith("$dist\") } | ForEach-Object {
+    $s = Get-AuthenticodeSignature $_.FileName
+    '{0} | {1} | {2}' -f $s.Status, $s.SignerCertificate.Subject, $_.FileName
+}
+```
+
+배포 빌드는 승격돼 돌므로 관리자 PowerShell 에서 돌린다. 줄마다 첫 칸이 `Valid` 이고 둘째 칸이 `CN=Microsoft Windows,` 로
+시작해야 한다. 그렇지 않은 줄이 하나라도 있으면 실패다. 목록이 비거나 오류가 나면 판정하지 않는다.
+
+**결과.** 위 배포물로 돌렸다. 모듈 100개 가운데 12개가 배포물 폴더에서 왔고, 위 표의 실행 파일과 DLL 12개와 같다. 나머지
+88개는 모두 `Valid` 이고 서명자가 `CN=Microsoft Windows` 다.
+
+> **왜.** 이 기기에는 Qt 와 VC++ 런타임이 설치돼 있다. 그래도 판정할 수 있는 것은 각 모듈을 어디서 불러왔는지 직접 보기
+> 때문이다. 배포물에 빠진 DLL 을 설치된 런타임이 채우면 그 모듈은 배포물 밖에서 오고 서명자가 `Microsoft Windows` 가
+> 아니다. 이 기기의 `System32` 에 깔린 `vcruntime140.dll`, `msvcp140.dll` 은 `CN=Microsoft Windows Software Compatibility
+> Publisher`, Qt DLL 은 `CN=The QT Company Oy` 로 서명돼 있다. 경로나 파일 이름으로 가르지 않는다. VC++ 재배포 패키지는
+> `System32` 에 깔리고, 걸러야 할 이름을 빠짐없이 적을 수 없다. 위 닫힘 검사는 가져오기 표만 보므로 Qt 플랫폼·스타일
+> 플러그인처럼 실행 중에 불러오는 DLL 을 보지 못한다. 목록은 창이 뜬 시점의 것이고 그 뒤 동작에서 불러오는 모듈은 담지
+> 않는다. 통과 조건이 창이 뜨는 데까지이므로 그 범위로 충분하다.
 
 **분류: 사람(빌드 시).** 무엇을 동봉하는지는 배포물을 만들 때 정해진다. 모으는 것은 `windeployqt` 다.
 
@@ -1034,7 +1058,7 @@ NTFS 기능이므로 FAT32·exFAT 매체 위의 파일에는 애초에 없다. �
 | 12 | Java 경로 예외 | 사람 | Java 를 업데이트한 뒤 |
 | 13 | SmartScreen 우회 | 사람 | 시연 PC 첫 실행 |
 
-**4번의 Qt 와 VC++ 런타임 동봉은 `scripts/package-gui.ps1` 이 한다.** 런타임이 없는 PC 에서의 확인은 4절 Qt 런타임에 남았다. 각 행의 "누가" 는 그 절의 `분류:` 줄을 옮긴 것이다.
+**4번의 Qt 와 VC++ 런타임 동봉은 `scripts/package-gui.ps1` 이 한다.** 동봉이 맞는지의 판정은 4절 Qt 런타임의 통과 조건이 갖는다. 각 행의 "누가" 는 그 절의 `분류:` 줄을 옮긴 것이다.
 
 ## 15. 사용성 한계
 

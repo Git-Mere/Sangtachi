@@ -26,7 +26,7 @@ Each section header states its verification status.
 | **Partly measured** | The command was run, but **the pass condition is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
-Currently 7 sections are measured, 4 partly measured, 1 unverified, 1 human-checked (section 10).
+Currently 8 sections are measured, 3 partly measured, 1 unverified, 1 human-checked (section 10).
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
 `commit_history/` and `field-test/`. This document holds only the current spec and the
@@ -54,7 +54,7 @@ section states its criterion.
 End-to-end verification on a freshly reset PC belongs to Phase 8 demo preparation and is not the
 completion condition of this document. Among the automatic handling by the client, that
 of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. The Qt and VC++ runtime bundling of section 4 is done by
-`scripts/package-gui.ps1`. Checking on a PC without them remains.
+`scripts/package-gui.ps1`.
 
 ## 1. Administrator rights
 
@@ -416,9 +416,9 @@ adapter gave `1`. The original errors were all `Category=ObjectNotFound`, and th
 
 ## 4. Distribution packaging
 
-**Status: partly measured.** The Wintun subsection was run in the build and in
-`scripts/adapter-check.ps1`. The Qt subsection was seen only on this machine. The remaining check is
-written in that subsection.
+**Status: measured.** The Wintun subsection was run in the build and in
+`scripts/adapter-check.ps1`. The Qt subsection was decided from the module list of a GUI process started from the
+distribution.
 
 Three runtimes ship with the distribution: Wintun, which opens the virtual adapter, Qt, which draws the GUI, and the VC++ runtime, which Qt and the executable use.
 
@@ -526,7 +526,8 @@ two conditions **separately** and say which one is the cause.
 
 ### Qt runtime
 
-**Status: partly measured.** The distribution was built and the window was seen to come up on this machine. It has not yet been run on a PC without Qt installed.
+**Status: measured.** The distribution was built, and the pass criterion below was decided from the module list of a GUI process started on this machine. It has
+not been run on a PC without the Qt and VC++ runtimes installed.
 
 **Premise.** The Qt runtime ships with the distribution. [`spec.md`](spec.md) FR-15 fixes what the
 GUI does, and without the runtime none of it can come up.
@@ -562,9 +563,33 @@ pwsh -File scripts/package-gui.ps1 -Server <name or IPv4> -QtDir <Qt kit root>
 | VC++ runtime | `msvcp140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` | 1,182,880 |
 | Notices | `LICENSE-Qt.txt`, `NOTICE.txt` | 45,158 |
 
-**Pass criterion.** The GUI comes up from the distribution alone on a target PC with no separate Qt or VC++ runtime
-installation. The user is not asked to install a development environment. Both are installed on this machine, so it cannot decide this condition. The closure
-check above only finds missing DLLs and does not stand in for this condition.
+**Pass criterion.** The GUI comes up from the distribution alone. The user is not asked to install Qt, the VC++ runtime, or a development environment. With the
+window open from the distribution's `sangtachi_gui.exe`, decide from the modules that process loaded. It passes when every module loaded from outside the
+distribution folder is a Windows component. A Windows component is a file whose signature is valid (`Valid`) and whose signer name (`CN`) is exactly
+`Microsoft Windows`.
+
+```powershell
+$p = Get-Process sangtachi_gui
+$dist = Split-Path $p.Path
+$p.Modules | Where-Object { -not $_.FileName.StartsWith("$dist\") } | ForEach-Object {
+    $s = Get-AuthenticodeSignature $_.FileName
+    '{0} | {1} | {2}' -f $s.Status, $s.SignerCertificate.Subject, $_.FileName
+}
+```
+
+The release build runs elevated, so run this in an administrator PowerShell. On every line the first field must be `Valid` and the second must start with
+`CN=Microsoft Windows,`. If even one line does not, it fails. If the list is empty or the command errors, do not decide.
+
+**Result.** Run with the distribution above. Of 100 modules, 12 came from the distribution folder, the same 12 executables and DLLs as the table above. The other
+88 are all `Valid` and signed by `CN=Microsoft Windows`.
+
+> **Why.** The Qt and VC++ runtimes are installed on this machine. It can still decide because it sees directly where each module was loaded from. If an
+> installed runtime fills in a DLL missing from the distribution, that module comes from outside the distribution and its signer is not `Microsoft Windows`.
+> On this machine `vcruntime140.dll` and `msvcp140.dll` installed in `System32` are signed by `CN=Microsoft Windows Software Compatibility Publisher`, and the
+> Qt DLLs by `CN=The QT Company Oy`. It does not classify by path or file name. The VC++ redistributable installs into `System32`, and the names to filter
+> cannot be listed completely. The closure check above reads only import tables, so it does not see DLLs loaded at run time such as the Qt platform and style
+> plugins. The list is taken when the window is up and does not include modules loaded by later actions. The pass criterion ends at the window coming up, so
+> that scope is enough.
 
 **Owner: person (at build time).** What gets bundled is decided when the distribution is built. `windeployqt` gathers it.
 
@@ -1107,8 +1132,8 @@ If the binary was changed right before the demo, run it once more with that file
 | 12 | Java path exception | person | after updating Java |
 | 13 | SmartScreen bypass | person | first run on the demo PC |
 
-**The Qt and VC++ runtime bundling of item 4 is done by `scripts/package-gui.ps1`.** Checking on a PC without
-the runtimes remains in section 4 Qt runtime. The "Who" of each row copies the `Owner:` line of that
+**The Qt and VC++ runtime bundling of item 4 is done by `scripts/package-gui.ps1`.** Whether the bundling is
+right is decided by the pass criterion of section 4 Qt runtime. The "Who" of each row copies the `Owner:` line of that
 section.
 
 ## 15. Usability limits

@@ -57,7 +57,7 @@
 | "로비 명령 `name` 으로 이름을 바꾸면 다음 `join` 요청이 새 이름을 싣는다." | 스크립트(`scripts/lobby-check.ps1` 의 장면 `name`) |
 | "로컬 기록 파일의 줄 수가 도달 여부와 맞는다" | 스크립트(session-check), 단위 시험(`tests/record_test.cpp`, `tests/platform/record_file_test.cpp`) |
 | "홀펀칭 실패 시 `HOLE_PUNCH_TIMEOUT`이 기록되고 `FAIL` 줄이 나온다." | 기록과 `FAIL` 줄은 스크립트(session-check). "`HELLO` 재전송이 멈추는 것도 캡처로 함께 본다" 는 C3 |
-| "RTT 기준선 비교는 ICMP가 아니라" | 스크립트(session-check), 단위 시험(`tests/testbuild/instrument_test.cpp`) |
+| "RTT 기준선 비교는 ICMP가 아니라" | 스크립트(`session-check.ps1 -Slow` 의 장면 `data`), 단위 시험(`tests/testbuild/instrument_test.cpp`) |
 | "실패 코드 강제 발생 시험:" | 스크립트(session-check) |
 
 ## 이 문서가 정한 것

@@ -367,6 +367,9 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
     호출은 성공한다
   - `rate_limited` 에 멈추는 구현과 첫 행 응답에도 계속 부르는 구현이 각각 여기서 걸린다
 
+`lobby-check.ps1` 의 평소 실행은 오류 분류마다 일부 사례를 돌린다. `-Slow` 는 위 네 오류와 아래 재시도 조합을 모두 돌린다.
+클라이언트 쪽의 모든 조합은 `tests/control/lobby_test.cpp` 의 단위 시험도 본다.
+
 **클라이언트 쪽 계약.**
 
 - 제어 서버가 죽어 있을 때 클라이언트의 `[loop]` 가 멈추지 않는다
@@ -560,7 +563,7 @@ PC A <========== Direct UDP ==========> PC B
 **같은 기기에서 프로세스 여럿과 제어 서버로 판정하는 항목은 [`scripts/session-check.ps1`](../../scripts/session-check.ps1) 이
 돈다.** 실패를 만드는 상대는 제어 서버 하네스의 가짜 피어다. **캡처로만 판정하는 항목의 손 절차는
 [`tools/phase4-capture`](../../tools/phase4-capture/README.md) 가 갖는다.** 어느 항목이 어느 자리에서 판정되는지 그 README 의
-대조 표에 있다.
+대조 표에 있다. `session-check.ps1 -Slow` 는 RTT 기준선의 20표본 비교까지 포함한다.
 
 ### 검증
 

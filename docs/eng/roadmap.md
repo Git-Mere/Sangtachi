@@ -429,6 +429,9 @@ code (`architecture.md` 3.5 Startup Inputs).
   - An implementation that stops on `rate_limited` and an implementation that keeps calling on a
     first-row response are each caught here
 
+The default `lobby-check.ps1` run exercises some cases of each error class. `-Slow` runs all four errors above and all retry combinations below.
+The unit tests in `tests/control/lobby_test.cpp` also cover every combination on the client side.
+
 **Client-side contracts.**
 
 - The client's `[loop]` does not stall while the control server is down
@@ -645,7 +648,7 @@ The round-trip test and the failure-code test below are started and ended with t
 [`scripts/session-check.ps1`](../../scripts/session-check.ps1).** The peer that causes failures is the fake peer of the
 control server harness. **The manual procedure for items judged only by packet capture is owned by
 [`tools/phase4-capture`](../../tools/phase4-capture/README.md).** Which item is judged where is in the mapping table of that
-README.
+README. `session-check.ps1 -Slow` also includes the 20-sample RTT baseline comparison.
 
 ### Verification
 

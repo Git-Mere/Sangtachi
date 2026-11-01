@@ -10,6 +10,14 @@
 
 $ErrorActionPreference = 'Stop'
 
+# 이미 x64 개발 셸이면 다시 들어가지 않는다. 들어갈 때마다 PATH 앞에 VS 경로가 다시 붙고, 한 프로세스에서
+# 세 번째쯤에 cmd 의 한 줄 상한(8191자)을 넘어 "The input line is too long" 이 난다.
+if ($env:VSCMD_ARG_TGT_ARCH -eq 'x64' -and $env:VSCMD_ARG_HOST_ARCH -eq 'x64' -and
+    (Get-Command cl -ErrorAction SilentlyContinue) -and (Get-Command cmake -ErrorAction SilentlyContinue) -and
+    (Get-Command ninja -ErrorAction SilentlyContinue)) {
+    return
+}
+
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $vswhere)) {
     throw "vswhere.exe not found. Check the Visual Studio installation: $vswhere"

@@ -235,7 +235,19 @@ mutation 또는 hang 가능성이 있는 테스트는 직접 실행 파일을 �
 
 ```powershell
 pwsh -NoProfile -File scripts/test.ps1
+pwsh -NoProfile -File scripts/test.ps1 -Full
+pwsh -NoProfile -File scripts/test.ps1 -Slow
 ```
+
+기본 실행은 빌드, 단위 시험, `cli-check`, `e2e-check` 다. `-Full` 은 진짜 제어 서버를 띄우는 `lobby-check` 와 `session-check` 의 대표 사례까지 돈다.
+`-Slow` 는 `-Full` 을 포함해 두 스크립트의 나머지 사례와 RTT 기준선 20표본까지 모두 돈다.
+`-Full` 은 다음 때 돈다.
+
+- 제어 평면, 세션, 터널, 루프, 로비 또는 그 하네스·검증 코드를 바꾼 커밋 전. 예를 들어 관련 헤더와 시험, `client/src/control/`,
+  `client/src/peer/`, `client/src/tunnel/`, `client/src/loop.cpp`, `client/src/client_process.cpp`, `control-server/`, `scripts/harness-lib.ps1` 과 두 확인 스크립트다
+- Phase 를 닫을 때는 `-Slow` 로 전체 사례를 돌린다
+
+`-Full`, `-Slow` 는 단위 시험만 고르는 `-Filter`, `-Asan` 과 함께 쓰지 않는다.
 
 `ctest`의 timeout을 우회하지 않는다.
 Linux 클라이언트 시험은 Linux 빌드 폴더에서 `ctest` 로 돈다. 공용 코드 시험은 Windows 결과로 갈음한다(ADR 0035 결정 9).

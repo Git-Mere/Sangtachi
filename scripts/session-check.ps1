@@ -10,7 +10,9 @@
 # 이 스크립트가 출력하는 문자열은 ASCII 로만 적는다. 이유는 build.ps1 머리에 있다.
 # DynamoDB local 이 떠 있어야 한다 (control-server/README.md). 시험 빌드가 필요한 장면은 -SkipTestBuild 면 NOTRUN 이다.
 #
-#   pwsh -NoProfile -File scripts/session-check.ps1 [-BuildDir <dir>] [-Only <이름>,...]
+#   pwsh -NoProfile -File scripts/session-check.ps1 [-BuildDir <dir>] [-Only <이름>,...] [-Slow]
+# 기본 실행은 M-5 바이트 대조를 유지하고 PING 경로를 한 표본으로 확인한다. RTT 20표본 기준선은 -Slow 다.
+# -Only 는 장면을 고르고, 그 장면 안의 느린 확인은 -Slow 로 고른다.
 
 [CmdletBinding()]
 param(
@@ -19,6 +21,7 @@ param(
     [string]$BuildDir = '',
     [string]$TestBuildDir = '',
     [switch]$SkipTestBuild,
+    [switch]$Slow,
     [string[]]$Only = @(),
     [string]$Ddb = 'http://127.0.0.1:8001'
 )
@@ -215,6 +218,11 @@ function Scenario-Data {
         Check "data: $($x.what): 40 sent (20 requests and 20 echoes) ($($x.tx.Count))" ($x.tx.Count -eq 40)
         Check "data: $($x.what): what was received is exactly what was sent, in order" ($x.tx.Count -eq 40 -and ($x.tx -join ',') -eq ($x.rx -join ','))
     }
+    # 기본 실행의 한 표본은 PING 경로 확인일 뿐 RTT 기준선 판정이 아니다. 20표본 기준선은 -Slow 에서 유지한다.
+    if (-not $Slow) {
+        Check 'data: the PING/PONG path produced a sample (not the RTT baseline)' (Wait-Count $p.err 0 'session\.rtt peer_id=\d+ rtt_us=\d+' 1 10000)
+        return
+    }
     # RTT 기준선. PING 은 진입 5초 뒤부터 5초마다다(11장). 20 표본에 100초가 넘는다.
     $need = 20
     $ok = Wait-Count $p.err 0 'session\.rtt peer_id=\d+ rtt_us=\d+' $need 120000
@@ -275,8 +283,7 @@ function Scenario-HostStays {
     Send-Line $p 'leave'
     Check 'host-stays: the host session ends CLOSED' (Wait-Count $h.err $em "session\.state peer_id=$($p.id) from=\S+ to=CLOSED" 1 10000)
     $hm = H-Mark
-    Start-Sleep -Milliseconds 6500
-    Check 'host-stays: host_report keeps going after the last player left' ((H-Count $hm (Req 'host_report' '-')) -ge 1)
+    Check 'host-stays: host_report keeps going after the last player left' (Wait-Count $script:harness.err $hm (Req 'host_report' '-') 1 6500)
     Check 'host-stays: the host did not go to the lobby' ((Get-Count $h.err 0 'attempt\.end ') -eq 0)
     $pm = Get-Mark $p.err
     Join-Room $p $r.room
@@ -408,6 +415,14 @@ function Scenario-PunchFail {
     Check 'punch-fail: the player went to the lobby' $x.ok
     Check 'punch-fail: the player process stays' (-not $p.proc.HasExited)
 
+    Scenario-HostPunchRecords
+}
+
+# punch-fail 의 호스트 판정과 records (1)은 같은 방/실패를 쓴다. 두 -Only 진입점 모두 이 장면을 실행한다.
+# 전체 실행에서는 이미 끝낸 장면을 다시 세우지 않는다. 장면 사이에는 클라이언트와 fake 가 정리된다.
+$script:hostPunchRecordsDone = $false
+function Scenario-HostPunchRecords {
+    if ($script:hostPunchRecordsDone) { return }
     $r = New-Room 'pf' 1
     $h = $r.host; $real = $r.players[0]
     $om = Get-Mark $h.out
@@ -420,6 +435,18 @@ function Scenario-PunchFail {
     Start-Sleep -Milliseconds 1500
     Check 'punch-fail: no HELLO retransmit timer after the failure' ((Get-Count $h.err $tm "timer\.tick name=session\.hello\.$($fp.peer_id) ") -eq 0)
     Invoke-Admin 'fake_clear' | Out-Null
+    Quit-Client $real
+    Quit-Client $h
+    $lines = Get-Records $h
+    $attempts = @($lines | ForEach-Object { $_.f.attempt } | Sort-Object -Unique)
+    Check "records: host with one connected and one failed pair has 2 attempts and 3 lines ($($attempts.Count), $($lines.Count))" ($attempts.Count -eq 2 -and $lines.Count -eq 3)
+    Check 'records: every host line has the 9 fields' (@($lines | Where-Object { -not (Test-RecordLine $_) }).Count -eq 0)
+    $fake = @($lines | Where-Object { $_.f.peer -eq "$($fp.peer_id)" })
+    Check 'records: the fake pair has one establish line HOLE_PUNCH_TIMEOUT' ($fake.Count -eq 1 -and $fake[0].f.kind -eq 'establish' -and $fake[0].f.result -eq 'HOLE_PUNCH_TIMEOUT')
+    $real = @($lines | Where-Object { $_.f.peer -eq "$($r.players[0].id)" })
+    Check 'records: the real pair has OK then CLOSED' ($real.Count -eq 2 -and $real[0].f.result -eq 'OK' -and $real[1].f.result -eq 'CLOSED')
+
+    $script:hostPunchRecordsDone = $true
 }
 
 function Scenario-HandshakeFail {
@@ -450,22 +477,7 @@ function Scenario-PeerClose {
 function Scenario-Records {
     # 기록 줄 수 (architecture.md 9장 "무엇이 시도 하나인가", roadmap.md Phase 4 기록과 실패 코드).
     # (1) 호스트에 플레이어 둘. 하나는 연결되고 하나(가짜, silent)는 실패한다. 모두 끝내면 시도 둘, 줄 셋.
-    $r = New-Room 'rc' 1
-    $h = $r.host
-    $om = Get-Mark $h.out
-    $fr = Invoke-Admin "fake_player room=$($r.room) name=FakeR mode=silent"
-    Check 'records: the fake pair timed out on the host' (Wait-Count $h.out $om '^FAIL HOLE_PUNCH_TIMEOUT FakeR ' 1 30000)
-    Invoke-Admin 'fake_clear' | Out-Null
-    Quit-Client $r.players[0]
-    Quit-Client $h
-    $lines = Get-Records $h
-    $attempts = @($lines | ForEach-Object { $_.f.attempt } | Sort-Object -Unique)
-    Check "records: host with one connected and one failed pair has 2 attempts and 3 lines ($($attempts.Count), $($lines.Count))" ($attempts.Count -eq 2 -and $lines.Count -eq 3)
-    Check 'records: every host line has the 9 fields' (@($lines | Where-Object { -not (Test-RecordLine $_) }).Count -eq 0)
-    $fake = @($lines | Where-Object { $_.f.peer -eq "$($fr.peer_id)" })
-    Check 'records: the fake pair has one establish line HOLE_PUNCH_TIMEOUT' ($fake.Count -eq 1 -and $fake[0].f.kind -eq 'establish' -and $fake[0].f.result -eq 'HOLE_PUNCH_TIMEOUT')
-    $real = @($lines | Where-Object { $_.f.peer -eq "$($r.players[0].id)" })
-    Check 'records: the real pair has OK then CLOSED' ($real.Count -eq 2 -and $real[0].f.result -eq 'OK' -and $real[1].f.result -eq 'CLOSED')
+    Scenario-HostPunchRecords
 
     # (2) 수립 중에 leave 하면 수립 줄 하나가 ABORTED 다. 펀치 지연과 마감 안에 친다.
     $fh = Invoke-Admin 'fake_host name=FakeL mode=silent'

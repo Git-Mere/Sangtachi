@@ -7,6 +7,11 @@
 #   pwsh -File scripts/test.ps1 -Filter wsa      이름에 wsa 가 든 케이스만
 #   pwsh -File scripts/test.ps1 -Jobs 1          케이스를 하나씩 돌린다
 #   pwsh -File scripts/test.ps1 -Asan            ASan 빌드로 단위 시험만 돌린다 (roadmap.md Phase 5 퍼즈)
+#   pwsh -File scripts/test.ps1 -Full            lobby-check 와 session-check 의 대표 사례까지
+#   pwsh -File scripts/test.ps1 -Slow            -Full 과 느린 나머지 사례까지
+#
+# 기본 실행은 빌드, 단위 시험, cli-check, e2e-check 다. 진짜 제어 서버를 띄우는 두 확인은 프로토콜 타이머를 실제 시간으로
+# 기다려 오래 걸리므로 -Full 에서만 돈다. 언제 -Full 을 돌리는지는 CLAUDE.md 가 정한다.
 #
 # 케이스는 기본으로 코어 수만큼 동시에 돈다 (ctest -j). 케이스마다 30초 상한은 그대로다.
 
@@ -18,10 +23,17 @@ param(
     [string]$Filter = '',
     [ValidateRange(0, 256)]
     [int]$Jobs = 0,
-    [switch]$Asan
+    [switch]$Asan,
+    [switch]$Full,
+    [switch]$Slow
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (($Full -or $Slow) -and ($Filter -or $Asan)) {
+    throw '-Full and -Slow cannot be combined with -Filter or -Asan.'
+}
+if ($Slow) { $Full = $true }
 
 . (Join-Path $PSScriptRoot 'buildpath.ps1')
 
@@ -53,13 +65,24 @@ if (-not $Filter -and -not $Asan) {
     & (Join-Path $PSScriptRoot 'e2e-check.ps1') -Config $Config -BuildDir $buildDir
     if ($LASTEXITCODE -ne 0) { throw "end-to-end check failed ($LASTEXITCODE)" }
 
-    # 로비와 제어 평면 클라이언트 계약. 진짜 제어 서버를 DynamoDB local 위에 띄운다. 없으면 실패한다.
-    & (Join-Path $PSScriptRoot 'lobby-check.ps1') -Config $Config -BuildDir $buildDir
-    if ($LASTEXITCODE -ne 0) { throw "lobby check failed ($LASTEXITCODE)" }
+    if ($Full) {
+        # 로비와 제어 평면 클라이언트 계약. 진짜 제어 서버를 DynamoDB local 위에 띄운다. 없으면 실패한다.
+        & (Join-Path $PSScriptRoot 'lobby-check.ps1') -Config $Config -BuildDir $buildDir -Slow:$Slow
+        if ($LASTEXITCODE -ne 0) { throw "lobby check failed ($LASTEXITCODE)" }
 
-    # Phase 4 의 같은 기기 세션 확인. 프로세스 여럿이 방을 만들고 펀치해 CONNECTED 까지 간다. 같은 하네스를 쓴다.
-    & (Join-Path $PSScriptRoot 'session-check.ps1') -Config $Config -BuildDir $buildDir
-    if ($LASTEXITCODE -ne 0) { throw "session check failed ($LASTEXITCODE)" }
+        # Phase 4 의 같은 기기 세션 확인. 프로세스 여럿이 방을 만들고 펀치해 CONNECTED 까지 간다. 같은 하네스를 쓴다.
+        & (Join-Path $PSScriptRoot 'session-check.ps1') -Config $Config -BuildDir $buildDir -Slow:$Slow
+        if ($LASTEXITCODE -ne 0) { throw "session check failed ($LASTEXITCODE)" }
+    }
 }
 
-Write-Host 'all tests passed'
+# 기본 실행이 무엇을 건너뛰었는지 끝에 남긴다. 통과 줄만 보고 전부 돈 것으로 읽지 않게 한다.
+if ($Slow) {
+    Write-Host 'all tests passed (including slow cases)'
+} elseif ($Full) {
+    Write-Host 'all tests passed (slow cases skipped; run with -Slow)'
+} elseif ($Filter -or $Asan) {
+    Write-Host 'unit tests passed (process checks skipped)'
+} else {
+    Write-Host 'all tests passed (lobby-check and session-check skipped; run with -Full or -Slow)'
+}

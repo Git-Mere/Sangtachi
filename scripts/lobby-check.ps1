@@ -16,7 +16,9 @@
 # probe200 확인은 시험 빌드가 필요하다 (CMakeLists.txt 의 SANGTACHI_TEST_BUILD). 이 스크립트가
 # <BuildDir>-testbuild 에 클라이언트 대상만 시험 빌드로 만든다. -SkipTestBuild 면 그 확인을 NOTRUN 으로 낸다.
 #
-#   pwsh -NoProfile -File scripts/lobby-check.ps1 [-BuildDir <dir>] [-Only <이름>,...] [-Sabotage <이름>]
+#   pwsh -NoProfile -File scripts/lobby-check.ps1 [-BuildDir <dir>] [-Only <이름>,...] [-Slow] [-Sabotage <이름>]
+# 기본 실행은 대표 오류 조합을 본다. -Slow 는 모든 오류 조합과 보충 전 host_report 반복까지 본다.
+# -Only 는 장면을 고르고, 그 장면 안의 전체 조합은 -Slow 로 고른다.
 #
 # -Sabotage 는 이 스크립트 자체의 변이 시험이다. 이름이 가리키는 주입 하나를 걸지 않는다. 그 주입에 기대는
 # 확인이 FAIL 해야 한다. 통과하면 그 확인은 아무것도 지키지 않는 것이다.
@@ -28,6 +30,7 @@ param(
     [string]$BuildDir = '',
     [string]$TestBuildDir = '',
     [switch]$SkipTestBuild,
+    [switch]$Slow,
     [string[]]$Only = @(),
     [ValidateSet('none', 'no-delay', 'no-after-commit', 'no-rate-freeze', 'no-error', 'no-clock', 'no-hold')]
     [string]$Sabotage = 'none',
@@ -215,7 +218,10 @@ function Scenario-LeavePending {
 function Scenario-HostReportStop {
     # host_report 첫 행 오류 넷 (control_plane.md 4.6 오류 표). 각각 FAIL 한 번, 그 뒤 host_report 없음, 로비.
     # 방을 세운 호스트이고 세션이 없으므로 바로 로비로 간다. 그 계기의 이름은 room_ended 다 (control/lobby.hpp).
-    foreach ($code in @('room_expired', 'room_not_found', 'unauthorized', 'bad_request')) {
+    # 기본은 진짜 임대 만료와 주입 오류 하나다. 같은 분기의 나머지 둘은 -Slow 에 남긴다.
+    # 분기 조합은 tests/control/lobby_test.cpp 의 host_report 첫 행 오류 표 시험도 본다.
+    $codes = if ($Slow) { @('room_expired', 'room_not_found', 'unauthorized', 'bad_request') } else { @('room_expired', 'unauthorized') }
+    foreach ($code in $codes) {
         Reset-Harness
         $c = Start-Client "hrs-$code"
         Start-Room $c | Out-Null
@@ -232,7 +238,8 @@ function Scenario-HostReportStop {
         Check "${code}: host_report got $code from the server" $got
         Check "${code}: one FAIL CONTROL_PLANE_EXCHANGE_FAILED line" (Wait-Count $c.out $om $failCpef 1 3000)
         $after = H-Mark
-        # 열린 방의 주기는 5초다 (HOST_REPORT_OPEN_S). 한 주기를 넘게 본다.
+        # protocol.md 11장 host_report 주기는 5초다. 송신이 멎었는지 보므로 조건 대기로 줄일 수 없다.
+        # 7초는 다음 송신 기회 한 번과 스케줄링 여유 2초를 포함한다.
         Start-Sleep -Milliseconds 7000
         Check "${code}: no host_report after the FAIL" ((H-Count $after (Req 'host_report')) -eq 0)
         Check "${code}: exactly one FAIL line" ((Get-Count $c.out $om '^FAIL ') -eq 1)
@@ -259,7 +266,10 @@ function Scenario-HostReportRate {
     }
     $hm = H-Mark
     Check 'rate: the next host_report is rate_limited' (Wait-Count $script:harness.err $hm (Req 'host_report' 'rate_limited') 1 8000)
-    Check 'rate: the cycle goes on (a second rate_limited host_report)' (Wait-Count $script:harness.err $hm (Req 'host_report' 'rate_limited') 2 8000)
+    if ($Slow) {
+        Check 'rate: the cycle goes on (a second rate_limited host_report)' (Wait-Count $script:harness.err $hm (Req 'host_report' 'rate_limited') 2 8000)
+    }
+    # 기본 실행에서는 아래 보충 뒤 성공이 rate_limited 뒤에도 주기가 계속된다는 증거다.
     Check 'rate: no FAIL line while rate_limited' ((Get-Count $c.out $om '^FAIL ') -eq 0)
     Invoke-Admin 'rate_thaw' | Out-Null
     Invoke-Admin 'rate_advance s=60' | Out-Null
@@ -280,6 +290,9 @@ function Scenario-RetryDefinite {
         @{ op = 'create_room'; code = 'unauthorized' }
     )
     foreach ($k in $cases) {
+        # 연산마다 하나를 남긴다. 확정 오류 표 전체는 lobby_test.cpp 도 본다.
+        if (-not $Slow -and -not (($k.op -eq 'join_room' -and $k.code -eq 'room_full') -or
+                ($k.op -eq 'create_room' -and $k.code -eq 'rate_limited'))) { continue }
         $c = Start-Client "rd-$($k.op)-$($k.code)"
         $hm = H-Mark
         $om = Get-Mark $c.out
@@ -288,7 +301,8 @@ function Scenario-RetryDefinite {
         $what = "$($k.op) $($k.code)"
         Check "${what}: the server answered $($k.code)" (Wait-Count $script:harness.err $hm (Req $k.op $k.code) 1 5000)
         Check "${what}: one FAIL CONTROL_PLANE_EXCHANGE_FAILED line" (Wait-Count $c.out $om $failCpef 1 3000)
-        # 재시도 간격은 1초다. 그보다 넉넉히 본다.
+        # control_plane.md 8.3 재시도 간격은 1초다. 재시도가 없음을 보므로 창을 유지한다.
+        # 2.5초면 잘못된 다음 시도 두 번이 나갈 수 있다.
         Start-Sleep -Milliseconds 2500
         Check "${what}: exactly one request (no retry)" ((H-Count $hm (Req $k.op)) -eq 1)
         Check "${what}: no ROOM line" ((Get-Count $c.out $om '^ROOM ') -eq 0)
@@ -306,6 +320,9 @@ function Scenario-RetryTransient {
     foreach ($code in @('internal', 'unavailable')) {
         foreach ($op in @('create_room', 'join_room')) {
             foreach ($n in @(2, 3)) {
+                # 두 연산, 두 오류, 성공/소진 결말을 각각 남긴다. 전체 곱은 -Slow 와 lobby_test.cpp 가 본다.
+                if (-not $Slow -and -not (($op -eq 'create_room' -and $code -eq 'internal' -and $n -eq 2) -or
+                        ($op -eq 'join_room' -and $code -eq 'unavailable' -and $n -eq 3))) { continue }
                 Reset-Harness
                 $c = Start-Client "rt-$op-$code-$n"
                 $hm = H-Mark
@@ -320,6 +337,7 @@ function Scenario-RetryTransient {
                 } else {
                     Check "${what}: FAIL after three attempts" (Wait-Count $c.out $om $failCpef 1 8000)
                 }
+                # control_plane.md 8.3 의 1초 간격보다 긴 2초 창이다. 넷째 요청이 없음을 본다.
                 Start-Sleep -Milliseconds 2000
                 Check "${what}: exactly three requests" ((H-Count $hm (Req $op)) -eq 3)
                 Check "${what}: $n of them were $code" ((H-Count $hm (Req $op $code)) -eq $n)

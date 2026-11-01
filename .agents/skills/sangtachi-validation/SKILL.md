@@ -94,7 +94,11 @@ For client and mutation testing, use the repository's canonical test entrypoint:
 
 ```powershell
 pwsh -NoProfile -File scripts/test.ps1
+pwsh -NoProfile -File scripts/test.ps1 -Full
+pwsh -NoProfile -File scripts/test.ps1 -Slow
 ```
+
+The default run skips the two same-machine checks (`lobby-check`, `session-check`). `-Full` runs representative cases; `-Slow` includes all remaining cases and the 20-sample RTT baseline. Required execution timing is set in CLAUDE.md. Do not combine either switch with `-Filter` or `-Asan`.
 
 Do not invoke mutation-test executables directly when the canonical route goes through `ctest`.
 

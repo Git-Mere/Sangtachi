@@ -43,8 +43,11 @@ powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 ```
 
 - 단위 시험(`ctest`)은 코어 수만큼 동시에 돈다. `-Jobs 1` 이면 하나씩 돈다
-- 필터 없이 돌리면 단위 시험 뒤에 `cli-check.ps1`, `e2e-check.ps1`, `lobby-check.ps1` 이 이어 돈다
-- `lobby-check.ps1` 은 제어 서버 하네스(`control-server/tests/harness/`)를 띄운다. DynamoDB local
+- 필터 없이 돌리면 단위 시험 뒤에 `cli-check.ps1`, `e2e-check.ps1` 이 이어 돈다
+- `-Full` 을 주면 그 뒤에 `lobby-check.ps1`, `session-check.ps1` 의 대표 사례까지 돈다
+- `-Slow` 는 `-Full` 을 포함해 두 스크립트의 나머지 사례와 RTT 기준선 20표본까지 돈다. 실행 시점은 `CLAUDE.md` 에 있다
+- `-Full`, `-Slow` 는 `-Filter`, `-Asan` 과 함께 쓰지 않는다
+- `lobby-check.ps1` 과 `session-check.ps1` 은 제어 서버 하네스(`control-server/tests/harness/`)를 띄운다. DynamoDB local
   컨테이너와 `control-server/.venv` 가 있어야 한다. 띄우는 명령은 `control-server/README.md` 에 있다.
   없으면 건너뛰지 않고 실패한다
 

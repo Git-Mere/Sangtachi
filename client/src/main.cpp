@@ -27,16 +27,26 @@ public:
     // 줄도 입력 자리 표시를 거친다.
     ConsoleUi()
         : guide_visible_(sangtachi::platform::is_console(sangtachi::platform::stdout_handle())),
-          prompt_([](std::string_view text, bool newline) {
+          prompt_(std::make_shared<sangtachi::ConsolePrompt>([](std::string_view text, bool newline) {
               const auto out = sangtachi::platform::stdout_handle();
               (void)(newline ? sangtachi::platform::write_line(out, text)
                              : sangtachi::platform::write_text(out, text));
-          }) {}
+          })) {}
 
-    [[nodiscard]] bool guide_visible() const noexcept { return guide_visible_; }
+    // 기동 안내 (architecture.md 3.5 로비 안내). 다음에 화면에 무엇이 나오기 전에 지운다.
+    void loading() override {
+        if (guide_visible_) {
+            prompt_->status("Loading...");
+        }
+    }
 
     sangtachi::FileLogSink::WriteFn log_screen() override {
-        return [](std::string_view line) { sangtachi::write_stderr(line); };
+        // 기동 실패 줄이 `Loading...` 뒤에 붙지 않게 먼저 지운다. 받는 곳이 이 객체보다 오래 살아 입력 자리 표시를
+        // 나눠 든다 (ClientUi::log_screen).
+        return [prompt = prompt_](std::string_view line) {
+            prompt->clear_status();
+            sangtachi::write_stderr(line);
+        };
     }
 
     bool log_screen_all() override {
@@ -54,6 +64,7 @@ public:
         if (!guide_visible_) {
             return;
         }
+        prompt_->clear_status();
         std::string guide = "  Keep these files in the same folder as sangtachi_client.exe:";
         for (const auto name : sangtachi::platform::adapter_files()) {
             guide += " ";
@@ -64,7 +75,7 @@ public:
 
     void print_line(std::string_view line) override {
         if (guide_visible_) {
-            prompt_.line(line);
+            prompt_->line(line);
             return;
         }
         // architecture.md 3.5: 리다이렉트면 UTF-8 과 LF, 콘솔이면 유니코드 쓰기.
@@ -73,19 +84,19 @@ public:
 
     void guide_line(std::string_view line) override {
         if (guide_visible_) {
-            prompt_.line(line);
+            prompt_->line(line);
         }
     }
 
     void command_begin() override {
         if (guide_visible_) {
-            prompt_.input();
+            prompt_->input();
         }
     }
 
     void command_end() override {
         if (guide_visible_) {
-            prompt_.show();
+            prompt_->show();
         }
     }
 
@@ -95,7 +106,7 @@ public:
     void ready(std::shared_ptr<sangtachi::ConsoleSession> commands) override {
         // 역할 인자로 시작하면 응답이 올 때까지 표준 출력이 비어 있다. 그동안에도 입력 자리를 띄운다.
         if (guide_visible_) {
-            prompt_.show();
+            prompt_->show();
         }
         // `[console]` 은 join 하지 않는다 (concurrency.md 7장 종료). 표준 입력 읽기를
         // 밖에서 취소하는 수단을 쓰지 않으므로 join 하면 사용자가 한 줄을 더 칠 때까지
@@ -106,7 +117,7 @@ public:
         std::thread(sangtachi::run_console_reader, std::move(commands)).detach();
     }
 
-    void closing() override { prompt_.close(); }
+    void closing() override { prompt_->close(); }
 
     void cleanup_done(std::string_view /*log_name*/) override { (void)sangtachi::platform::signal_cleanup_done(); }
 
@@ -117,6 +128,7 @@ public:
         if (!guide_visible_ || !sangtachi::platform::console_is_own()) {
             return;
         }
+        prompt_->clear_status();
         std::string message = "  Could not start. The ERROR line above says why.";
         if (!log_name.empty()) {
             message += " Full log: logs\\";
@@ -129,8 +141,8 @@ public:
 
 private:
     bool guide_visible_;
-    // 입력 자리 표시 (console.hpp ConsolePrompt). `[loop]` 만 쓴다.
-    sangtachi::ConsolePrompt prompt_;
+    // 입력 자리 표시 (console.hpp ConsolePrompt). `[loop]` 만 쓴다. clear_status 만 로그 화면도 부른다.
+    std::shared_ptr<sangtachi::ConsolePrompt> prompt_;
 };
 
 }  // namespace
@@ -156,12 +168,6 @@ int main(int argc, char** argv) {
         sangtachi::emit(sangtachi::LogLevel::Error, "args.invalid", fields);
         ui.startup_failed({});
         return sangtachi::kStartupFailure;
-    }
-
-    // 기동 안내 (architecture.md 3.5 로비 안내). 로그 파일, 서버 주소 해석, 어댑터와 방화벽 규칙까지 몇 초가
-    // 걸린다. 그동안 창이 비어 있지 않게 한 줄을 낸다. 안내 줄과 같이 표준 출력이 콘솔일 때만 낸다.
-    if (ui.guide_visible()) {
-        (void)sangtachi::platform::write_stdout_line("Loading...");
     }
 
     return sangtachi::run_client_process(*parsed.args, ui);

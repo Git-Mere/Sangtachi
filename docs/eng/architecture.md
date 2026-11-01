@@ -412,7 +412,7 @@ carries only `ROOM` and `FAIL` lines, as before.
 
 | When | What |
 |------|------|
-| Right after the argument check passes | One line `Loading...`. The adapter and the firewall rules take a few seconds |
+| Right after the log file is opened (chapter 9 Log output) | `Loading...`. The adapter and the firewall rules take a few seconds. It does not end the line, and it is erased before the next line or the input prompt appears in its place |
 | On entering the lobby after starting without a role, on returning to the lobby, and on `help` in the lobby | The lobby guide. The current name on the header line, and the lobby commands and `quit` below it |
 | On `help` in a room | The room guide. The room code, the name, and the virtual IP on the header line, and `leave`, `help`, `quit` below it |
 | After a `ROOM` line | What to do next and the own virtual IP |

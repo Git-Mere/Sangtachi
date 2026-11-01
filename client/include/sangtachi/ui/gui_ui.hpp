@@ -48,6 +48,8 @@ public:
     [[nodiscard]] FileLogSink::WriteFn log_screen() override;
     [[nodiscard]] bool log_screen_all() override;
     [[nodiscard]] platform::CtrlHandlerInstall install_shutdown_source(platform::WaitHandle shutdown_event) override;
+    // 창은 `[gui]` 가 스스로 `Loading...` 을 보인다 (architecture.md 3.5 GUI 표).
+    void loading() override {}
     void adapter_files_missing() override {}
     void print_line(std::string_view /*line*/) override {}
     void guide_line(std::string_view /*line*/) override {}

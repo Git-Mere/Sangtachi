@@ -618,6 +618,7 @@ int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
         (void)sangtachi::set_log_sink(g_log_sink);
         g_log_name = record_name;
     }
+    ui.loading();
 
     // `--name` 이 없으면 기본 이름을 만든다 (architecture.md 3.5). 난수원이 실패하면 기동 실패다.
     // 예측 가능한 값으로 대신하면 같은 방의 두 프로세스가 같은 이름을 받는다.

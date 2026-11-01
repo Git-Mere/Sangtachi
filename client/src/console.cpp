@@ -57,6 +57,7 @@ ConsoleSession::~ConsoleSession() {
 }
 
 void ConsolePrompt::line(std::string_view text) {
+    clear_status();
     std::string out = "\r";
     out += text;
     write_(out, true);
@@ -65,6 +66,7 @@ void ConsolePrompt::line(std::string_view text) {
 }
 
 void ConsolePrompt::show() {
+    clear_status();
     if (showing_ || closed_) {
         return;
     }
@@ -73,11 +75,29 @@ void ConsolePrompt::show() {
 }
 
 void ConsolePrompt::close() {
+    clear_status();
     if (showing_) {
         write_("\r  \r", false);
         showing_ = false;
     }
     closed_ = true;
+}
+
+void ConsolePrompt::status(std::string_view text) {
+    write_(text, false);
+    status_width_.store(text.size(), std::memory_order_relaxed);
+}
+
+void ConsolePrompt::clear_status() {
+    // 지우는 쪽이 하나가 되게 꺼내면서 비운다.
+    const std::size_t width = status_width_.exchange(0, std::memory_order_relaxed);
+    if (width == 0) {
+        return;
+    }
+    std::string out = "\r";
+    out.append(width, ' ');
+    out += '\r';
+    write_(out, false);
 }
 
 }  // namespace sangtachi

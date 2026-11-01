@@ -110,10 +110,17 @@ public:
     // `> ` 를 지우고 그 뒤로는 내지 않는다. 프로세스가 끝나기 전에 부른다. 셸의 프롬프트가 `> ` 뒤에 붙지 않게 한다.
     void close();
 
+    // 줄을 바꾸지 않고 text 를 띄운다(`Loading...`). line, show, close 가 먼저 지운다.
+    void status(std::string_view text);
+    // 떠 있는 status 를 지운다. 표준 오류의 기동 실패 줄이 그 뒤에 붙지 않게 로그 화면도 부른다. 그래서 이것만은
+    // 다른 스레드에서 불러도 된다. 한 번만 지운다.
+    void clear_status();
+
 private:
     WriteFn write_;
     bool showing_ = false;
     bool closed_ = false;
+    std::atomic<std::size_t> status_width_{0};
 };
 
 }  // namespace sangtachi

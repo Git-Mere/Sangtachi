@@ -128,3 +128,21 @@ TEST_CASE("prompt: close erases the prompt and stops showing it", "[console]") {
     CHECK(t.text.empty());
 }
 
+TEST_CASE("prompt: a status stays until the next output and is erased once", "[console]") {
+    Screen s;
+    s.prompt.status("Loading...");
+    CHECK(s.text == "Loading...");
+    s.text.clear();
+    s.prompt.show();
+    CHECK(s.text == "\r          \r> ");
+    s.text.clear();
+    s.prompt.line("a");
+    CHECK(s.text == "\ra\n> ");
+
+    Screen t;
+    t.prompt.status("Loading...");
+    t.prompt.clear_status();  // 표준 오류의 기동 실패 줄 앞
+    t.text.clear();
+    t.prompt.line("b");
+    CHECK(t.text == "\rb\n> ");
+}

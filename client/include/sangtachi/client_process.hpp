@@ -38,6 +38,10 @@ public:
     [[nodiscard]] virtual FileLogSink::WriteFn log_screen() = 0;
     [[nodiscard]] virtual bool log_screen_all() = 0;
 
+    // 로그 파일을 열어 받는 곳을 단 뒤에 부른다. 기동 안내를 띄울 자리다 (architecture.md 3.5 로비 안내). 그 앞의 기동
+    // 실패 줄은 받는 곳을 거치지 않으므로 그 뒤에 띄운다.
+    virtual void loading() = 0;
+
     // 종료 이벤트를 신호할 쪽을 단다. 실패하면 기동 실패다 (concurrency.md 7장 종료).
     [[nodiscard]] virtual platform::CtrlHandlerInstall install_shutdown_source(
         platform::WaitHandle shutdown_event) = 0;

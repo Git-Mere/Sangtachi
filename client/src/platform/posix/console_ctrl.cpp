@@ -147,7 +147,9 @@ bool console_is_own() noexcept {
 
 void wait_for_enter() noexcept {
     char buffer[256];
-    (void)::read(STDIN_FILENO, buffer, sizeof(buffer));
+    // 읽은 바이트도 실패도 쓰지 않는다. `(void)` 만으로는 glibc 의 warn_unused_result 가 꺼지지 않아 Release 빌드가 실패한다.
+    const ssize_t ignored = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+    static_cast<void>(ignored);
 }
 
 bool read_stdin_line(std::string& line) {

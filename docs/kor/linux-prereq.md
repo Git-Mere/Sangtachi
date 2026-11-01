@@ -8,7 +8,7 @@ Windows 의 같은 문서는 [`windows-prereq.md`](windows-prereq.md) 다. 각 �
 ## 1. 대상과 빌드
 
 **검증: 부분 실측.** Ubuntu 24.04(WSL, g++ 13)와 Ubuntu 26.04(g++ 15)에서 경고 없이 빌드하고 시험을 돌렸다. Debug 빌드였다.
-위 Release 명령은 돌리지 않았다.
+위 Release 설정은 Ubuntu 26.04(g++ 15)에서 서버 기본값 없이 빌드했다. Ubuntu 24.04 에서는 돌리지 않았다.
 
 | 항목 | 값 |
 |------|-----|

@@ -16,7 +16,7 @@
 ## 다음에 할 일
 
 Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다. 같은 기기에서 사람이 보는 GUI 와 콘솔 확인은
-끝났다. 콘솔 창 닫기로 잰 호스트 종료도 끝났다. 남은 것은 아래다.
+끝났다. 콘솔 창 닫기와 GUI 로그오프로 잰 호스트 종료도 끝났다. 남은 것은 아래다.
 
 1. **Linux 콘솔 클라이언트의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 구현과 두 방향 검증(`roadmap.md` Phase 8
    작업의 같은 항목)은 끝났다. Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다. 남은 것은 아래다
@@ -26,8 +26,7 @@ Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-�
        켜져 있으면 무선 지연이 평균 96ms 까지 오른다
    - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`)을 깔았다. 두 기기 실측의 Linux 호스트로 쓴다
    - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다
-2. **GUI 로그오프로 호스트 종료를 잰다.** 플레이어를 다른 기기에 두고 돈다. 플레이어는 `mere-galaxy` 다. `required-test.md` 의 같은 이름의 행이다
-3. 두 기기 이상의 실측. `required-test.md` 가 갖는다
+2. 두 기기 이상의 실측. `required-test.md` 가 갖는다
 
 `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성은 Phase 9 착수 전에 정한다(`roadmap.md` Phase 9).
 

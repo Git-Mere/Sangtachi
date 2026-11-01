@@ -8,10 +8,10 @@
 
 | 항목 | 값 |
 |------|-----|
-| 태그 | `field-kit-p7b` (Phase 7 끝과 ADR 0030 기동 입력과 콘솔 화면). 이전 태그 `field-kit-p5`, `field-kit-p7` 은 남겨 둔다 |
-| 왜 이 빌드인가 | 남은 Phase 4~5 실측과 Phase 7 실측을 같은 날 한 키트로 돈다. 친구 PC 의 준비가 한 번으로 끝난다. Phase 4~5 시험은 `--no-adapter` 로 Phase 5 까지와 같은 경로를 탄다. `field-kit-p7` 과 견줘 터널, 세션, 카운터, 어댑터 데이터 경로와 판정에 쓰는 로그 줄은 같고, 배포 빌드와 같은 설정(서버 기본값, 관리자 권한 매니페스트)으로 돈다 |
-| 만드는 법 | [`README.md`](README.md) "준비" |
-| 바꾸는 때 | GUI 빌드가 서면 `field-kit-p8` 을 단다. GUI 배포물은 `scripts/package-gui.ps1` 로 만든다([`windows-prereq.md`](../docs/kor/windows-prereq.md) 4절 Qt 런타임). 아래 Minecraft 시험은 그래도 `field-kit-p7b` 로 돈다. Phase 7 파일 전송과 같은 터널 빌드여야 NFR-2 가 성립한다([`roadmap.md`](../docs/kor/roadmap.md) Phase 7 검증) |
+| 태그 | `field-kit-p8`. Windows 는 GUI 배포물(`scripts/package-gui.ps1`, [`windows-prereq.md`](../docs/kor/windows-prereq.md) 4절 Qt 런타임), Linux 는 Release 콘솔([`linux-prereq.md`](../docs/kor/linux-prereq.md) 1절)이다. 이전 태그 `field-kit-p5`, `field-kit-p7`, `field-kit-p7b` 는 남겨 둔다 |
+| 왜 이 빌드인가 | 남은 Phase 8 실측은 GUI 로 돈다(T-7). 두 기기 실측에 Linux 기기를 쓴다 |
+| 만드는 법 | [`README.md`](README.md) "준비" 는 `field-kit-p7b` 의 콘솔 키트를 적는다. GUI 배포물과 Linux 빌드는 위 두 절이 적는다 |
+| NFR-2 | Minecraft 시험과 같은 빌드로 파일 전송 시험을 다시 돈다([`roadmap.md`](../docs/kor/roadmap.md) Phase 7 검증, [ADR 0036](../docs/kor/decisions/0036-phase-8-minecraft-검증-키트.md)). 키트를 바꾸면 그 날 Minecraft 전에 한 번 돈다 |
 
 ## 다음에 할 것
 
@@ -20,15 +20,11 @@ Phase 8 실측이다. 범위와 통과 조건은 [`roadmap.md`](../docs/kor/road
 
 | 무엇 | 기기와 망 | 키트 | 지금 |
 |------|-----------|------|------|
-| Minecraft 30분 연속 플레이 | 2대. 서로 다른 망. A 가 호스트이고 Minecraft 서버를 돌린다 | `field-kit-p7b` | 2026-10-28 에 약 4분 돌았다. 접속과 월드 진입은 됐다. 30분은 남았다 |
-| 게임 표시 지연과 터널 RTT 의 차이 | 위와 같은 세션 | `field-kit-p7b` | 남았다. 게임 값은 플레이어 쪽 F3 디버그 화면의 네트워크 그래프에서 20회 이상 읽는다. 같은 구간을 로그에 남긴다 |
-| 블록 배치와 채팅의 반영 | 위와 같은 세션 | `field-kit-p7b` | 남았다. 저장소 소유자가 직접 본다 |
-| Wi-Fi 끊김 거동 | 위와 같은 세션. 플레이어 쪽 Wi-Fi 를 약 10초, 약 60초 끈다 | `field-kit-p7b` | 남았다. 기록만 한다 |
 | 시연 망의 매핑 수명 | 시험 3. 호스트의 휴대폰 핫스팟과 시연 플레이어의 집 Wi-Fi 각각. 그때마다 보안 그룹을 그 공인 IP `/32` 로 잠시 연다 | 시험 3 의 도구 | 남았다. 플레이어의 집은 이미 잰 두 집(이 기기 집 Wi-Fi 하한 58초, 친구 집 Wi-Fi 300초 이상)이 아니다 |
 | 시연 리허설 | 시연과 같은 망 쌍. 호스트는 학교에서 휴대폰 핫스팟, 플레이어는 집 Wi-Fi. 방을 만들고 참가해 Minecraft 접속까지 | 시연에 쓸 키트 | 며칠 전 한 번, 시연 당일 한 번. 실패하면 nat-probe 로 원인을 가른다 |
 | 멤버 목록과 단절(T-7) | **3대.** 호스트 하나와 플레이어 둘. 플레이어 하나를 끊고 다른 플레이어의 목록을 본다. 한 기기에 두 프로세스를 띄울 수 없다. 어댑터 GUID 가 상수라 둘째가 기동에 실패한다 | `field-kit-p8` | 같이 할 사람을 찾는 중이다. 정상 종료, 강제 종료, 호스트 끊기를 한 번씩 돈다 |
 
-시험 1·5·6 은 끝났다. 시험 6 의 6-5 는 2026-10-25 A 를 휴대폰 핫스팟에 붙여 통과했다.
+시험 1·5·6 은 끝났다. 시험 6 의 6-5 는 2026-10-25 A 를 휴대폰 핫스팟에 붙여 통과했다. Minecraft 30분 연속 플레이, 게임 표시 지연과 터널 RTT 의 차이, 블록 배치와 채팅의 반영, Wi-Fi 끊김 거동은 2026-11-01 소유자의 Windows 기기와 Linux 기기로 끝났다([`experiments.md`](../docs/kor/experiments.md) 3.2 두 번째 세션).
 
 ## 때가 되면 할 것
 

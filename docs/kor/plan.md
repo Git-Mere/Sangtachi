@@ -22,9 +22,10 @@ Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-�
    작업의 같은 항목)은 끝났다. Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다. 남은 것은 아래다
    - `mere-galaxy` 는 두 기기 실측에 계속 쓴다. 실측이 끝나면 아래 둘을 같이 정리한다(소유자 결정)
      - `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지운다
-     - Wi-Fi 절전을 되돌린다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 지금은 `iw dev wlo1 set power_save off` 로 꺼 두었다. 재부팅하면 켜지므로 실측 전에 확인한다.
+     - Wi-Fi 절전을 되돌린다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 지금은 `iw dev wlo1 set power_save off` 로 꺼 두었다. 재부팅하거나 다른 망에 붙으면 켜지므로 실측 전에 확인한다.
        켜져 있으면 무선 지연이 평균 96ms 까지 오른다
-   - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`)을 깔았다. 두 기기 실측의 Linux 호스트로 쓴다
+   - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`, `Mere_galaxy`)을 깔았다. 그 기기의 Minecraft 클라이언트는 `Mere_galaxy` 로 들어간다. 두 기기 실측의 Linux 호스트로 쓴다
+   - `field-kit-p8` 의 Linux 빌드는 `mere-galaxy` 의 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
    - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다
 2. 두 기기 이상의 실측. `required-test.md` 가 갖는다
 

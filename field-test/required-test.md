@@ -8,7 +8,7 @@
 
 | 항목 | 값 |
 |------|-----|
-| 태그 | `field-kit-p8`. Windows 는 GUI 배포물(`scripts/package-gui.ps1`, [`windows-prereq.md`](../docs/kor/windows-prereq.md) 4절 Qt 런타임), Linux 는 Release 콘솔([`linux-prereq.md`](../docs/kor/linux-prereq.md) 1절)이다. 이전 태그 `field-kit-p5`, `field-kit-p7`, `field-kit-p7b` 는 남겨 둔다 |
+| 키트 | `field-kit-p8`. 커밋 `3b92ced` 의 원본이다. 태그는 두지 않는다. Windows 는 GUI 배포물(`scripts/package-gui.ps1`, [`windows-prereq.md`](../docs/kor/windows-prereq.md) 4절 Qt 런타임), Linux 는 Release 콘솔([`linux-prereq.md`](../docs/kor/linux-prereq.md) 1절)이다. 이전 태그 `field-kit-p5`, `field-kit-p7`, `field-kit-p7b` 는 남겨 둔다 |
 | 왜 이 빌드인가 | 시연의 플레이어는 GUI 로 참가한다. 호스트로 Linux 기기를 쓴다 |
 | 만드는 법 | [`README.md`](README.md) "준비" 는 `field-kit-p7b` 의 콘솔 키트를 적는다. GUI 배포물과 Linux 빌드는 위 두 절이 적는다 |
 | NFR-2 | Minecraft 시험과 같은 빌드로 파일 전송 시험을 다시 돈다([`roadmap.md`](../docs/kor/roadmap.md) Phase 7 검증, [ADR 0036](../docs/kor/decisions/0036-phase-8-minecraft-검증-키트.md)). 키트를 바꾸면 그 날 Minecraft 전에 한 번 돈다 |

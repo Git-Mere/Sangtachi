@@ -93,11 +93,11 @@ The connection was dropped; the radio was not turned off. Times were aligned by 
 - The game-displayed latency was read as the avg of the min/avg/max that F3's Ping chart shows. It is an average over the chart window, not an instantaneous value, and the windows of neighboring readings overlap, so they are not independent
 - The tunnel RTT window was cut from G's log. A's log lines carry no times. It is the round trip of the same session
 - During the file transfer A wrote `socket.error op=sendto code=10035` (`WSAEWOULDBLOCK`) 265 times. The send buffer was full and those datagrams were dropped (`tx_err_send` 266), and TCP resent them. There were none during Minecraft play
-- One session and one network pair. It is not the demo network pair (a mobile hotspot at school and the demo player's home)
+- One session and one network pair. It is not the network pair between the demo player and the host. These two networks are used, with roles swapped, between the host and the owner in the demo of [ADR 0038](decisions/0038-put-the-demo-host-on-home-wi-fi.md)
 
 ### 3.3 Demo Rehearsal
 
-The pre-demo rehearsal of the `roadmap.md` Phase 8 tasks ([ADR 0037](decisions/0037-one-rehearsal-before-the-demo.md)). It is the same network pair as the demo.
+The pre-demo rehearsal of the `roadmap.md` Phase 8 tasks ([ADR 0037](decisions/0037-one-rehearsal-before-the-demo.md)). It is the demo network pair set at that time. The demo networks changed afterwards ([ADR 0038](decisions/0038-put-the-demo-host-on-home-wi-fi.md)).
 
 | Item | Value |
 |------|-----|

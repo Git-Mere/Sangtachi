@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1~7 은 끝났다. Phase 8 진행 중이다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 1~8 은 끝났다. 다음은 Phase 9 다 |
 | 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 사람이 직접 하는 실측. 두 번째 기기나 시연 상대가 있어야 한다 |
 | 대기 | 이 파일 "대기 중인 것" | 실측 밖의 대기 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
@@ -15,11 +15,14 @@
 
 ## 다음에 할 일
 
-Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다. 같은 기기에서 사람이 보는 GUI 와 콘솔 확인은
-끝났다. 콘솔 창 닫기와 GUI 로그오프로 잰 호스트 종료도 끝났다. 시연 망의 리허설과 T-7 도 끝났다([`experiments.md`](experiments.md) 3.4, 4장). 남은 것은 아래다.
+Phase 1~8 은 끝났다. Phase 8 은 시연 전에 닫았다(소유자 결정). 검증 항목은 모두 돌았고 시연 자체는 아래 일정으로 남는다. 다음은
+Phase 9 다. 착수 전에 정할 것은 `roadmap.md` Phase 9 작업이 갖는다. `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성도 그때
+정한다.
 
-1. **Linux 콘솔 클라이언트의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 구현과 두 방향 검증(`roadmap.md` Phase 8
-   작업의 같은 항목)은 끝났다. Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다. 남은 것은 아래다
+Phase 9 전에 남은 일정이다.
+
+1. **시연** (2026-11-05). 시연 망은 [ADR 0038](decisions/0038-시연-호스트를-집-wi-fi-에-둔다.md) 이다. 시연 플레이어는 시작 전에 GUI 를 한 번 띄워 둔다. 그 기기의 첫 기동이 두 번 실패했다([이슈 0006](issue_history/0006-첫-gui-실행이-adapter-eof-로-끝났다.md), [이슈 0007](issue_history/0007-첫-기동의-서브넷-검사가-상한을-넘겼다.md)). 실패하면 다시 띄운다
+2. **`mere-galaxy` 의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다
    - `mere-galaxy` 는 시연의 호스트로 계속 쓴다. 시연 때는 소유자의 집 Wi-Fi 에 사람 없이 둔다([ADR 0038](decisions/0038-시연-호스트를-집-wi-fi-에-둔다.md)). 잠들지 않게 하고 전원을 연결한다. 시연이 끝나면 아래 둘을 같이 정리한다(소유자 결정)
      - `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지운다
      - Wi-Fi 절전을 되돌린다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 지금은 `iw dev wlo1 set power_save off` 로 꺼 두었다. 재부팅하거나 다른 망에 붙으면 켜지므로 실측 전에 확인한다.
@@ -28,16 +31,10 @@ Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-�
    - `field-kit-p8` 의 Linux 빌드는 `mere-galaxy` 의 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
    - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 리허설의 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
    - 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
-2. **시연** (2026-11-05). 남은 실측은 없다([`field-test/required-test.md`](../../field-test/required-test.md)). 시연 플레이어는 시작 전에 GUI 를 한 번 띄워 둔다. 그 기기의 첫 기동이 두 번 실패했다([이슈 0006](issue_history/0006-첫-gui-실행이-adapter-eof-로-끝났다.md), [이슈 0007](issue_history/0007-첫-기동의-서브넷-검사가-상한을-넘겼다.md)). 실패하면 다시 띄운다
-3. **Phase 8 닫기.** 시연 뒤에 아래 "대기 중인 것" 의 `windows-prereq.md` 3절을 정리하고 `scripts/test.ps1 -Slow` 를 돈다
-
-`experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성은 Phase 9 착수 전에 정한다(`roadmap.md` Phase 9).
 
 ## 대기 중인 것
 
-| 무엇 | 막힌 이유 | 풀리는 조건 |
-|------|-----------|-------------|
-| [`windows-prereq.md`](windows-prereq.md) 실물 검증의 나머지 | 3절 저장된 주소의 잔존 | Phase 8(시연) |
+없음.
 
 ## 구현 때 같이 볼 자리
 

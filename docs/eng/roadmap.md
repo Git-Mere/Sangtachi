@@ -1257,17 +1257,16 @@ Two Windows machines communicate using virtual IPs only.
 
 ### Tasks
 
-- **Rehearse twice before the demo.** On the same network pair as the demo, create and join a room with
-  the client and go as far as connecting to Minecraft. Once a few days before, while there is still time
-  to respond, and once on the day of the demo. The direct-connection verdict is an observation at a point
-  in time and can be invalidated by a router replacement or an ISP configuration change
-  - If a rehearsal fails, use `tools/nat-probe` to tell whether the cause is mapping, filtering, or timing
-  - These rehearsals replace the Phase 8 preparation and the just-before-demo re-measurement of
-    [ADR 0001](decisions/0001-no-direct-connection-fallback.md). The rationale is
-    [ADR 0034](decisions/0034-decisions-before-phase-8.md)
-- **Measure the mapping lifetime of the demo networks.** Both the host's mobile hotspot and the
-  player's home Wi-Fi. The procedure is test 3 of
-  [`field-test/README.md`](../../field-test/README.md)
+- **Rehearse once before the demo.** On the same network pair as the demo, create and join a room with
+  the client and go as far as connecting to Minecraft. It is done a few days before, while there is still
+  time to respond. The direct-connection verdict is an observation at a point in time and can be
+  invalidated by a router replacement or an ISP configuration change
+  - If the connection fails or drops in the rehearsal or the demo, use `tools/nat-probe` to tell whether
+    the cause is mapping, filtering, or timing
+  - This rehearsal replaces the Phase 8 preparation re-measurement of
+    [ADR 0001](decisions/0001-no-direct-connection-fallback.md). There is no just-before-demo
+    re-measurement and no mapping lifetime measurement of the demo networks. The rationale is
+    [ADR 0037](decisions/0037-one-rehearsal-before-the-demo.md)
 - Run a Minecraft Java server on the host
 - The player connects to the host's virtual IP
 - Confirm login and world entry

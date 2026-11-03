@@ -16,7 +16,7 @@
 ## 다음에 할 일
 
 Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-전-결정.md) 다. 같은 기기에서 사람이 보는 GUI 와 콘솔 확인은
-끝났다. 콘솔 창 닫기와 GUI 로그오프로 잰 호스트 종료도 끝났다. 그 전 시연 망의 리허설과 세 기기의 멤버 목록 단절도 끝났다([`experiments.md`](experiments.md) 3.3, 4장). 남은 것은 아래다.
+끝났다. 콘솔 창 닫기와 GUI 로그오프로 잰 호스트 종료도 끝났다. 시연 망의 리허설과 T-7 도 끝났다([`experiments.md`](experiments.md) 3.4, 4장). 남은 것은 아래다.
 
 1. **Linux 콘솔 클라이언트의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 구현과 두 방향 검증(`roadmap.md` Phase 8
    작업의 같은 항목)은 끝났다. Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다. 남은 것은 아래다
@@ -24,11 +24,12 @@ Phase 8 이다. 착수 전 결정은 [ADR 0034](decisions/0034-phase-8-착수-�
      - `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지운다
      - Wi-Fi 절전을 되돌린다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 지금은 `iw dev wlo1 set power_save off` 로 꺼 두었다. 재부팅하거나 다른 망에 붙으면 켜지므로 실측 전에 확인한다.
        켜져 있으면 무선 지연이 평균 96ms 까지 오른다
-   - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`, `Mere_galaxy`)을 깔았다. 서버는 꺼 두었다. 리허설에서는 `Mere_galaxy` 계정을 다른 기기가 썼다. 친구가 참가하면 그 계정을 화이트리스트에 넣는다
+   - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`, `Mere_galaxy`)을 깔았다. 화이트리스트에 친구 계정 `KOWP` 도 넣었다. 리허설 뒤 Sangtachi 호스트와 서버를 켜 둔 채다. 시연까지 둘지는 소유자가 정한다. 집 인터넷이 `ROOM_LEASE_S` 넘게 끊기면 방이 만료되어 다시 띄워야 한다
    - `field-kit-p8` 의 Linux 빌드는 `mere-galaxy` 의 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
-   - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 리허설의 호스트는 `r-host.sh`, `r-host-stop.sh` 로 띄우고 끝냈다
+   - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 리허설의 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
    - 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
-2. **새 시연 망의 리허설**, **T-7 의 GUI 만의 흐름**, **시연** (2026-11-05). 남은 실측은 [`field-test/required-test.md`](../../field-test/required-test.md) 가 갖는다. 시연 플레이어의 GUI 가 기동 때 `adapter.error reason=eof` 로 끝나면 다시 띄운다([이슈 0006](issue_history/0006-첫-gui-실행이-adapter-eof-로-끝났다.md))
+2. **시연** (2026-11-05). 남은 실측은 없다([`field-test/required-test.md`](../../field-test/required-test.md)). 시연 플레이어는 시작 전에 GUI 를 한 번 띄워 둔다. 그 기기의 첫 기동이 두 번 실패했다([이슈 0006](issue_history/0006-첫-gui-실행이-adapter-eof-로-끝났다.md), [이슈 0007](issue_history/0007-첫-기동의-서브넷-검사가-상한을-넘겼다.md)). 실패하면 다시 띄운다
+3. **Phase 8 닫기.** 시연 뒤에 아래 "대기 중인 것" 의 `windows-prereq.md` 3절을 정리하고 `scripts/test.ps1 -Slow` 를 돈다
 
 `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성은 Phase 9 착수 전에 정한다(`roadmap.md` Phase 9).
 

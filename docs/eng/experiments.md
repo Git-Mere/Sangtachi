@@ -7,7 +7,7 @@ are not published.
 ## 1. Notation
 
 - Networks are written as pseudonyms. Public addresses and ports are not included. Times are written only to the date. The rationale is [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
-- Machines are written as `A`, `B`, `C`, and `G`. `A` is the repository owner's Windows machine, `G` the owner's Linux machine (`linux-prereq.md`), and `C` the demo player's Windows machine
+- Machines are written as `A`, `B`, `C`, `F`, and `G`. `A` is the repository owner's Windows machine, `G` the owner's Linux machine (`linux-prereq.md`), `C` the demo player's Windows machine, and `F` the Windows machine of the owner's friend
 - Tunnel RTT is the `session.rtt` line of the client log ([`architecture.md`](architecture.md) chapter 9 Log Output). It is the `PING`/`PONG` round trip
 - Loss is the `session.loss` line of the log. It is the value counted by the receiving side
 - Medians and quartiles are computed by sorting the samples and interpolating linearly
@@ -120,9 +120,43 @@ The pre-demo rehearsal of the `roadmap.md` Phase 8 tasks ([ADR 0037](decisions/0
 - It is not 30 minutes of continuous play. C played about 5 minutes
 - While A was on two networks at once, G switched A's endpoint between two addresses 27 times in about the first minute (`session.endpoint`). After that it stayed on one, and the loss on A's session was 9/33717. The cause was not examined
 
+### 3.4 Rehearsal on the New Demo Networks
+
+The rehearsal on the demo networks of [ADR 0038](decisions/0038-put-the-demo-host-on-home-wi-fi.md).
+
+| Item | Value |
+|------|-----|
+| Date | 2026-11-02 |
+| Build | `field-kit-p8`. The same executables as 3.3 |
+| Networks | G on network H (the owner's home Wi-Fi), A on network P (mobile hotspot), C on network R, F on network W |
+| Roles | G was the host and ran the Minecraft server. A, C, and F were players that joined with the GUI |
+| Setup | Direct connection on all three pairs. Setup time at the host: F 5978ms, A 6654ms, C 6082ms (`setup_ms` of the local record file) |
+| Session length | About 8 to 11 minutes. All three players ended with leave or by closing the window, and the host received `CLOSED` |
+| Member list | All four members appeared as Connected in A's window. The rosters of C and F also carried all four members with connection bit 1 |
+| Human observation | The three players logged in to the Minecraft server and entered the world. The server log has no player dropped by a timeout |
+
+| Player | Tunnel RTT, G side | Tunnel RTT, player side | Loss, received by G | Loss, received by the player |
+|--------|--------------------|-------------------------|---------------------|------------------------------|
+| F | 129 samples, median 17.9ms, interquartile range 14.8–24.1ms, max 194.1ms | 129 samples, median 18.1ms, interquartile range 14.4–24.2ms, max 246.8ms | 0/42042 | 41/43426 (0.09%) |
+| A | 117 samples, median 117.9ms, interquartile range 93.4–209.6ms, max 866.7ms | 119 samples, median 131.3ms, interquartile range 101.4–231.1ms, max 894.8ms | 35/42686 (0.08%) | 650/37610 (1.73%) |
+| C | 98 samples, median 181.2ms, interquartile range 172.4–212.1ms, max 321.5ms | 98 samples, median 185.4ms, interquartile range 171.3–235.8ms, max 320.2ms | 1/18604 | 1/17637 |
+
+**Result.** The rehearsal passed. Creating a room, joining, and connecting to Minecraft all worked.
+
+**Limits of this session.**
+
+- The network state on the demo day is not judged (ADR 0037)
+- A's mobile hotspot at school had the widest RTT spread and the most loss. The signal on the demo day may differ
+- Just before C entered Minecraft, G wrote `socket.error op=sendto code=11` (`EAGAIN`) 40 times. The send buffer was full and those datagrams were dropped. It is the same kind as `10035` in 3.2
+- C's first start ended with a timeout of the subnet-overlap check ([Issue 0007](issue_history/0007-첫-기동의-서브넷-검사가-상한을-넘겼다.md)). C joined with the process started again
+
 ## 4. Member List and Disconnection
 
-T-7 of the `roadmap.md` Phase 8 verification. Same day, machines, and networks as 3.3.
+T-7 of the `roadmap.md` Phase 8 verification.
+
+### 4.1 Three Machines
+
+Same day, machines, and networks as 3.3. The host was a console started from the command line, so "with the GUI only" of `spec.md` T-7 is judged by 4.2.
 
 | Item | Value |
 |------|-----|
@@ -137,17 +171,36 @@ T-7 of the `roadmap.md` Phase 8 verification. Same day, machines, and networks a
 | End A with `taskkill /F` | `session.failed code=TUNNEL_DROPPED` on the idle timeout | Within 5 seconds after the host learned, A changed to disconnected. A person saw about 47 seconds after the kill | Pass |
 | End the host | Normal shutdown | `CLOSED` 0.12 seconds later, `attempt.end reason=closed`. The window returned to the lobby | Pass |
 
-**The five actions of FR-15.** Each action was done with the GUI. They were not done as one continuous flow. The host of this measurement was a console started from the command line, so "end to end with the GUI only" of `spec.md` T-7 is not judged yet.
-
-| Action | Where it was done |
-|--------|-------------------|
-| Create a room and show the room code | The same day A's GUI created a room, and G and another player joined with that code |
-| Join | The GUIs of C and A |
-| Member list and connection status | C's GUI. The table above |
-| Show the failure code | In 3.2 A's GUI showed `FAIL TUNNEL_DROPPED` |
-| Exit by closing the window | The first row of the table above |
-
 **Limits of this measurement.**
 
 - The first attempt, ended from the "Processes" tab of Task Manager, sent a close signal to the window and took the normal shutdown path. It is not counted
 - The 47 seconds of the forced kill were counted by a person from the kill. The kill time is not in any log
+
+### 4.2 GUI-Only Flow
+
+The record of running the pass conditions of `spec.md` T-7 in one flow with two GUI machines. Both machines were started without command-line arguments.
+
+| Item | Value |
+|------|-----|
+| Date | 2026-11-02 |
+| Build | The `field-kit-p8` GUI distribution. Both machines used the same distribution |
+| Networks | A on network P (mobile hotspot), F on network W (the friend's home Wi-Fi) |
+| Roles | A is the host and F the player |
+| Setup | Succeeded. Direct connection. On both sides the local and public addresses differed |
+
+| Condition | Evidence | Verdict |
+|-----------|----------|---------|
+| The host creates a room and reads the code | The room code appeared in A's window | Pass |
+| The player joins with that code | F entered `CONNECTED` | Pass |
+| Both lists show the other's name | F's roster carried both members with connection bit 1. F appeared as Connected in A's window and A in F's window (the owner's observation, and F's observation relayed by the owner) | Pass |
+| Disconnecting one side changes the other's list to disconnected | F closed the window (`attempt.end reason=shutdown`). A received `CLOSE`, went to `CLOSED`, and F's row was removed from A's list | Pass |
+| A failure code is shown | F joined with a nonexistent room code. It received `room_not_found` and the window's status line showed `FAIL CONTROL_PLANE_EXCHANGE_FAILED` with the guidance sentence | Pass |
+
+**Result.** T-7 passed. Together with 4.1, all T-7 conditions of the `roadmap.md` Phase 8 verification have been run.
+
+**Also seen.** With the same two machines a room was created again, and A's Minecraft opened a single-player world to LAN. F joined at A's virtual IP and that port and stayed about 48 seconds. It connected over the tunnel without a separately started server.
+
+**Limits of this measurement.**
+
+- A's list was captured only after F's row was removed. The intermediate display with connection bit 0 was not recorded
+- One network pair

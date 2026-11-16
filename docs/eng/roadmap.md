@@ -1350,35 +1350,34 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 
 ### Tasks
 
-- **Before starting, fix the telemetry service spec.** Decide the collection schema, whether to
-  authenticate, upload period, retention period, and DynamoDB table design. **Do not implement
-  before deciding.** The separation contract itself is already held by
-  [`architecture.md`](architecture.md) 3.4 Telemetry Service
-- **The telemetry service also produces the aggregation and the graphs.** On top of collection, the service produces the aggregation and
-  the graphs that go into [`experiments.md`](experiments.md). A human writes the interpretation and the limitations. The following are
-  decided before starting
-  - What is uploaded. The raw logs contain both sides' public addresses and candidates. Pseudonymizing what is uploaded follows
-    required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
-  - How each trial's environment (same LAN, home network, hotspot, campus network) is marked. The GUI takes no arguments
-  - The library that draws the graphs. If a deployed process uses it, it is a product dependency under [`spec.md`](spec.md) NFR-5
-  - The wording of [`spec.md`](spec.md) FR-14. Today it states only metric reporting
-  - Resources on the same instance. Aggregation and graphs raise the risk of the resource isolation item below
-- **Before starting, fix the resource isolation method within one instance.** The two services run
-  on the same EC2 instance, so if telemetry exhausts disk or CPU the control plane stalls with it.
-  Having no dependency by design is not the same as having isolated resources (`architecture.md` 3.4
-  Telemetry Service)
-- Implement and deploy the telemetry service (a separate process and port from the control server)
-- Record connection establishment time
-- Record RTT
-- Record packet loss
-- Estimate jitter
-- Record tunnel throughput
-- Record session duration
-- Move telemetry upload to a dedicated thread and a lossy queue
-  ([`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation)
+- **The pre-start decisions are owned by [ADR 0039](decisions/0039-decisions-before-phase-9.md).** They cover the collection schema, authentication, upload period, retention period,
+  table, resource isolation, and the aggregation and graphs. The results are in [`architecture.md`](architecture.md) 3.4 Telemetry Service, 6.3 Telemetry Service
+  Interface, and chapter 9 Telemetry Upload
+- **The measurement plan is fixed before measuring.** Where the networks in the test environment table below come from, the peer devices and people, and the schedule
+- The client's `--telemetry` input and the build default (`architecture.md` 3.5 Startup Input)
+- Record creation and upload in the client. Move telemetry upload to a dedicated thread and a lossy queue
+  ([`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation, `architecture.md` chapter 9 Telemetry Upload)
+  - Connection establishment time, RTT, packet loss, jitter, session bytes, session duration
+- Implement and deploy the telemetry service (a separate process and port from the control server). Room matching, input caps, storage, CloudWatch metrics, systemd
+  resource limits and the journald cap (`architecture.md` 3.4)
+- Widen the deploy tool. [`tools/cp-deploy`](../../tools/cp-deploy/README.md) picks a target and also deploys the telemetry service
+- **The repository owner does the AWS console work.** It is done before the service is first deployed
+  - Lower the control plane table's capacity to RCU 20, WCU 20 ([`control_plane.md`](control_plane.md) 7.6)
+  - Create the telemetry table. Its keys, capacity, and TTL are set by Storage in `architecture.md` 3.4 Telemetry Service
+  - Add the permissions of `architecture.md` 3.4 to the instance role
+  - Open inbound TCP 8001 in the security group
+  - Create the CloudWatch dashboard
+- **Put the analysis script in `tools/`.** It reads the records of a UTC time range from DynamoDB and builds the tables that go into
+  [`experiments.md`](experiments.md). It uses only `boto3` and the standard library
+  - Attempt count and success count, Wilson interval, count per failure code, comparison by observed mapping behavior, by same LAN or not, by build kind, host-side establishment time
+  - Success and session values use only records whose `room_known` is `true`. Failures before establishment have no room to match, so all of them are used. The limits of this filter are
+    written in `experiments.md`
+  - Also report the number of losses visible as gaps in the send sequence number. Losing the last record of an attempt or a whole attempt is not counted in this number
+- State the collected items in the README and the package guide. Also state that addresses, candidates, and display names are not uploaded
+- For each measurement batch, write the UTC time range and the environment in a local file blocked by `.gitignore`. Telemetry does not carry the environment, so the analysis script splits by this. `experiments.md` carries only the date and the environment. Publishing times only down to the date is required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
 - Test across multiple network environments
 - Compare successful and failed NAT traversal cases (by observed mapping behavior, not NAT type)
-- Visualize experimental results
+- Visualize experimental results. The graphs are taken from the CloudWatch dashboard. Graphs put in `experiments.md` must not show clock times on the time axis; convert it to elapsed time or dates (ADR 0001 required follow-up 2)
 - Document limitations
 - Put the Phase 9 measurements and analysis in [`experiments.md`](experiments.md)
 
@@ -1429,8 +1428,13 @@ A repeatable experiment set and data for the final report and presentation.
   ([`architecture.md`](architecture.md) 3.4 Telemetry Service). It is not a test that takes the
   instance down. Both are on the same EC2, so taking the instance down kills both and judges nothing
 - With **only the control server process** stopped, metrics uploads are received normally (NFR-10).
-  This is the verdict for separation 2. An implementation where telemetry asks the control plane to
-  validate identifiers fails here
+  This is the verdict for separation 2. An implementation where telemetry asks the control server process
+  fails here. Room matching reads the table, so even then `room_known` is attached as `true` or `false`
+- The telemetry service's record checks and room matching pass a case table. The table has a right type and a wrong type for each field of 6.3, and the four cases of `room_known` (`architecture.md` 3.4 Room Matching)
+- The input caps apply. Over the source budget gives `rate_limited`, over the global cap or the concurrent connections gives `unavailable`, over the body cap gives `too_large`
+- Run the two checks of [`windows-prereq.md`](windows-prereq.md) section 6 (the bind inside the instance, `Test-NetConnection` on this machine) against port 8001 of the deployed telemetry service
+- Load the instance running both services; control plane operations respond normally and the telemetry service stays within its systemd limits. The control plane load is that of `tools/cp-deploy/verify.py --soak`, and the telemetry load is uploads up to the global cap
+- Compare the `SetupTime` and `Rtt` percentiles on the CloudWatch dashboard with the analysis script's values once. If they differ, the numbers in `experiments.md` use the analysis script's values
 - With the queue full, metric recording on `[loop]` does not block and `telemetry_queue_dropped`
   increments. **Also check the size and the drop direction**
   - The ring size is owned by [`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation.

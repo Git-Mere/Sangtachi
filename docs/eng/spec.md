@@ -28,7 +28,7 @@ One-sentence definition:
 - **Linux console client**: an Ubuntu x64 console executable from the same sources. It includes the virtual adapter and mixes with Windows clients in one room. The GUI is Windows only ([ADR 0035](decisions/0035-linux-console-client.md))
 - **Own STUN client**: Binding Request construction, transaction ID, response parsing, `XOR-MAPPED-ADDRESS` decoding, timeout handling
 - **Python control plane (AWS EC2)**: room create/join, peer registration, virtual IP assignment, display name registration, candidate endpoint exchange
-- **Python telemetry service (AWS EC2)**: receives and stores connection results and performance metrics. **It is a separate service from the control plane.** The boundary contract is in [`architecture.md`](architecture.md) 3.4 Telemetry Service
+- **Python telemetry service (AWS EC2)**: receives and stores connection results and performance metrics, and sends CloudWatch metrics. **It is a separate service from the control plane.** The boundary contract is in [`architecture.md`](architecture.md) 3.4 Telemetry Service
 - **UDP hole punching**: simultaneous bidirectional transmission, retries, keepalive, failure reason classification
 - **Own tunnel protocol**: 20-byte wire header, `HELLO`/`HELLO_ACK`/`KEEPALIVE`/`DATA`/`PING`/`PONG`/`CLOSE`/`ROSTER`, serialization and corrupt packet validation
 - **Windows virtual network adapter integration**: adapter creation and packet read/inject through Wintun, virtual IP address and route configuration through the Windows IP Helper API
@@ -82,7 +82,7 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-11 | The receiver decapsulates `DATA` packets and injects the original IP packet into the virtual adapter. Before injection it validates inner IPv4 validity, that the inner source IP matches the sending peer's virtual IP, and that the inner destination IP is its own virtual IP. |
 | FR-12 | When a player enters `10.100.0.1:25565` in the Minecraft server address field, the client connects to the server on the remote host. |
 | FR-13 | Every connection attempt records success or failure and, on failure, a per-stage code (`STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED`). |
-| FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. |
+| FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. The telemetry service stores what it receives and emits metrics for aggregation to Amazon CloudWatch. A CloudWatch dashboard draws the graphs. |
 | FR-15 | The client provides five actions through a GUI: create a room under a chosen name and show the room code, join by entering a name and a room code, a member list with each member's name and connection status, display of the FR-13 per-stage code on failure, and quit by closing the window. Any other screen is out of scope. |
 | FR-16 | A peer that creates or joins a room chooses a display name. The name is unique within the room. Places a person sees (the failure line, the member list) refer to a member by this name. The name is used only for display, not for peer identification or packet validation. [`control_plane.md`](control_plane.md) 2.7 `name` owns the format ([ADR 0015](decisions/0015-refer-to-members-by-display-name.md)). |
 
@@ -142,9 +142,9 @@ must not import it.
 reasoning and its cost.
 
 **What NFR-10 does not cover.** Resource isolation is not part of this requirement. While the
-two services share one instance, shared resource exhaustion **remains a risk.** It does until an
-isolation mechanism is chosen. The boundary contract is in `architecture.md` 3.4 Telemetry
-Service.
+two services share one instance, shared resource exhaustion **remains a risk.** The isolation mechanisms only lower the bound on
+that risk. They do not remove it. The boundary contract and the isolation mechanisms are in
+`architecture.md` 3.4 Telemetry Service.
 
 ### Constraints
 
@@ -152,7 +152,7 @@ Service.
 |----|------|
 | C-1 | The client targets are Windows 10 / 11 x64 and Ubuntu 24.04 or later x64. Ubuntu is the console executable only. The demonstration is done on Windows. |
 | C-2 | The client language is C++20, built with CMake. Each OS's native APIs are used instead of a high-level networking framework (Windows API, POSIX and Linux API). |
-| C-3 | The control server and telemetry service are written in Python. The deployment target is **two processes on a single AWS EC2 instance** (separate ports) and Amazon DynamoDB. Beyond the standard library, the AWS SDK (`boto3`) is used. `boto3` was approved under NFR-5. |
+| C-3 | The control server and telemetry service are written in Python. The deployment target is **two processes on a single AWS EC2 instance** (separate ports), Amazon DynamoDB, and Amazon CloudWatch. Beyond the standard library, the AWS SDK (`boto3`) is used. `boto3` was approved under NFR-5. |
 | C-4 | Must be completable within one semester. **Phases are not pinned to specific weeks.** Progress speed decides, so fixing a week allocation in the document soon diverges from fact. |
 | C-5 | If scope is exceeded, **remove from the lowest priority first.** The tiers and their cost are set by "Cost of priority removal" below. |
 

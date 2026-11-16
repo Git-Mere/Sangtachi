@@ -50,7 +50,7 @@ There are two reasons.
 | Thread | Responsibility | Shared state |
 |--------|------|-----------|
 | `[loop]` | UDP receive, Wintun receive, console commands, timers, session state, routing, all sending | **No tunnel state.** Shares only one end of four queues (telemetry, console, control request, control response) and the shutdown/cleanup events. The GUI build has one more, the screen queue |
-| `[telemetry]` | Consume the metric queue, upload to the telemetry service. Phase 9 onward | One queue |
+| `[telemetry]` | Consume the metric queue, upload to the telemetry service. Phase 9 onward. Absent when telemetry is off ([`architecture.md`](architecture.md) 3.5 Startup Input) | One queue |
 | `[console]` | Read standard input. Present only in the console build | One command queue |
 | `[control]` | Control plane TCP calls, DNS resolution. Phase 3 onward | One request queue and one response queue (chapter 8 The `[control]` Thread) |
 | `[gui]` | Qt event loop, the window, human actions. Present only in the GUI build | One command queue and one screen queue, the shutdown/cleanup events |
@@ -436,6 +436,8 @@ list.
   - The "expiry value" table in the same chapter (discard list, nonce, probe, `pending_pings`)
     holds **a lifetime attached to each item**, not a session timer, so it is checked while
     walking those items
+  - The telemetry interval (`TELEMETRY_INTERVAL_S`) is one session timer outside the table in `protocol.md` chapter 11. It sends
+    nothing on the wire. Its value and start time are in [`architecture.md`](architecture.md) chapter 9 Telemetry Upload
 - `protocol.md` chapter 11 Timers defines the deadline comparison as `deadline <= now` and defines
   priority by dequeue time. Receive events dequeued in the same iteration are processed before
   that iteration's timers. **This loop order, drain receives first and run timers after, is the
@@ -495,18 +497,18 @@ No struct gets a "thread safe" comment. Single ownership is the only rule, and t
 - Telemetry uses **its own TCP socket to the telemetry service.** It is not shared with the
   control plane socket. The single-socket constraint in [`protocol.md`](protocol.md) chapter 6
   Socket Ownership applies only to the UDP data plane
+- `[telemetry]` sends each record over its own connection. Before sending, it resolves the service address on this thread. Even if
+  resolution is synchronous, it does not block `[loop]`. If resolution fails, that record is an upload failure
 - **There is not a single lock in the data plane.**
 
-**The ring holds 256 entries.** The basis is the background production rate of automatic
-periodic metrics. The fixed-period items attach per session (`PING` at 5 seconds, keepalive at 15
-seconds, the host's `ROSTER` at 15 seconds) and the cap on the number of sessions is a single
-digit, so their sum is a few records per second. At that rate 256 slots hold minutes' worth, which
-covers a span where one upload hits the socket timeout (chapter 7 Shutdown) and consumption falls
-behind by a few seconds.
+**The ring holds 256 entries.** The basis is the production rate of records. There is one record per attempt at
+establishment and one at end, and one per interval per `CONNECTED` session ([`architecture.md`](architecture.md) chapter 9
+Telemetry Upload). The cap on the number of sessions is a single digit, so normally it is fewer than ten records per minute. At
+that rate 256 slots hold tens of minutes' worth, which covers a span where uploads hit the socket timeout (chapter 7 Shutdown)
+again and again and consumption falls behind.
 
-**Bursts are not covered by this size.** Test-driven consecutive connection attempts, manual
-RTT samples, and spans where drop counters pile up can produce several records in the same
-second, and then it fills faster. Then new records are dropped. That is the intended behavior.
+**Bursts are not covered by this size.** Test-driven consecutive connection attempts can produce several establishment
+records in the same second, and then it fills faster. Then new records are dropped. That is the intended behavior.
 
 > **Why.** Metrics are a thing that tolerates loss, and raising the size to cover bursts only
 > holds stale metrics longer during an outage.
@@ -570,6 +572,9 @@ It holds whether it is in the lobby, the role, whether a control request is outs
   signaling it wakes this wait as well, immediately.
 - `[telemetry]` sets `SO_SNDTIMEO` / `SO_RCVTIMEO` to 1.5 seconds on the upload socket. It
   checks the shutdown event between uploads.
+- **When `[telemetry]` sees the shutdown event, it does not end right away.** It waits for the (7) cleanup-complete event
+  below. That is when it becomes certain that (3) has put in the last records. After that it drains what is left in the queue,
+  sends the records one by one, and ends. How much it sends is cut off by the (8) join bound.
 
 **1.5 seconds does not bring the total time of one upload under 2 seconds.** The two timeouts
 are per operation, so if send and receive each hit theirs the sum goes up to 3 seconds. So what
@@ -620,7 +625,7 @@ so before that (8) is `[telemetry]` only.
 |---|---------|
 | 1 | signal the shutdown event (if not already) |
 | 2 | send `CLOSE` once per target session as defined by [`protocol.md`](protocol.md) 5.6 `CLOSE`. That section defines the targets and reason values. The conditions are not restated here |
-| 3 | **write the line of each unfinished attempt to the local record file** ([`architecture.md`](architecture.md) chapter 9). A session that had reached `CONNECTED` gets the end line `CLOSED`; an attempt that was still establishing gets the establishment line `ABORTED`. A session already in a terminal state has written that line and does not write it again |
+| 3 | **write the line of each unfinished attempt to the local record file** ([`architecture.md`](architecture.md) chapter 9). A session that had reached `CONNECTED` gets the end line `CLOSED`; an attempt that was still establishing gets the establishment line `ABORTED`. A session already in a terminal state has written that line and does not write it again. For each line written, a record of `architecture.md` chapter 9 Telemetry Upload is put on the queue |
 | 4 | **emit all counters as a `counter` event** (`architecture.md` chapter 9) |
 | 5 | end the adapter session |
 | 6 | clean up the adapter/address/route |

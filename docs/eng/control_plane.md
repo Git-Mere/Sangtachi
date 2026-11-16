@@ -1789,7 +1789,7 @@ before listening succeeds. Exceptions after listening propagate as they are.
 It does not wait for in-flight requests. The results of those requests can be missing from the
 counters at shutdown, and the client gets a transport error and sends again per 8.3 Error
 Classification and Retry. The security group opens inbound TCP 8000. The telemetry service's
-port is outside this document's scope and is a [`roadmap.md`](roadmap.md) Phase 9 pre-start item.
+port and deployment are outside this document's scope and are in [`architecture.md`](architecture.md) 3.4 Telemetry Service.
 
 **Deployment environment.** The values below were confirmed on the real instance and table. Actual
 values such as the region, table name, public address, and account details are not kept in the
@@ -1805,9 +1805,9 @@ public repo. They are kept in `deploy/aws.local.md` inside the repo, and `.gitig
 | Security group inbound | TCP 8000 allowed from anywhere | Console |
 | Public address | Elastic IP. The client is given an IPv4 literal. No DNS name is used | Console. [`windows-prereq.md`](windows-prereq.md) section 10 |
 | Table | The two keys of 6.2 (`pk`, `sk`), TTL attribute `ttl`, no index | Console |
-| Capacity | provisioned, RCU 25, WCU 25 | Console. "Capacity" below |
+| Capacity | provisioned, RCU 25, WCU 25. When split with the telemetry table, it becomes RCU 20, WCU 20 | Console. "Capacity" below |
 
-**The IAM role needs six actions.** The resource is narrowed to that one table.
+**The IAM role needs six actions.** The resource is narrowed to that one table. When the telemetry service is deployed, its permissions are added to the same role. That list is in `architecture.md` 3.4 Telemetry Service.
 
 | Action | Where it is used |
 |------|-----------|
@@ -1831,6 +1831,11 @@ repository owner decided this.
 payer account, and applies when the table class is Standard. It was confirmed that the account's
 Free Tier page shows it as "Always Free monthly allowance".
 
+**That limit is shared with the telemetry table.** After the split, this table is RCU 20, WCU 20 and the telemetry table is RCU 5, WCU 5
+([`architecture.md`](architecture.md) 3.4 Telemetry Service). The telemetry service reads this table's `ROOM` item once per
+received record. It is a read of 4KB or less that is not strongly consistent, so it costs 0.5 RCU each time, and the service's
+global cap is 5 per second, so it is at most 2.5 RCU/s. When the console change from 25 to 20 happens is owned by [`roadmap.md`](roadmap.md) Phase 9.
+
 The load is the worst case under the assumption that each item is 1KB or less. A write uses 1 WCU
 per item, and a strongly consistent `Query` uses RCU equal to the total bytes read rounded up in
 4KB units (the read/write units section of the AWS DynamoDB Developer Guide). One room has at most
@@ -1843,9 +1848,9 @@ per item, and a strongly consistent `Query` uses RCU equal to the total bytes re
 | Reads of `host_report` | Two `Query`s per call (4.6). If the room has just become full it is 20KB, so 5 RCU per `Query` and 10 RCU per call. The interval is set by the previous response, so that call can come 5 seconds later, and the periodic calls alone give a worst case of 2 RCU/s. The immediate call when a session ends adds 10 RCU per call |
 | One player polling with `get_peers` | One `Query` every 0.5 seconds. With 20 items it is 20KB, so 5 RCU, 10 RCU/s. It runs only until ready |
 
-One room fits within 25 for writes. For reads, during the few seconds when four players poll at the
+One room fits within 20 for writes. For reads, during the few seconds when four players poll at the
 same time, polling alone is a worst case of 40 RCU/s, and the `host_report` reads on top of that go
-over 25. The excess can be absorbed by burst capacity, where DynamoDB keeps up to 300 seconds of
+over 20. The excess can be absorbed by burst capacity, where DynamoDB keeps up to 300 seconds of
 unused capacity. It is not guaranteed, though. The same guide says that reserve can be used for
 background work without notice, so throttling can happen. Then the client gets `internal` (the 6.3
 cancellation reason table) and retries per 8.3 or waits for the next poll. If several rooms are
@@ -2070,7 +2075,5 @@ per table under `control-server/tests/mutants/`, and the runner `tests/mutate.py
 
 | What | Where and when |
 |------|-------------|
-| Telemetry service port, schema, authentication | Outside this document's scope. [`roadmap.md`](roadmap.md) Phase 9 |
-| Whether the two services share one table, whether IAM is split | [ADR 0004](decisions/0004-state-store-dynamodb.md) deferred it to Phase 9 |
 | TLS, caller authentication | Stretch. 1.2 |
 | Whether `ROOM_LEASE_S` (120) and the two signalling intervals are right | After the Phase 8 demo. Judged by how long a room takes to disappear after the host dies, and by how long a late participant waits |

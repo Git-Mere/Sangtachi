@@ -293,8 +293,8 @@ expected = position - baseline
 더한 뒤 집계를 초기화한다. 구간 밖(첫 `CONNECTED` 전, 재협상 뒤 다음 `CONNECTED` 전)에서는 지금
 구간의 값이 0이다. 세션이 끝나면 마지막 구간의 값이 그대로 남고 더 바뀌지 않는다. 세션의 값은 그
 합계에 지금 구간의 값을 더한 것이다. 이 값을 로그로 내는 시점과 형식은
-[`architecture.md`](architecture.md) 9장 로그 출력이 갖는다. 손실률은 10초 주기로 스냅샷을 찍어
-텔레메트리 서비스에 올린다.
+[`architecture.md`](architecture.md) 9장 로그 출력이 갖는다. 텔레메트리 서비스에 올리는 구간
+값은 `architecture.md` 9장 텔레메트리 업로드가 정한다.
 
 ---
 

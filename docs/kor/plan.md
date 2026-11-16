@@ -15,8 +15,11 @@
 
 ## 다음에 할 일
 
-Phase 1~8 은 끝났고 시연(2026-11-05)도 끝났다. 다음은 Phase 9 다. 착수 전에 정할 것은 `roadmap.md` Phase 9 작업이 갖는다.
-`experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성도 그때 정한다.
+Phase 1~8 은 끝났고 시연(2026-11-05)도 끝났다. 다음은 Phase 9 구현이다. 착수 전 결정은 [ADR 0039](decisions/0039-phase-9-착수-전-결정.md) 로 끝났다.
+
+- 남은 결정은 실측 계획 하나다. 실측 전에 정한다(`roadmap.md` Phase 9 작업)
+- AWS 콘솔 작업(테이블 용량, 새 테이블, IAM, 보안 그룹, 대시보드)은 소유자가 한다. 목록은 `roadmap.md` Phase 9 작업에 있다
+- `experiments.md` 의 Phase 9 장 구성은 실측 계획과 같이 정한다
 
 ## 시험 기기 `mere-galaxy`
 

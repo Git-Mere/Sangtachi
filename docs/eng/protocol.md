@@ -331,8 +331,8 @@ first `CONNECTED`, or after a renegotiation until the next `CONNECTED`) the curr
 session ends, the last segment's values stay as they are and do not change again. The session's values are those
 totals plus the current segment's values.
 When and in what form these values are logged is owned by
-[`architecture.md`](architecture.md) chapter 9 Log Output. The loss rate is snapshotted every 10 seconds and
-uploaded to the telemetry service.
+[`architecture.md`](architecture.md) chapter 9 Log Output. The segment values uploaded to the telemetry
+service are set by `architecture.md` chapter 9 Telemetry Upload.
 
 ---
 

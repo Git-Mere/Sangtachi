@@ -15,22 +15,18 @@
 
 ## 다음에 할 일
 
-Phase 1~8 은 끝났다. Phase 8 은 시연 전에 닫았다(소유자 결정). 검증 항목은 모두 돌았고 시연 자체는 아래 일정으로 남는다. 다음은
-Phase 9 다. 착수 전에 정할 것은 `roadmap.md` Phase 9 작업이 갖는다. `experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성도 그때
-정한다.
+Phase 1~8 은 끝났고 시연(2026-11-05)도 끝났다. 다음은 Phase 9 다. 착수 전에 정할 것은 `roadmap.md` Phase 9 작업이 갖는다.
+`experiments.md` 의 구성과 텔레메트리 서비스의 보고서 생성도 그때 정한다.
 
-Phase 9 전에 남은 일정이다.
+## 시험 기기 `mere-galaxy`
 
-1. **시연** (2026-11-05). 시연 망은 [ADR 0038](decisions/0038-시연-호스트를-집-wi-fi-에-둔다.md) 이다. 시연 플레이어는 시작 전에 GUI 를 한 번 띄워 둔다. 그 기기의 첫 기동이 두 번 실패했다([이슈 0006](issue_history/0006-첫-gui-실행이-adapter-eof-로-끝났다.md), [이슈 0007](issue_history/0007-첫-기동의-서브넷-검사가-상한을-넘겼다.md)). 실패하면 다시 띄운다
-2. **`mere-galaxy` 의 뒷정리** ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). Linux 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다
-   - `mere-galaxy` 는 시연의 호스트로 계속 쓴다. 시연 때는 소유자의 집 Wi-Fi 에 사람 없이 둔다([ADR 0038](decisions/0038-시연-호스트를-집-wi-fi-에-둔다.md)). 잠들지 않게 하고 전원을 연결한다. 시연이 끝나면 아래 둘을 같이 정리한다(소유자 결정)
-     - `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 지운다
-     - Wi-Fi 절전을 되돌린다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 지금은 `iw dev wlo1 set power_save off` 로 꺼 두었다. 재부팅하거나 다른 망에 붙으면 켜지므로 실측 전에 확인한다.
-       켜져 있으면 무선 지연이 평균 96ms 까지 오른다
-   - `mere-galaxy` 에 Java 25 와 Minecraft 서버 26.3(`~/mc-server`, 화이트리스트에 `mere_ko`, `Mere_galaxy`)을 깔았다. 화이트리스트에 친구 계정 `KOWP` 도 넣었다. 리허설 뒤 Sangtachi 호스트와 서버를 켜 둔 채다. 시연까지 둘지는 소유자가 정한다. 집 인터넷이 `ROOM_LEASE_S` 넘게 끊기면 방이 만료되어 다시 띄워야 한다
-   - `field-kit-p8` 의 Linux 빌드는 `mere-galaxy` 의 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
-   - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 리허설의 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
-   - 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
+Linux 시험 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)). 시연 뒤에도 시험에 계속 쓴다.
+
+- **메모.** `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 남겨 둔다. 계속 시험에 쓰기 때문이다(소유자 결정). 이 기기를 시험에서 뺄 때 지운다
+- Wi-Fi 절전은 재부팅하거나 다른 망에 붙으면 다시 켜진다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 켜져 있으면 무선 지연이 평균 96ms 까지 오르므로 실측 전에 `iw dev wlo1 set power_save off` 로 끈다
+- `field-kit-p8` 의 Linux 빌드는 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
+- `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
+- 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
 
 ## 대기 중인 것
 

@@ -7,7 +7,7 @@
 
 | 축 | 출처 | 지금 |
 |----|------|------|
-| 구현 | [`roadmap.md`](roadmap.md) | Phase 1~8 은 끝났다. 다음은 Phase 9 다 |
+| 구현 | [`roadmap.md`](roadmap.md) | Phase 1~8 은 끝났다. Phase 9 를 하고 있다 |
 | 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 사람이 직접 하는 실측. 두 번째 기기나 시연 상대가 있어야 한다 |
 | 대기 | 이 파일 "대기 중인 것" | 실측 밖의 대기 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
@@ -15,11 +15,19 @@
 
 ## 다음에 할 일
 
-Phase 1~8 은 끝났고 시연(2026-11-05)도 끝났다. 다음은 Phase 9 구현이다. 착수 전 결정은 [ADR 0039](decisions/0039-phase-9-착수-전-결정.md) 로 끝났다.
+Phase 9 의 코드(텔레메트리 서비스, 클라이언트의 레코드와 업로드, 배포 도구의 `tm` 대상, 분석 도구 `tools/tm-analysis`)는 구현했다.
+AWS 콘솔 작업은 대시보드만 남았다. 남은 것은 아래다.
 
-- 남은 결정은 실측 계획 하나다. 실측 전에 정한다(`roadmap.md` Phase 9 작업)
-- AWS 콘솔 작업(테이블 용량, 새 테이블, IAM, 보안 그룹, 대시보드)은 소유자가 한다. 목록은 `roadmap.md` Phase 9 작업에 있다
-- `experiments.md` 의 Phase 9 장 구성은 실측 계획과 같이 정한다
+| 무엇 | 누가 | 메모 |
+|------|------|------|
+| Linux 빌드와 `ctest` 확인 | 에이전트 | `mere-galaxy` 에 닿지 않아 못 했다(아래 시험 기기 절) |
+| GUI 빌드 확인 | 에이전트 | Qt 가 있는 빌드 폴더에서. 바뀐 것은 `gui_main` 의 인자 하나와 컴파일 정의 하나다 |
+| 텔레메트리 서비스의 실제 배포와 `verify.py --target tm` | 소유자 승인 뒤 | `deploy.py --target tm` 은 실제 인스턴스에서 돌려 보지 않았다 |
+| CloudWatch 대시보드 | 소유자 | `architecture.md` 3.4 CloudWatch 지표 |
+| 전체 상한까지의 부하를 거는 방법 | 결정 필요 | 출발지 예산이 분당 30 이라 한 기기로는 닿지 않는다(`roadmap.md` Phase 9 작업) |
+| 실측 계획 | 결정 필요 | 실측 전에 정한다(`roadmap.md` Phase 9 작업) |
+| `experiments.md` 의 Phase 9 장 | 실측 뒤 | 장 구성은 실측 계획과 같이 정한다. 분석의 한계는 이미 5장에 있다 |
+| 호스트 레코드와 짝지은 매핑 거동 표가 필요한가 | 소유자 질문 | 지금 분석 도구는 플레이어 자기 레코드의 값으로만 가른다. 홀펀칭은 양쪽 NAT 에 달렸다. 짝은 같은 `room_id` 와 호스트 `peer` = 플레이어 `peer_id` 로 찾을 수 있다 |
 
 ## 시험 기기 `mere-galaxy`
 

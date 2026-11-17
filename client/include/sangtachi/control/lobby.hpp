@@ -282,11 +282,23 @@ struct LogLine {
     std::vector<LogField> fields;
 };
 
+// 텔레메트리 레코드가 싣는 시도의 값 (architecture.md 6.3 모든 레코드의 필드, `establish` 에만 있는 필드).
+// 행동을 낸 순간의 값이다. 실행기가 행동을 할 때는 시도가 이미 끝나 Lobby 가 값을 지웠을 수 있다.
+struct AttemptFacts {
+    std::string room_id;              // 받기 전이면 비었다 (레코드의 null)
+    std::uint32_t self_peer_id = 0;   // 받기 전이면 0 (레코드의 null)
+    // 셋 다 6.3 의 정의다. STUN 이 성공하지 않았으면 앞의 둘이 없고, 상대 후보를 받기 전이면 same_lan 이 없다.
+    std::optional<bool> local_differs_public;
+    std::optional<bool> stun_same_endpoint;
+    std::optional<bool> same_lan;
+};
+
 // 상대 하나와의 세션을 연다 (protocol.md 9.1 `IDLE` -> `PUNCHING`).
 struct OpenSession {
     tunnel::NewSession request;
     LobbyRole role = LobbyRole::kNone;  // 이쪽의 역할. 기록 줄의 `role` 이다
     Millis setup_base_ms = 0;           // 수립 시간의 기점 (위 경계 표)
+    AttemptFacts facts;
 };
 
 struct StartPunch {
@@ -314,6 +326,7 @@ struct RecordAttempt {
     LobbyRole role = LobbyRole::kNone;
     std::optional<std::uint32_t> peer;
     std::string_view result;
+    AttemptFacts facts;
 };
 
 using LobbyAction = std::variant<SubmitRequest, StartStun, CancelStun, ArmTimer, CancelTimer,
@@ -337,11 +350,19 @@ using NonceSource = std::function<std::optional<ClientNonce>()>;
 // 단조 시계 밀리초. 수립 시간의 기점만 쓴다. 제품 경로는 platform::monotonic_ms 다.
 using LobbyClock = std::function<Millis()>;
 
+// 로컬 후보 수집 한 번의 결과.
+struct CollectedCandidates {
+    std::vector<Candidate> registration;  // register_candidate 에 싣는 등록 목록
+    // 판정을 지난 로컬 후보 주소 전부. 등록 목록의 중복 제거와 자르기 전이다. 반사 후보와 같은 엔드포인트라 등록
+    // 목록에서 빠진 로컬 주소도 든다. AttemptFacts::local_differs_public 이 본다.
+    std::vector<std::uint32_t> local_addresses;
+};
+
 // 로컬 후보 수집 한 번 (protocol.md 10.1 수집 시점). STUN 이 관측한 반사 후보를 받아 register_candidate
 // 에 실을 등록 목록을 돌려준다. 자기 서브넷 집합을 바꾸는 것과 수집 경고도 이 함수의 일이다. 제품 경로는
 // control/runner 가 peer::collect 로 만든다.
 using CandidateCollector =
-    std::function<std::vector<Candidate>(std::span<const network::Endpoint> reflexive)>;
+    std::function<CollectedCandidates(std::span<const network::Endpoint> reflexive)>;
 
 // 세션의 상태 전이 하나. 터널의 전이 콜백에서 베낀 값이다 (tunnel/tunnel.hpp set_transition_handler).
 struct SessionEvent {
@@ -434,7 +455,17 @@ private:
     struct Pair {
         std::string name;     // 상대의 표시 이름. FAIL 줄의 <상대>
         bool active = true;   // 세션이 아직 종료 상태가 아니다
+        std::optional<bool> same_lan;  // AttemptFacts::same_lan
     };
+
+    // 이 시도의 STUN 이 성공했을 때의 관측 (AttemptFacts). 자기 공인 IP 는 첫 관측의 IP 다.
+    struct StunView {
+        std::uint32_t public_ip = 0;
+        bool local_differs_public = false;
+        bool stun_same_endpoint = false;
+    };
+
+    [[nodiscard]] AttemptFacts facts(std::optional<bool> same_lan) const;
 
     void start_attempt(Batch& out, LobbyRole role, std::string_view room);
     void on_name(Batch& out, const LobbyCommand& command);
@@ -503,6 +534,8 @@ private:
     std::vector<std::uint32_t> announced_;  // control.peers 를 이미 낸 상대
     std::vector<std::uint32_t> departed_;   // 보고하지 못한 departed. MAX_PEERS - 1 이하
     std::map<std::uint32_t, Millis> first_seen_;  // 호스트 수립 시간의 기점
+
+    std::optional<StunView> stun_view_;
 
     // 플레이어.
     Millis stun_started_ = 0;                    // 수립 시간의 기점

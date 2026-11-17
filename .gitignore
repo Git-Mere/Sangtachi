@@ -47,6 +47,8 @@ Thumbs.db
 tools/nat-probe/results/**
 !tools/nat-probe/results/.gitkeep
 tools/nat-lifetime/results/**
+# 실측 묶음의 UTC 시간 범위와 환경, 내려받은 텔레메트리 레코드 (roadmap.md Phase 9).
+tools/tm-analysis/local/
 field-test/**
 !field-test/README.md
 !field-test/required-test.md

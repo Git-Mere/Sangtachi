@@ -73,14 +73,14 @@ def load_config(environ: Mapping[str, str]) -> Config:
     return Config(port, table, region, endpoint)
 
 
-def check_endpoint(url: str) -> None:
-    """SANGTACHI_CP_ENDPOINT. http 나 https, 호스트가 있고, 경로·질의·조각·사용자 정보가 없다.
+def check_endpoint(url: str, name: str = "SANGTACHI_CP_ENDPOINT") -> None:
+    """엔드포인트 변수(name). http 나 https, 호스트가 있고, 경로·질의·조각·사용자 정보가 없다.
 
     호스트는 허용 목록이다. 영문자·숫자·'-'·'.' 로 된 이름, 또는 괄호 안의 IPv6 리터럴(ipaddress 로 파싱)만 받는다.
 
     urlsplit 은 탭과 줄바꿈을 지우고 읽으므로 공백과 ASCII 밖의 글자를 먼저 거부한다. 오류 문구에 값을 싣지 않는다.
     """
-    bad = ConfigError("SANGTACHI_CP_ENDPOINT 는 http://호스트[:포트] 나 https://호스트[:포트] 여야 한다")
+    bad = ConfigError(f"{name} 는 http://호스트[:포트] 나 https://호스트[:포트] 여야 한다")
     if not url.isascii() or any(ch.isspace() for ch in url):
         raise bad
     try:

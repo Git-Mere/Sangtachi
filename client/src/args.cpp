@@ -170,7 +170,8 @@ std::string_view to_token(ArgError error) noexcept {
     return "unknown";
 }
 
-ParseResult parse_args(std::span<const std::string_view> argv, std::string_view default_server) {
+ParseResult parse_args(std::span<const std::string_view> argv, std::string_view default_server,
+                       std::string_view default_telemetry) {
     Args args;
     bool saw_positional = false;
 
@@ -199,7 +200,7 @@ ParseResult parse_args(std::span<const std::string_view> argv, std::string_view 
 
         const bool takes_value =
             token == "--server" || token == "--room" ||
-            token == "--stun" || token == "--name";
+            token == "--stun" || token == "--name" || token == "--telemetry";
         if (!takes_value) {
             return fail(ArgError::UnknownOption, token);
         }
@@ -215,6 +216,13 @@ ParseResult parse_args(std::span<const std::string_view> argv, std::string_view 
                 return fail(parsed.error, value);
             }
             args.server = std::move(*parsed.value);
+        } else if (token == "--telemetry") {
+            // 형식과 검사는 --server 와 같다 (architecture.md 3.5).
+            auto parsed = parse_host_port(value, kTelemetryPort, false);
+            if (!parsed.value) {
+                return fail(parsed.error, value);
+            }
+            args.telemetry = std::move(*parsed.value);
         } else if (token == "--stun") {
             auto parsed = parse_host_port(value, 0, true);
             if (!parsed.value) {
@@ -264,6 +272,13 @@ ParseResult parse_args(std::span<const std::string_view> argv, std::string_view 
     }
     if (!args.server) {
         return fail(ArgError::MissingServer, "--server");
+    }
+    if (!args.telemetry && !default_telemetry.empty()) {
+        auto parsed = parse_host_port(default_telemetry, kTelemetryPort, false);
+        if (!parsed.value) {
+            return fail(parsed.error, default_telemetry);
+        }
+        args.telemetry = std::move(*parsed.value);
     }
 
     ParseResult result;

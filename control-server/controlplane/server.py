@@ -45,7 +45,12 @@ class Request:
 
 # ---------------------------------------------------------------- 3.3 파싱
 
-_PATHS = {("/v1/" + op).encode("ascii"): op for op in OPS}
+def paths_for(ops) -> dict[bytes, str]:
+    """요청 대상 바이트 -> 연산 이름. 3.3 의 경로 /v1/<op>."""
+    return {("/v1/" + op).encode("ascii"): op for op in ops}
+
+
+_PATHS = paths_for(OPS)
 # 메서드 SP 대상 SP HTTP/1.1. 토큰은 공백과 제어 문자가 없는 ASCII 다. 탭과 공백 둘은 여기서 걸린다.
 _REQUEST_LINE = re.compile(rb"([!-~]+) ([!-~]+) HTTP/1\.1")
 # 3.3 요청 형식에 있는 헤더와 Transfer-Encoding. 이 이름이 두 번 오면 거부한다. 나머지는 무시한다.
@@ -81,7 +86,7 @@ async def _read_head(reader: asyncio.StreamReader) -> tuple[bytes, bytes, bool]:
         buf += chunk
 
 
-def _check_request_line(line: bytes) -> str:
+def _check_request_line(line: bytes, paths: Mapping[bytes, str]) -> str:
     """검사 순서 1~3. 연산 이름을 돌려준다."""
     m = _REQUEST_LINE.fullmatch(line)
     if m is None:
@@ -91,7 +96,7 @@ def _check_request_line(line: bytes) -> str:
     if not target.startswith(b"/") or target.endswith(b"/") or b"%" in target:
         raise _bad("bad request line")
     _check_method(method)
-    op = _check_path(target)
+    op = _check_path(target, paths)
     return op
 
 
@@ -100,8 +105,8 @@ def _check_method(method: bytes) -> None:
         raise OpError("method_not_allowed")
 
 
-def _check_path(target: bytes) -> str:
-    op = _PATHS.get(target)
+def _check_path(target: bytes, paths: Mapping[bytes, str]) -> str:
+    op = paths.get(target)
     if op is None:
         raise OpError("unknown_op")
     return op
@@ -169,7 +174,7 @@ def _parse_body(body: bytes) -> dict:
     return obj
 
 
-async def read_request(reader: asyncio.StreamReader) -> Request:
+async def read_request(reader: asyncio.StreamReader, paths: Mapping[bytes, str] = _PATHS) -> Request:
     """3.3 검사 순서 1~9 를 그대로 돈다. 실패는 OpError, 상대가 닫으면 Closed.
 
     시간 제한(검사 순서 8, 3.4)은 부르는 쪽이 이 코루틴 전체에 건다.
@@ -179,7 +184,7 @@ async def read_request(reader: asyncio.StreamReader) -> Request:
     if line_end < 0:
         # 요청 줄이 상한 안에서 끝나지 않았다. 1~3 을 판정할 수 없다.
         raise OpError("too_large", "header too large", 431)
-    op = _check_request_line(head[:line_end])
+    op = _check_request_line(head[:line_end], paths)
     if over:
         raise OpError("too_large", "header too large", 431)
     headers = _parse_headers(head[:-4].split(b"\r\n")[1:])
@@ -220,15 +225,19 @@ def error_response(exc: OpError) -> bytes:
 
 # ---------------------------------------------------------------- 6.4 속도 제한
 
-REFILL_INTERVAL_S = 60 / RATE_LIMIT_REFILL_PER_MIN  # 6초에 1개
 COUNTED_ERRORS = frozenset({"room_not_found", "room_expired", "unauthorized"})
 
 
 class RateTable:
-    """출발지 IP -> [토큰, 마지막 보충 시각]. clock 은 초 단위 단조 시계다."""
+    """출발지 IP -> [토큰, 마지막 보충 시각]. clock 은 초 단위 단조 시계다.
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic, counters: Counter | None = None) -> None:
+    bucket 과 refill_per_min 의 기본값은 6.4 의 값이다. 텔레메트리 서비스가 자기 값을 준다 (architecture.md 3.4)."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic, counters: Counter | None = None, *,
+                 bucket: int = RATE_LIMIT_BUCKET, refill_per_min: int = RATE_LIMIT_REFILL_PER_MIN) -> None:
         self._clock = clock
+        self._bucket = bucket
+        self._interval = 60 / refill_per_min
         self._entries: dict[str, list] = {}
         self.counters = counters if counters is not None else Counter()
 
@@ -245,11 +254,11 @@ class RateTable:
         e = self._entries.get(src)
         if e is None:
             return None
-        steps = int((now - e[1]) // REFILL_INTERVAL_S)
+        steps = int((now - e[1]) // self._interval)
         if steps > 0:
             e[0] += steps
-            e[1] += steps * REFILL_INTERVAL_S
-        if e[0] >= RATE_LIMIT_BUCKET:  # 상한에 닿은 항목은 없는 것과 같다. 그래서 상한을 따로 자르지 않는다
+            e[1] += steps * self._interval
+        if e[0] >= self._bucket:  # 상한에 닿은 항목은 없는 것과 같다. 그래서 상한을 따로 자르지 않는다
             del self._entries[src]
             return None
         return e
@@ -272,7 +281,7 @@ class RateTable:
             # 밀어내지 않는다. 새 출발지를 제한 없이 통과시킨다.
             self.counters["rate_table_full"] += 1
             return
-        self._entries[src] = [RATE_LIMIT_BUCKET - 1, now]
+        self._entries[src] = [self._bucket - 1, now]
 
     def _sweep(self, now: float) -> None:
         """다시 오지 않는 출발지의 항목도 보충으로 상한에 닿으면 지운다."""
@@ -294,6 +303,7 @@ async def handle_request(
     counters: Counter,
     read_timeout_s: float = SERVER_READ_TIMEOUT_S,
     seen: dict | None = None,
+    paths: Mapping[bytes, str] = _PATHS,
 ) -> bytes | None:
     """연결 하나의 요청을 읽고 응답 바이트를 돌려준다. None 은 응답 없이 닫는다는 뜻이다.
 
@@ -302,7 +312,7 @@ async def handle_request(
     """
     try:
         try:
-            req = await asyncio.wait_for(read_request(reader), read_timeout_s)
+            req = await asyncio.wait_for(read_request(reader, paths), read_timeout_s)
         except OpError as exc:
             return error_response(exc)
         except TimeoutError:
@@ -362,6 +372,9 @@ class Server:
 
     dispatch 는 이 Server 의 스레드 풀(max_inflight 개)에서 돈다. serve 가 그 풀을 이벤트 루프의 기본 실행기로
     건다. handle_request 의 asyncio.to_thread 가 그 풀로 간다.
+
+    paths, emit, log_src, counter_names 는 텔레메트리 서비스가 이 수락 루프를 쓰려고 준다(architecture.md 3.4 입력 상한,
+    설정과 배포). 기본값이 제어 서버의 것이다. 카운터 값은 이 Server 의 것과 service_counters 의 것을 더한다.
     """
 
     def __init__(
@@ -376,8 +389,16 @@ class Server:
         linger_s: float = LINGER_S,
         timeout: Callable[[float], AbstractAsyncContextManager] = asyncio.timeout,
         clock: Callable[[], float] = time.monotonic,
+        paths: Mapping[bytes, str] = _PATHS,
+        emit: Callable[..., None] = log.emit,
+        log_src: bool = True,
+        counter_names: tuple[str, ...] = COUNTER_NAMES,
     ) -> None:
         self.dispatch = dispatch
+        self.paths = paths
+        self._emit = emit
+        self.log_src = log_src
+        self.counter_names = counter_names
         self.counters: Counter = Counter()
         self.rate = RateTable(counters=self.counters)
         self.service_counters = service_counters
@@ -396,16 +417,16 @@ class Server:
     # ------------------------------------------------------------ 카운터
 
     def counter_values(self) -> dict[str, int]:
-        """7.5 카운터 여섯의 현재 값. 0 인 것도 넣는다."""
+        """7.5 카운터의 현재 값. 0 인 것도 넣는다."""
         ext = self.service_counters() if self.service_counters is not None else {}
         out = {}
-        for name in COUNTER_NAMES:
-            out[name] = ext.get(name, 0) if name == FALLBACK_COUNTER else self.counters[name]
+        for name in self.counter_names:
+            out[name] = self.counters[name] + ext.get(name, 0)
         return out
 
     def emit_counters(self) -> None:
         for name, value in self.counter_values().items():
-            log.emit("INFO", "counter", name=name, value=value)
+            self._emit("INFO", "counter", name=name, value=value)
 
     async def _tick(self, period_s: float) -> None:
         while True:
@@ -436,7 +457,8 @@ class Server:
             try:
                 seen: dict = {}
                 out = await handle_request(reader, src, rate=self.rate, dispatch=self.dispatch,
-                                           counters=self.counters, read_timeout_s=self.read_timeout_s, seen=seen)
+                                           counters=self.counters, read_timeout_s=self.read_timeout_s, seen=seen,
+                                           paths=self.paths)
                 if out is not None and await self._answer(writer, out, seen.get("op", "-"), src, start):
                     if "op" not in seen:  # 파싱이 끝나지 않았다. 요청 바이트가 남아 있을 수 있다
                         await self._linger(reader, writer)
@@ -461,7 +483,10 @@ class Server:
             sent = False
         status, error = _status_and_error(out)
         ms = int((self._clock() - start) * 1000)
-        log.emit("INFO", "http.request", op=op, status=status, error=error, src=src, ms=ms)
+        fields = {"op": op, "status": status, "error": error, "ms": ms}
+        if self.log_src:
+            fields["src"] = src
+        self._emit("INFO", "http.request", **fields)
         return sent
 
     async def _linger(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -491,7 +516,7 @@ class Server:
         srv = await asyncio.start_server(self.on_connection, host, port)
         bound = srv.sockets[0].getsockname()[1]
         self.listening = True
-        log.emit("INFO", "server.started", bind=host, port=bound)
+        self._emit("INFO", "server.started", bind=host, port=bound)
         ticker = asyncio.create_task(self._tick(counter_period_s))
         try:
             if on_ready is not None:

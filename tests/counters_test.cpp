@@ -21,7 +21,7 @@ using sangtachi::to_token;
 TEST_CASE("counters: the table matches what the documents name", "[counters]") {
     // 이름은 protocol.md 5.7 / 6장 / 7장 / 8장 과 concurrency.md 3장 / 6장 / 8장 이 갖는다.
     // 개수가 바뀌면 이 줄을 먼저 보게 된다.
-    REQUIRE(kCounterCount == 62);
+    REQUIRE(kCounterCount == 63);
 }
 
 TEST_CASE("counters: every token is unique, non-empty and sorted", "[counters]") {
@@ -51,6 +51,9 @@ TEST_CASE("counters: known names are present", "[counters]") {
     // Phase 1 검증이 직접 읽는 둘과, 문서가 예외로 다루는 하나.
     REQUIRE(tokens.count("drop_oversize_datagram") == 1);
     REQUIRE(tokens.count("console_queue_dropped") == 1);
+    // architecture.md 6.3: 큐에서 버린 것과 원격이 받지 못한 것은 다른 이름이다.
+    REQUIRE(tokens.count("telemetry_queue_dropped") == 1);
+    REQUIRE(tokens.count("telemetry_upload_failed") == 1);
     REQUIRE(tokens.count("tx_err_send") == 1);
     // 8.5 송신 측 검증과 5.7 ROSTER 가 쓰는 이름 (protocol.md).
     REQUIRE(tokens.count("tx_drop_no_route") == 1);

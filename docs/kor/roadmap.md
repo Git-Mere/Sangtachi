@@ -1191,6 +1191,8 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 텔레메트리 서비스 구현과 배포 (제어 서버와 별개 프로세스, 별개 포트). 방 대조, 입력 상한, 저장, CloudWatch 지표, systemd
   자원 제한과 journald 상한(`architecture.md` 3.4)
 - 배포 도구를 넓힌다. [`tools/cp-deploy`](../../tools/cp-deploy/README.md) 가 대상을 골라 텔레메트리 서비스도 올린다
+- **텔레메트리 부하를 거는 방법은 부하 확인(아래 검증) 전에 정한다.** 출발지 예산이 출발지마다 분당 30 이라 한 기기에서는 전체
+  상한(초당 5)에 닿지 못한다
 - **AWS 콘솔 작업은 저장소 소유자가 한다.** 서비스를 처음 배포하기 전에 한다
   - 제어 평면 테이블의 용량을 RCU 20, WCU 20 으로 줄인다 ([`control_plane.md`](control_plane.md) 7.6)
   - 텔레메트리 테이블을 만든다. 키, 용량, TTL 은 `architecture.md` 3.4 텔레메트리 서비스의 저장이 정한다
@@ -1200,11 +1202,23 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - **분석 스크립트를 `tools/` 에 둔다.** DynamoDB 에서 UTC 시간 범위의 레코드를 읽어 [`experiments.md`](experiments.md) 에 실을
   표를 만든다. `boto3` 와 표준 라이브러리만 쓴다
   - 시도 수와 성공 수, Wilson 구간, 실패 코드별 개수, 관측된 매핑 거동별 비교, 동일 LAN 여부별, 빌드 종류별, 호스트 쪽 수립 시간
-  - 성공과 세션 값은 `room_known` 이 `true` 인 레코드만 쓴다. 수립 전 실패는 대조할 방이 없으므로 다 쓴다. 이 거르기의 한계를
+  - 시도와 성공은 플레이어의 `establish` 만 센다. 결과마다 아래처럼 센다
+
+    | 결과 | 어떻게 세나 |
+    |------|-------------|
+    | `OK`, `room_known` 이 `true` | 성공. 분모와 분자에 든다 |
+    | `OK`, `room_known` 이 `true` 가 아님 | 분모와 분자에서 뺀다. "제외한 OK" 로 개수만 적는다 |
+    | `ABORTED` | 분모에서 뺀다. 개수만 적는다 |
+    | 그 밖(`PEER_FAILED` 포함) | `room_known` 과 무관하게 실패. 수립 전 실패는 대조할 방이 없기 때문이다 |
+
+  - 성공률의 구간은 95% Wilson 점수 구간이다
+  - 세션 값(호스트 쪽 수립 시간, RTT, 지터, 손실, 세션 지속 시간)은 `room_known` 이 `true` 인 레코드만 쓴다. 이 거르기의 한계를
     `experiments.md` 에 적는다
   - 전송 순번의 빈 번호로 보이는 누락 수를 함께 낸다. 시도의 마지막 레코드나 시도 전체를 잃은 것은 이 수에 들지 않는다
+  - 도구는 [`tools/tm-analysis`](../../tools/tm-analysis/README.md) 다. 무엇을 어느 레코드에서 세는지의 표와 실측 묶음 파일의 형식은
+    그 README 가 갖는다
 - README 와 배포물 안내에 수집 항목을 적는다. 주소, 후보, 표시 이름을 올리지 않는다는 것도 적는다
-- 실측 묶음마다 UTC 시간 범위와 환경을 `.gitignore` 로 막은 로컬 파일에 적는다. 텔레메트리는 환경을 싣지 않으므로 분석 스크립트가 이것으로 가른다. `experiments.md` 에는 날짜와 환경만 싣는다. 시각을 날짜까지만 공개하는 것은 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 따라야 할 조치 2번이다
+- 실측 묶음마다 UTC 시간 범위와 환경을 `.gitignore` 로 막은 로컬 파일(`tools/tm-analysis/local/`)에 적는다. 텔레메트리는 환경을 싣지 않으므로 분석 스크립트가 이것으로 가른다. `experiments.md` 에는 날짜와 환경만 싣는다. 시각을 날짜까지만 공개하는 것은 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 따라야 할 조치 2번이다
 - 복수 네트워크 환경 테스트
 - 성공한 NAT 통과 사례와 실패 사례 비교 (NAT 유형이 아니라 관측된 매핑 거동 기준)
 - 실험 결과 시각화. 그래프는 CloudWatch 대시보드에서 뽑는다. `experiments.md` 에 싣는 그래프는 시간축에 시각이 보이지 않게 경과 시간이나 날짜로 바꾼다(ADR 0001 따라야 할 조치 2번)
@@ -1255,6 +1269,9 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 입력 상한이 걸림. 출발지 예산을 넘으면 `rate_limited`, 전체 상한이나 동시 연결을 넘으면 `unavailable`, 본문 상한을 넘으면 `too_large`
 - 배포한 텔레메트리 서비스의 포트 8001 에 [`windows-prereq.md`](windows-prereq.md) 6절의 두 판정(인스턴스 안의 bind, 이 기기의 `Test-NetConnection`)을 돌림
 - 두 서비스를 함께 띄운 인스턴스에 부하를 걸어 제어 평면 연산이 정상 응답하고 텔레메트리 서비스가 systemd 제한 안에 머묾. 제어 평면은 `tools/cp-deploy/verify.py --soak` 의 부하, 텔레메트리는 전체 상한까지의 업로드다
+  - 텔레메트리 부하의 레코드는 `verify.py --tm-load` 의 것을 쓴다. 호스트의 `interval`, `room_id` 가 `null`, `build_kind` 가
+    `test` 다. 그래서 CloudWatch 지표와 분석 스크립트의 시도, 성공, 세션 값에 들지 않는다. 텔레메트리 테이블에는 남는다. 전송
+    순번은 받아들여진 요청에서만 늘므로 거절된 요청은 누락 수에 들지 않는다
 - CloudWatch 대시보드의 `SetupTime` 과 `Rtt` 백분위수를 분석 스크립트의 값과 한 번 대조함. 어긋나면 `experiments.md` 의 숫자는 분석 스크립트의 것을 쓴다
 - 큐가 가득 찬 상태에서 `[loop]`의 지표 기록이 블록되지 않고 `telemetry_queue_dropped` 가
   증가함. **크기와 버리는 방향도 같이 본다**

@@ -1361,6 +1361,8 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - Implement and deploy the telemetry service (a separate process and port from the control server). Room matching, input caps, storage, CloudWatch metrics, systemd
   resource limits and the journald cap (`architecture.md` 3.4)
 - Widen the deploy tool. [`tools/cp-deploy`](../../tools/cp-deploy/README.md) picks a target and also deploys the telemetry service
+- **The way to apply telemetry load is decided before the load check (Verification below).** The per-source budget is 30 a minute per source, so one machine
+  cannot reach the global cap (5 per second)
 - **The repository owner does the AWS console work.** It is done before the service is first deployed
   - Lower the control plane table's capacity to RCU 20, WCU 20 ([`control_plane.md`](control_plane.md) 7.6)
   - Create the telemetry table. Its keys, capacity, and TTL are set by Storage in `architecture.md` 3.4 Telemetry Service
@@ -1370,11 +1372,23 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - **Put the analysis script in `tools/`.** It reads the records of a UTC time range from DynamoDB and builds the tables that go into
   [`experiments.md`](experiments.md). It uses only `boto3` and the standard library
   - Attempt count and success count, Wilson interval, count per failure code, comparison by observed mapping behavior, by same LAN or not, by build kind, host-side establishment time
-  - Success and session values use only records whose `room_known` is `true`. Failures before establishment have no room to match, so all of them are used. The limits of this filter are
+  - Attempts and successes count only player `establish` records. Each result is counted as below
+
+    | Result | How it is counted |
+    |------|-------------|
+    | `OK`, `room_known` is `true` | Success. In the denominator and numerator |
+    | `OK`, `room_known` is not `true` | Removed from the denominator and numerator. Only the count is written, as "excluded OK" |
+    | `ABORTED` | Removed from the denominator. Only the count is written |
+    | Anything else (including `PEER_FAILED`) | Failure regardless of `room_known`. Failures before establishment have no room to match |
+
+  - The interval for the success rate is the 95% Wilson score interval
+  - Session values (host-side establishment time, RTT, jitter, loss, session duration) use only records whose `room_known` is `true`. The limits of this filter are
     written in `experiments.md`
   - Also report the number of losses visible as gaps in the send sequence number. Losing the last record of an attempt or a whole attempt is not counted in this number
+  - The tool is [`tools/tm-analysis`](../../tools/tm-analysis/README.md). The table of what is counted from which records and the format of the measurement batch file
+    belong to that README
 - State the collected items in the README and the package guide. Also state that addresses, candidates, and display names are not uploaded
-- For each measurement batch, write the UTC time range and the environment in a local file blocked by `.gitignore`. Telemetry does not carry the environment, so the analysis script splits by this. `experiments.md` carries only the date and the environment. Publishing times only down to the date is required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
+- For each measurement batch, write the UTC time range and the environment in a local file blocked by `.gitignore` (`tools/tm-analysis/local/`). Telemetry does not carry the environment, so the analysis script splits by this. `experiments.md` carries only the date and the environment. Publishing times only down to the date is required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
 - Test across multiple network environments
 - Compare successful and failed NAT traversal cases (by observed mapping behavior, not NAT type)
 - Visualize experimental results. The graphs are taken from the CloudWatch dashboard. Graphs put in `experiments.md` must not show clock times on the time axis; convert it to elapsed time or dates (ADR 0001 required follow-up 2)
@@ -1434,6 +1448,9 @@ A repeatable experiment set and data for the final report and presentation.
 - The input caps apply. Over the source budget gives `rate_limited`, over the global cap or the concurrent connections gives `unavailable`, over the body cap gives `too_large`
 - Run the two checks of [`windows-prereq.md`](windows-prereq.md) section 6 (the bind inside the instance, `Test-NetConnection` on this machine) against port 8001 of the deployed telemetry service
 - Load the instance running both services; control plane operations respond normally and the telemetry service stays within its systemd limits. The control plane load is that of `tools/cp-deploy/verify.py --soak`, and the telemetry load is uploads up to the global cap
+  - The telemetry load uses the records of `verify.py --tm-load`. They are host `interval` records with `room_id` `null` and `build_kind`
+    `test`. So they do not enter the CloudWatch metrics or the analysis script's attempts, successes, and session values. They stay in the telemetry table. The send
+    sequence number grows only on accepted requests, so rejected requests do not count in the loss count
 - Compare the `SetupTime` and `Rtt` percentiles on the CloudWatch dashboard with the analysis script's values once. If they differ, the numbers in `experiments.md` use the analysis script's values
 - With the queue full, metric recording on `[loop]` does not block and `telemetry_queue_dropped`
   increments. **Also check the size and the drop direction**

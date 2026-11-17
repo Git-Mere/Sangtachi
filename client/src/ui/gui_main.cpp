@@ -5,6 +5,7 @@
 #include "sangtachi/args.hpp"
 #include "sangtachi/client_process.hpp"
 #include "sangtachi/default_server.hpp"
+#include "sangtachi/default_telemetry.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/platform/wait.hpp"
 #include "sangtachi/ui/gui_ui.hpp"
@@ -49,7 +50,8 @@ int main(int argc, char** argv) {
         code = fail_before_worker(ui.error_sink());
     } else {
         // 명령줄 인자를 받지 않는다. 콘솔에서 인자 없이 띄운 것과 같다 (architecture.md 3.5 GUI 실행 파일).
-        auto parsed = sangtachi::parse_args(std::span<const std::string_view>(), sangtachi::kDefaultServer);
+        auto parsed = sangtachi::parse_args(std::span<const std::string_view>(), sangtachi::kDefaultServer,
+                                            sangtachi::kDefaultTelemetry);
         if (!parsed.ok()) {
             const sangtachi::LogField fields[] = {
                 sangtachi::field("reason", sangtachi::to_token(parsed.error)),

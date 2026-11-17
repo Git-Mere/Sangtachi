@@ -166,6 +166,9 @@ Collection collect(std::span<const network::Endpoint> reflexive, std::uint16_t l
     if (interfaces.ok) {
         auto judged = judge_interfaces(interfaces.interfaces, own_wintun);
         locals = std::move(judged.candidates);
+        for (const auto& l : locals) {
+            out.local_addresses.push_back(l.address);
+        }
         // 성공이면 새 집합으로 바꾼다. 활성 주소가 없으면 빈 집합이다 (10.1 O10).
         out.own_subnets = std::move(judged.own_subnets);
     } else {

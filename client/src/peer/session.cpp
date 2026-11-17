@@ -117,6 +117,7 @@ bool Session::send_packet(PacketType type, std::span<const std::byte> payload,
         counters_.increment(Counter::TxErrSend);
         return false;
     }
+    meter_.add_out(length);  // architecture.md 9장 세션 바이트
     return true;
 }
 
@@ -373,6 +374,10 @@ void Session::enter_connected(Millis now) {
     // 그 패킷은 이미 8.3 을 지났다.
     loss_baseline_ = window_.position();
     loss_accepted_ = 0;
+    // 텔레메트리 구간은 처음 CONNECTED 에 들어간 때부터 센다. 재협상 뒤의 진입에서는 아무것도 하지 않는다
+    // (architecture.md 9장 텔레메트리 업로드).
+    const LossStats loss_now = loss();
+    meter_.start(now, loss_now.expected, loss_now.accepted);
     arm(idle_deadline_, idle_since_, now, protocol::kIdleTimeoutMs);
     arm(ping_due_, ping_since_, now, protocol::kPingIntervalMs);
     send_keepalive(now);
@@ -692,6 +697,7 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
             if (io_.rtt_clock_us) {
                 last_rtt_us_ = io_.rtt_clock_us() - it->second.sent_us;
                 ++rtt_samples_;
+                meter_.add_rtt(*last_rtt_us_);
                 // architecture.md 9장 session.rtt. RTT 기준선 비교(roadmap.md Phase 4)가 표본마다 읽는다.
                 const LogField fields[] = {
                     field("peer_id", static_cast<std::uint64_t>(config_.peer_id)),

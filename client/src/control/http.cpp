@@ -123,6 +123,11 @@ std::optional<std::string> host_header(std::string_view host, std::uint16_t port
 }
 
 std::optional<std::string> build_request(std::string_view host, Op op, std::string_view body) {
+    return build_request(host, op_name(op), body);
+}
+
+std::optional<std::string> build_request(std::string_view host, std::string_view op,
+                                         std::string_view body) {
     if (host.empty() || host.size() > kMaxHostHeaderBytes) {
         return std::nullopt;
     }
@@ -137,7 +142,7 @@ std::optional<std::string> build_request(std::string_view host, Op op, std::stri
     std::string out;
     out.reserve(160 + host.size() + body.size());
     out.append("POST /v1/");
-    out.append(op_name(op));
+    out.append(op);
     out.append(" HTTP/1.1\r\n");
     out.append("Host: ");
     out.append(host);

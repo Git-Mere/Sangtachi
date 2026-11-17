@@ -65,18 +65,36 @@ powershell -ExecutionPolicy Bypass -File scripts/test.ps1
 cp .env.example .env
 ```
 
+## 텔레메트리
+
+클라이언트는 연결 품질 기록을 텔레메트리 서비스에 보낼 수 있습니다. 서비스 주소는 `--telemetry` 인자나 빌드 기본값으로 줍니다.
+둘 다 없으면 보내지 않습니다. 동의 창은 없습니다. 무엇을 보내는지가 이 절입니다. 필드 정의는
+[`docs/kor/architecture.md`](docs/kor/architecture.md) 6.3 텔레메트리 서비스 인터페이스에 있습니다.
+
+**보내는 것.**
+
+- 연결 시도마다: 결과(성공 또는 실패 코드), 수립 시간, NAT 관측값 셋(로컬 주소와 공인 주소가 다른가, 두 STUN 서버가 같은
+  엔드포인트를 봤는가, 상대와 같은 공인 IP 인가). 셋 다 참/거짓 값이고, 관측하기 전에 끝난 시도에서는 값 없음(`null`)입니다. 주소 자체는 싣지 않습니다
+- 연결된 동안 60초마다와 끝날 때: RTT 표본, 지터, 패킷 손실, 주고받은 바이트 수, 세션 지속 시간
+- 묶음 키: 실행할 때마다 새로 만드는 무작위 값, 시도 번호, 전송 순번
+- 방 코드, 제어 평면이 준 `peer_id`, 역할(호스트 또는 플레이어)
+- OS(Windows 또는 Linux), GUI 인지 콘솔인지, 시험 빌드인지
+
+**보내지 않는 것.** IP 주소와 포트, 연결 후보, 표시 이름, 망 정보, 기기 식별자. 텔레메트리 서비스는 로그에 출발지 IP 를 남기지
+않습니다.
+
 ## 레포 구조
 
 ```
 client/          C++ 클라이언트. include/ 와 src/
-control-server/  제어 평면 (Python). 미착수
-telemetry-server/ 텔레메트리 서비스 (Python). 미착수
+control-server/  제어 평면 (Python)
+telemetry-server/ 텔레메트리 서비스 (Python)
 cmake/           CMake 모듈
 tests/           클라이언트 시험
 scripts/         빌드와 시험 스크립트
 docs/kor/        스펙, 계획, 설계 결정, 커밋 기록 (한국어)
 docs/eng/        같은 문서의 영어판
-tools/           문서 게이트, 사전 조건 검사, NAT 실측
+tools/           문서 게이트, 사전 조건 검사, NAT 실측, 배포, 텔레메트리 분석
 ```
 
 ## 라이선스

@@ -56,6 +56,8 @@ if(WIN32)
         tunnel/replay_test.cpp
         tunnel/data_sender_test.cpp
         tunnel/tunnel_test.cpp
+        telemetry/telemetry_test.cpp
+        telemetry/uploader_test.cpp
         ui/gui_ui_test.cpp
         ui/view_test.cpp
         testbuild/instrument_test.cpp

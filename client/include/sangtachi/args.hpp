@@ -39,6 +39,9 @@ namespace sangtachi {
 // 제어 평면 기본 포트. control_plane.md 2.6 상수의 CONTROL_PORT 다.
 inline constexpr std::uint16_t kControlPort = 8000;
 
+// 텔레메트리 서비스 기본 포트. architecture.md 3.4 텔레메트리 서비스의 8001 이다.
+inline constexpr std::uint16_t kTelemetryPort = 8001;
+
 enum class Role {
     None,    // 주지 않았다. 로비에서 시작한다 (architecture.md 3.5)
     Host,
@@ -64,6 +67,8 @@ struct Args {
     std::optional<std::string> name;
     // `--no-adapter`. 가상 어댑터를 만들지 않는다 (architecture.md 3.5, 7장 어댑터 수명).
     bool no_adapter = false;
+    // 텔레메트리 서비스 주소 (architecture.md 3.5). 이 인자도 빌드 기본값도 없으면 비어 있고 텔레메트리를 끈다.
+    std::optional<HostPort> telemetry;
 };
 
 // 실패 이유. 로그에 싣는 값이라 토큰이 바뀌면 시험도 같이 낡는다.
@@ -106,8 +111,11 @@ struct ParseResult {
 //
 // default_server 는 빌드에 넣은 제어 서버 주소다 (CMake 의 SANGTACHI_DEFAULT_SERVER). --server 가
 // 없을 때만 쓰고 --server 와 같은 형식 검사를 한다. 비어 있으면 --server 가 필수다.
+// default_telemetry 는 빌드에 넣은 텔레메트리 서비스 주소다 (CMake 의 SANGTACHI_DEFAULT_TELEMETRY). --telemetry
+// 가 없을 때만 쓰고 같은 형식 검사를 한다. 틀리면 기동 실패다. 둘 다 없으면 Args::telemetry 가 비어 있다.
 [[nodiscard]] ParseResult parse_args(std::span<const std::string_view> argv,
-                                     std::string_view default_server = {});
+                                     std::string_view default_server = {},
+                                     std::string_view default_telemetry = {});
 
 // 기본 표시 이름의 꼴. `user_` 뒤에 ASCII 소문자와 숫자 8자다. 붙임표는 control_plane.md 2.7 의
 // 문자 집합에 없어서 밑줄을 쓴다.

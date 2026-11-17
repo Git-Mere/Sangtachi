@@ -11,6 +11,7 @@
 #include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/protocol_constants.hpp"
+#include "sangtachi/telemetry/telemetry.hpp"
 #include "sangtachi/timer.hpp"
 #include "sangtachi/tunnel/data_sender.hpp"
 #include "sangtachi/tunnel/tunnel.hpp"
@@ -106,9 +107,12 @@ struct Rig {
     std::unique_ptr<sangtachi::tunnel::Tunnel> tunnel;
     std::vector<Line> lines;
     std::uint64_t next_attempt = 0;
+    // 텔레메트리 레코드 (runner.hpp 의 "텔레메트리 레코드"). telemetry 를 켠 Rig 만 모은다.
+    std::vector<sangtachi::telemetry::Record> records;
     std::unique_ptr<ControlRunner> runner;
 
-    explicit Rig(std::size_t stun_count = 2, sangtachi::peer::CandidateSources sources = {}) {
+    explicit Rig(std::size_t stun_count = 2, sangtachi::peer::CandidateSources sources = {},
+                 bool telemetry = false) {
         sangtachi::tunnel::TunnelDeps tdeps;
         tdeps.send = [this](const Endpoint& to, std::span<const std::byte> payload) {
             tunnel_sent.push_back(Sent{to, std::vector<std::byte>(payload.begin(), payload.end())});
@@ -162,6 +166,9 @@ struct Rig {
                                   std::optional<std::uint64_t> rtt) {
             lines.push_back(Line{true, attempt, std::string(role), peer, std::string(result), rtt, std::nullopt});
         };
+        if (telemetry) {
+            deps.telemetry = [this](const sangtachi::telemetry::Record& r) { records.push_back(r); };
+        }
         runner = std::make_unique<ControlRunner>(std::move(deps), timers, counters);
         tunnel->set_transition_handler([this](const sangtachi::peer::Session& s,
                                               sangtachi::peer::SessionState from,
@@ -918,4 +925,192 @@ TEST_CASE("control_runner: the end line carries the last RTT sample and the esta
     rig.command(LobbyCommandKind::kLeave);
     REQUIRE(rig.lines.size() == 2);
     CHECK(rig.lines[1].rtt_us == 23000u);
+}
+
+// ---------------------------------------------------------------- 텔레메트리 레코드 (architecture.md 9장, 6.3)
+
+namespace {
+
+// 타이머 집합에서 지금 만료할 것을 실행기에 넘긴다. 루프의 tick 처리기와 같다.
+void run_timers(Rig& rig) {
+    rig.timers.run_expired(rig.now, [&rig](const sangtachi::TimerTick& tick) {
+        rig.runner->on_timer(tick.name);
+    });
+}
+
+}  // namespace
+
+TEST_CASE("control_runner: telemetry records establish, intervals and end at the record line times",
+          "[control][runner][telemetry]") {
+    using sangtachi::telemetry::Kind;
+    using sangtachi::telemetry::kIntervalMs;
+    Rig rig(2, {}, true);
+    rig.now = 1000;
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    rig.now = 3410;
+    connect_host(rig);
+
+    REQUIRE(rig.lines.size() == 1);
+    REQUIRE(rig.records.size() == 1);
+    const auto est = rig.records[0];  // 복사한다. 뒤의 push_back 이 벡터를 옮긴다
+    CHECK(est.kind == Kind::kEstablish);
+    CHECK(est.attempt == rig.lines[0].attempt);
+    CHECK(est.seq == 0);
+    CHECK(est.role == "player");
+    CHECK(est.room_id == "ABCDEF");
+    CHECK(est.peer_id == std::optional<std::uint32_t>(123));
+    CHECK(est.peer == std::optional<std::uint32_t>(kHostPeer));
+    CHECK(est.result == "OK");
+    CHECK(est.setup_ms == std::optional<std::uint64_t>(2410));
+    // 두 STUN 이 같은 공인 엔드포인트를 봤고, 로컬 후보가 없으며(수집 함수 없음), 호스트의 반사 후보 IP 가 다르다.
+    CHECK(est.stun_same_endpoint == std::optional<bool>(true));
+    CHECK(est.local_differs_public == std::optional<bool>(true));
+    CHECK(est.same_lan == std::optional<bool>(false));
+    REQUIRE(rig.timers.contains("telemetry.interval.7"));
+
+    // 첫 구간은 CONNECTED 진입부터 60초다. 세션 타이머는 돌리지 않는다(유휴 타임아웃 50초가 먼저 온다).
+    rig.now = 3410 + kIntervalMs - 1;
+    run_timers(rig);
+    REQUIRE(rig.records.size() == 1);
+    rig.now = 3410 + kIntervalMs;
+    run_timers(rig);
+    REQUIRE(rig.records.size() == 2);
+    const auto iv = rig.records[1];
+    CHECK(iv.kind == Kind::kInterval);
+    CHECK(iv.attempt == est.attempt);
+    CHECK(iv.seq == 1);
+    CHECK(iv.peer == std::optional<std::uint32_t>(kHostPeer));
+    CHECK(iv.interval.interval_ms == kIntervalMs);
+    CHECK(iv.interval.bytes_out > 0);
+    CHECK(iv.interval.rtt_us.empty());  // PONG 을 넣지 않았다
+    CHECK(iv.interval.jitter_us == std::nullopt);
+    const sangtachi::peer::Session* s = rig.tunnel->find(kHostPeer);
+    REQUIRE(s != nullptr);
+    // 진입 전의 HELLO 바이트는 구간에 들지 않는다.
+    CHECK(iv.interval.bytes_out < s->meter().bytes_out());
+    REQUIRE(rig.timers.contains("telemetry.interval.7"));
+
+    rig.now += 5000;
+    rig.command(LobbyCommandKind::kLeave);
+    REQUIRE(rig.lines.size() == 2);
+    REQUIRE(rig.records.size() == 3);
+    const auto& end = rig.records[2];
+    CHECK(end.kind == Kind::kEnd);
+    CHECK(end.attempt == est.attempt);
+    CHECK(end.seq == 2);
+    CHECK(end.result == "CLOSED");
+    CHECK(end.interval.interval_ms == 5000);
+    CHECK(end.totals.duration_ms == kIntervalMs + 5000);
+    CHECK(end.totals.total_bytes_out > iv.interval.bytes_out + end.interval.bytes_out);
+    CHECK(end.totals.total_bytes_in > 0);
+    CHECK(end.totals.total_tx_err_send == 0);
+    CHECK_FALSE(rig.timers.contains("telemetry.interval.7"));
+}
+
+TEST_CASE("control_runner: telemetry establish for an attempt that never had a session",
+          "[control][runner][telemetry]") {
+    using sangtachi::telemetry::Kind;
+    Rig rig(2, {}, true);
+    rig.command(LobbyCommandKind::kJoin, "ABCDEF");
+    rig.reply(Op::kJoinRoom, respond(kIssued));
+    rig.runner->shutdown();
+    REQUIRE(rig.lines.size() == 1);
+    REQUIRE(rig.records.size() == 1);
+    const auto& r = rig.records[0];
+    CHECK(r.kind == Kind::kEstablish);
+    CHECK(r.attempt == rig.lines[0].attempt);
+    CHECK(r.seq == 0);
+    CHECK(r.result == "ABORTED");
+    CHECK(r.room_id == "ABCDEF");
+    CHECK(r.peer_id == std::optional<std::uint32_t>(123));
+    CHECK(r.peer == std::nullopt);
+    // STUN 이 끝나기 전이다.
+    CHECK(r.stun_same_endpoint == std::nullopt);
+    CHECK(r.local_differs_public == std::nullopt);
+    CHECK(r.same_lan == std::nullopt);
+    CHECK(r.setup_ms == std::nullopt);
+}
+
+TEST_CASE("control_runner: a session that fails before CONNECTED sends one establish and no interval",
+          "[control][runner][telemetry]") {
+    Rig rig(2, {}, true);
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    rig.now += sangtachi::protocol::kPunchDeadlineMs;
+    rig.tunnel->run_timers(rig.now);
+    rig.runner->flush();
+    REQUIRE(rig.records.size() == 1);
+    CHECK(rig.records[0].kind == sangtachi::telemetry::Kind::kEstablish);
+    CHECK(rig.records[0].result == "HOLE_PUNCH_TIMEOUT");
+    CHECK(rig.records[0].same_lan == std::optional<bool>(false));
+    CHECK_FALSE(rig.timers.contains("telemetry.interval.7"));
+}
+
+TEST_CASE("control_runner: telemetry off makes no records and no interval timer",
+          "[control][runner][telemetry]") {
+    Rig rig;
+    player_ready(rig);
+    rig.runner->on_timer("control.punch.7");
+    connect_host(rig);
+    CHECK(rig.records.empty());
+    CHECK_FALSE(rig.timers.contains("telemetry.interval.7"));
+}
+
+TEST_CASE("control_runner: a public address on an interface makes local_differs_public false",
+          "[control][runner][telemetry]") {
+    // 공인 IP 를 인터페이스에 가진 기기. STUN 이 본 엔드포인트가 로컬 후보와 같아 등록 목록의 중복 제거가 로컬
+    // 후보를 지운다(protocol.md 10.1 4번). 그래도 로컬 주소가 공인 IP 와 같으므로 false 다 (architecture.md 6.3).
+    using sangtachi::platform::DadState;
+    using sangtachi::platform::OperStatus;
+    constexpr std::uint32_t kPublic = 0xC6336401u;  // 198.51.100.1
+    const auto sources_for = [](std::uint32_t address) {
+        sangtachi::peer::CandidateSources sources;
+        sources.query_interfaces = [address] {
+            sangtachi::platform::InterfaceQuery q;
+            q.ok = true;
+            sangtachi::platform::InterfaceInfo info;
+            info.if_index = 4;
+            info.if_type = 6;
+            info.oper_status = OperStatus::kUp;
+            info.addresses.push_back({address, 24, DadState::kPreferred});
+            q.interfaces.push_back(info);
+            return q;
+        };
+        sources.query_routes = [] {
+            sangtachi::platform::RouteQuery q;
+            q.ok = true;
+            q.routes.push_back({0, 0, 4, 10, 25});
+            return q;
+        };
+        return sources;
+    };
+    struct Row {
+        std::uint32_t interface_address;
+        bool differs;
+        const char* why;
+    };
+    const Row rows[] = {
+        {kPublic, false, "the local candidate equals the reflexive endpoint and is deduplicated away"},
+        {0xC0A8000Au, true, "a private interface address"},
+    };
+    for (const auto& row : rows) {
+        INFO("why=" << row.why);
+        Rig rig(2, sources_for(row.interface_address), true);
+        rig.command(LobbyCommandKind::kJoin, "ABCDEF");
+        rig.reply(Op::kJoinRoom, respond(kIssued));
+        const Endpoint mapped(kPublic, 50000);  // Rig 의 bind 포트와 같다
+        for (std::size_t i = 0; i < 2; ++i) {
+            const auto id = sangtachi::network::peek_transaction_id(rig.sent[i].bytes);
+            rig.runner->on_stun_datagram(rig.sent[i].to, stun_success(*id, mapped));
+        }
+        REQUIRE(rig.submitted.back().op == Op::kRegisterCandidate);
+        if (!row.differs) {
+            // 등록 목록에 로컬 후보가 남지 않았다. 이 경우가 바로 등록 목록으로 비교하면 틀리는 자리다.
+            CHECK(rig.submitted.back().bytes.find("\"local\"") == std::string::npos);
+        }
+        rig.runner->shutdown();
+        REQUIRE(rig.records.size() == 1);
+        CHECK(rig.records[0].local_differs_public == std::optional<bool>(row.differs));
+    }
 }

@@ -2,6 +2,7 @@
 연산이 권한 오류 없이 도는지와 연산별 지연을 본다.
 
     python tools/cp-deploy/verify.py --host 203.0.113.10 [--players 4] [--concurrent]
+    python tools/cp-deploy/verify.py --target tm --host 203.0.113.10 [--tm-load SECONDS] [--tm-rate R]
 
 방 하나를 만들고 플레이어를 넣고 후보를 등록하고 호스트가 확인한 뒤 플레이어를 회수한다. 실제 테이블에
 항목이 생기며 방이 만료되면 TTL 이 지운다(control_plane.md 6.5). 방 코드와 토큰은 출력하지 않는다.
@@ -22,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from deploy import DeployError, PORT, check_host  # noqa: E402
+from deploy import DeployError, PORT, TARGETS, check_host, smoke_tm  # noqa: E402
 
 TIMES: dict[str, list[float]] = {}
 RETRIES: list[int] = []
@@ -193,6 +194,47 @@ def soak(host: str, seconds: int) -> list[str]:
     return [f"soak {seconds}s polls={polls[0]} window UTC {start_utc} ~ {end_utc}"]
 
 
+def load_record(instance_id: str, seq: int) -> dict:
+    """텔레메트리 부하용 레코드 (architecture.md 6.3). 호스트의 interval 이고 방이 없고 시험 빌드다.
+    CloudWatch 지표 어느 것에도 들지 않고(3.4 표의 room_known 조건) 분석에서도 room_known 이 null 이라 빠진다."""
+    return {"v": 1, "kind": "interval", "instance_id": instance_id, "attempt": 1, "seq": seq, "role": "host",
+            "room_id": None, "peer_id": None, "peer": None, "os": "linux", "ui": "console", "build_kind": "test",
+            "interval_ms": 60000, "rtt_us": [], "rtt_overflow": 0, "jitter_us": None, "expected": 0, "accepted": 0,
+            "bytes_out": 0, "bytes_in": 0}
+
+
+def tm_load(host: str, seconds: int, rate: float) -> list[str]:
+    """텔레메트리에 초당 rate 건을 seconds 동안 보낸다. 응답을 오류 코드별로 센다. 실제 테이블에 레코드가 남는다.
+
+    한 출발지의 예산은 분당 30 이다(3.4 입력 상한). 이 기기 하나로는 그 위가 rate_limited 로 끝난다."""
+    instance_id = secrets.token_hex(16)
+    counts: dict[str, int] = {}
+    start_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    stop = time.monotonic() + seconds
+    seq = 0
+    while time.monotonic() < stop:
+        t0 = time.monotonic()
+        data = json.dumps(load_record(instance_id, seq)).encode()
+        req = urllib.request.Request(f"http://{host}:{TARGETS['tm'].port}/v1/report", data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = resp.read()
+        except urllib.error.HTTPError as exc:
+            payload = exc.read()
+        r = json.loads(payload)
+        key = "ok" if r.get("ok") else r.get("error", "?")
+        counts[key] = counts.get(key, 0) + 1
+        if r.get("ok"):
+            seq += 1
+        time.sleep(max(0.0, 1 / rate - (time.monotonic() - t0)))
+    end_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    bad = {k: n for k, n in counts.items() if k in ("internal", "?")}
+    if bad:
+        raise DeployError(f"텔레메트리 부하 중 실패: {bad}")
+    return [f"tm load {seconds}s rate={rate}/s {dict(sorted(counts.items()))} window UTC {start_utc} ~ {end_utc}"]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", required=True)
@@ -202,9 +244,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--soak", type=int, default=0, choices=range(0, 601), metavar="SECONDS",
                     help="용량 확인용 부하를 SECONDS 동안 만든다")
     ap.add_argument("--rounds", type=int, default=1, choices=range(1, 21))
+    ap.add_argument("--target", choices=sorted(TARGETS), default="cp",
+                    help="tm 이면 텔레메트리 서비스를 본다. 연기 시험과 --tm-load 만 돈다")
+    ap.add_argument("--tm-load", type=int, default=0, choices=range(0, 601), metavar="SECONDS",
+                    help="텔레메트리에 부하용 레코드를 SECONDS 동안 보낸다")
+    ap.add_argument("--tm-rate", type=float, default=5.0, help="--tm-load 의 초당 요청 수")
     ns = ap.parse_args(argv)
     try:
         check_host(ns.host)
+        if ns.target == "tm":
+            if not 0 < ns.tm_rate <= 50:
+                raise DeployError("--tm-rate 는 0 보다 크고 50 이하다")
+            print("tm smoke:", smoke_tm(ns.host))
+            for line in tm_load(ns.host, ns.tm_load, ns.tm_rate) if ns.tm_load else []:
+                print(line)
+            print("VERDICT: pass")
+            return 0
         if ns.soak:
             for line in soak(ns.host, ns.soak):
                 print(line)

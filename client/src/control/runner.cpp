@@ -12,6 +12,7 @@
 #include "sangtachi/tunnel/packet.hpp"
 #include "sangtachi/tunnel/tunnel.hpp"
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -53,6 +54,34 @@ ControlReply interpret(const ControlResponse& response, const peer::OwnSubnets& 
     return out;
 }
 
+constexpr std::string_view kIntervalTimerPrefix = "telemetry.interval.";
+
+std::string interval_timer(std::uint32_t peer_id) {
+    return std::string(kIntervalTimerPrefix) + std::to_string(peer_id);
+}
+
+// `establish` 레코드 하나 (architecture.md 6.3).
+telemetry::Record establish_record(std::uint64_t attempt, LobbyRole role, std::optional<std::uint32_t> peer,
+                                   std::string_view result, std::optional<std::uint64_t> setup_ms,
+                                   const AttemptFacts& facts) {
+    telemetry::Record r;
+    r.kind = telemetry::Kind::kEstablish;
+    r.attempt = attempt;
+    r.seq = 0;
+    r.role = to_token(role);
+    r.room_id = facts.room_id;
+    if (facts.self_peer_id != 0) {
+        r.peer_id = facts.self_peer_id;
+    }
+    r.peer = peer;
+    r.result = result;
+    r.setup_ms = setup_ms;
+    r.local_differs_public = facts.local_differs_public;
+    r.stun_same_endpoint = facts.stun_same_endpoint;
+    r.same_lan = facts.same_lan;
+    return r;
+}
+
 void emit_transport(const ControlResponse& response) {
     const LogField fields[] = {
         field("op", http::op_name(response.op)),
@@ -83,10 +112,10 @@ ControlRunner::ControlRunner(RunnerDeps deps, TimerSet& timers, Counters& counte
       lobby_(deps_.nonce, deps_.name, deps_.clock,
              [this](std::span<const network::Endpoint> reflexive) { return collect(reflexive); }) {}
 
-std::vector<Candidate> ControlRunner::collect(std::span<const network::Endpoint> reflexive) {
+CollectedCandidates ControlRunner::collect(std::span<const network::Endpoint> reflexive) {
     const auto& sources = deps_.candidate_sources;
     if (!sources.query_interfaces || !sources.query_routes) {
-        return peer::registration_list(reflexive, {}, std::nullopt, deps_.local_port);
+        return CollectedCandidates{peer::registration_list(reflexive, {}, std::nullopt, deps_.local_port), {}};
     }
     static const peer::OwnSubnets kNoSubnets;
     const peer::OwnSubnets& previous = deps_.own_subnets ? deps_.own_subnets() : kNoSubnets;
@@ -97,7 +126,7 @@ std::vector<Candidate> ControlRunner::collect(std::span<const network::Endpoint>
     if (deps_.set_own_subnets) {
         deps_.set_own_subnets(std::move(collection.own_subnets));
     }
-    return std::move(collection.registration);
+    return CollectedCandidates{std::move(collection.registration), std::move(collection.local_addresses)};
 }
 
 ControlRunner::~ControlRunner() {
@@ -143,6 +172,15 @@ void ControlRunner::on_timer(std::string_view name) {
     if (stun_ && network::StunClient::owns_timer(name)) {
         stun_->on_timer(name, deps_.clock());
         check_stun_done();
+        return;
+    }
+    if (name.starts_with(kIntervalTimerPrefix)) {
+        const std::string_view digits = name.substr(kIntervalTimerPrefix.size());
+        std::uint32_t peer_id = 0;
+        const auto [end, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), peer_id);
+        if (ec == std::errc() && end == digits.data() + digits.size()) {
+            interval(peer_id);
+        }
     }
 }
 
@@ -155,7 +193,8 @@ void ControlRunner::on_session_transition(const peer::Session& session, peer::Se
     event.failure = session.failure();
     event.peer_close_reason = session.peer_close_reason();
     event.last_rtt_us = session.last_rtt_us();
-    events_.push_back(QueuedEvent{std::move(event), deps_.clock()});
+    SessionSnapshot snapshot{session.meter(), session.loss(), session.counters().value(Counter::TxErrSend)};
+    events_.push_back(QueuedEvent{std::move(event), deps_.clock(), std::move(snapshot)});
 }
 
 void ControlRunner::flush() {
@@ -182,9 +221,9 @@ void ControlRunner::run(LobbyActions actions) {
             execute(action);
             continue;
         }
-        const QueuedEvent queued = std::move(events_.front());
+        QueuedEvent queued = std::move(events_.front());
         events_.pop_front();
-        record(queued.event, queued.at);
+        record(queued);
         for (auto& action : lobby_.on_session_event(queued.event)) {
             queue_.push_back(std::move(action));
         }
@@ -192,7 +231,9 @@ void ControlRunner::run(LobbyActions actions) {
     running_ = false;
 }
 
-void ControlRunner::record(const SessionEvent& event, Millis at) {
+void ControlRunner::record(QueuedEvent& queued) {
+    const SessionEvent& event = queued.event;
+    const Millis at = queued.at;
     const auto it = tracks_.find(event.peer_id);
     if (it == tracks_.end()) {
         return;
@@ -205,6 +246,12 @@ void ControlRunner::record(const SessionEvent& event, Millis at) {
         const std::uint64_t setup = at >= track.setup_base_ms ? at - track.setup_base_ms : 0;
         track.attempt =
             sink.establish ? sink.establish(role, event.peer_id, "OK", event.last_rtt_us, setup) : 0;
+        if (deps_.telemetry) {
+            deps_.telemetry(establish_record(track.attempt, track.role, event.peer_id, "OK", setup, track.facts));
+            track.next_seq = 1;
+            // architecture.md 9장: 처음 CONNECTED 에 들어간 때부터 TELEMETRY_INTERVAL_S 마다.
+            (void)timers_.add_once(interval_timer(event.peer_id), telemetry::kIntervalMs, at);
+        }
         return;
     }
     if (!peer::is_terminal(event.to)) {
@@ -215,10 +262,64 @@ void ControlRunner::record(const SessionEvent& event, Millis at) {
         if (sink.end) {
             sink.end(track.attempt, role, event.peer_id, result, event.last_rtt_us);
         }
-    } else if (sink.establish) {
-        (void)sink.establish(role, event.peer_id, result, event.last_rtt_us, std::nullopt);
+        if (deps_.telemetry) {
+            (void)timers_.cancel(interval_timer(event.peer_id));
+            SessionSnapshot& s = queued.snapshot;
+            telemetry::Record r;
+            r.kind = telemetry::Kind::kEnd;
+            r.attempt = track.attempt;
+            r.seq = track.next_seq;
+            r.role = role;
+            r.room_id = track.facts.room_id;
+            if (track.facts.self_peer_id != 0) {
+                r.peer_id = track.facts.self_peer_id;
+            }
+            r.peer = event.peer_id;
+            r.result = result;
+            r.interval = s.meter.take_interval(at, s.loss.expected, s.loss.accepted);
+            const Millis started = s.meter.started_at().value_or(at);
+            r.totals.duration_ms = at >= started ? at - started : 0;
+            r.totals.total_expected = s.loss.expected;
+            r.totals.total_accepted = s.loss.accepted;
+            r.totals.total_bytes_out = s.meter.bytes_out();
+            r.totals.total_bytes_in = s.meter.bytes_in();
+            r.totals.total_tx_err_send = s.tx_err_send;
+            deps_.telemetry(r);
+        }
+    } else {
+        const std::uint64_t attempt =
+            sink.establish ? sink.establish(role, event.peer_id, result, event.last_rtt_us, std::nullopt) : 0;
+        if (deps_.telemetry) {
+            deps_.telemetry(establish_record(attempt, track.role, event.peer_id, result, std::nullopt, track.facts));
+        }
     }
     tracks_.erase(it);
+}
+
+void ControlRunner::interval(std::uint32_t peer_id) {
+    const auto it = tracks_.find(peer_id);
+    peer::Session* session = deps_.tunnel != nullptr ? deps_.tunnel->find(peer_id) : nullptr;
+    // 끝난 세션은 전이 처리(record)가 `end` 를 낸다. 그 전에 온 만료가 같은 구간을 두 번 싣지 않게 한다.
+    if (it == tracks_.end() || !it->second.connected || session == nullptr || !session->active() ||
+        !deps_.telemetry) {
+        return;
+    }
+    Track& track = it->second;
+    const Millis now = deps_.clock();
+    const peer::LossStats loss = session->loss();
+    telemetry::Record r;
+    r.kind = telemetry::Kind::kInterval;
+    r.attempt = track.attempt;
+    r.seq = track.next_seq++;
+    r.role = to_token(track.role);
+    r.room_id = track.facts.room_id;
+    if (track.facts.self_peer_id != 0) {
+        r.peer_id = track.facts.self_peer_id;
+    }
+    r.peer = peer_id;
+    r.interval = session->meter().take_interval(now, loss.expected, loss.accepted);
+    deps_.telemetry(r);
+    (void)timers_.add_once(interval_timer(peer_id), telemetry::kIntervalMs, now);
 }
 
 void ControlRunner::open_session(const OpenSession& open) {
@@ -228,7 +329,7 @@ void ControlRunner::open_session(const OpenSession& open) {
         run(lobby_.on_session_open_failed(peer_id));
         return;
     }
-    tracks_[peer_id] = Track{open.role, open.setup_base_ms, false, 0};
+    tracks_[peer_id] = Track{open.role, open.setup_base_ms, false, 0, open.facts, 0};
 }
 
 void ControlRunner::execute(LobbyAction& action) {
@@ -292,9 +393,12 @@ void ControlRunner::execute(LobbyAction& action) {
                     deps_.tunnel->set_roster_peers(std::move(a.peers));
                 }
             } else if constexpr (std::is_same_v<T, RecordAttempt>) {
-                if (deps_.records.establish) {
-                    (void)deps_.records.establish(to_token(a.role), a.peer, a.result, std::nullopt,
-                                                  std::nullopt);
+                const std::uint64_t attempt =
+                    deps_.records.establish ? deps_.records.establish(to_token(a.role), a.peer, a.result,
+                                                                      std::nullopt, std::nullopt)
+                                            : 0;
+                if (deps_.telemetry) {
+                    deps_.telemetry(establish_record(attempt, a.role, a.peer, a.result, std::nullopt, a.facts));
                 }
             }
         },

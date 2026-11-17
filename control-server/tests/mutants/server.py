@@ -98,8 +98,8 @@ MUTANTS = [
          kills=[W("write-drain-timeout-aborts")],
          why="3.4 시간 안에 못 보낸 응답을 계속 보내지 않는다. close 는 버퍼를 다 보낼 때까지 연결을 붙든다"),
     dict(id="srv-read-timeout-not-passed", path=P,
-         old="counters=self.counters, read_timeout_s=self.read_timeout_s, seen=seen)",
-         new="counters=self.counters, seen=seen)",
+         old="counters=self.counters, read_timeout_s=self.read_timeout_s, seen=seen,",
+         new="counters=self.counters, seen=seen,",
          kills=[N("nolog-read-timeout")],
          why="3.4 읽기 시간 제한은 서버가 쥔 값이다 (시험은 줄여 주입한다)"),
     # ---------------------------------------------------------------- 7.5 http.request
@@ -147,13 +147,13 @@ MUTANTS = [
          kills=[T("test_counters_at_cancel")],
          why="7.5 종료 시 낸다. Windows 의 Ctrl+C 는 취소로 온다"),
     dict(id="srv-ignore-service-counters", path=P,
-         old="ext.get(name, 0) if name == FALLBACK_COUNTER else self.counters[name]",
+         old="self.counters[name] + ext.get(name, 0)",
          new="self.counters[name]",
          kills=[T("test_counter_values")],
          why="7.5 elapsed_wall_fallback 은 ops 의 7.4 시계가 센다"),
     dict(id="srv-service-counters-key-required", path=P,
-         old="ext.get(name, 0) if name == FALLBACK_COUNTER",
-         new="ext[name] if name == FALLBACK_COUNTER",
+         old="self.counters[name] + ext.get(name, 0)",
+         new="self.counters[name] + ext[name]",
          kills=[T("test_counter_values_without_service_counters")],
          why="ops 가 아직 세지 않은 카운터는 0 이다"),
     dict(id="srv-service-counters-required", path=P,
@@ -167,7 +167,7 @@ MUTANTS = [
          kills=[T("test_counter_values")],
          why="6.4 rate_table_full 도 7.5 카운터로 나간다"),
     dict(id="srv-no-request-line", path=P,
-         old='        log.emit("INFO", "http.request", op=op, status=status, error=error, src=src, ms=ms)\n',
+         old='        self._emit("INFO", "http.request", **fields)\n',
          new="        pass\n",
          kills=[L("log-ok"), I("inflight-33rd-unavailable")],
          why="7.5 답한 요청마다 http.request 한 줄"),
@@ -251,7 +251,7 @@ MUTANTS = [
          why="링거 시간 상한은 LINGER_S"),
     # ---------------------------------------------------------------- 7.5 server.started
     dict(id="srv-no-started-line", path=P,
-         old='        log.emit("INFO", "server.started", bind=host, port=bound)\n',
+         old='        self._emit("INFO", "server.started", bind=host, port=bound)\n',
          new="        pass\n",
          kills=[T("test_started_line")],
          why="7.5 리슨이 성공하면 server.started 한 줄"),
@@ -264,8 +264,8 @@ MUTANTS = [
          old=("        srv = await asyncio.start_server(self.on_connection, host, port)\n"
               "        bound = srv.sockets[0].getsockname()[1]\n"
               "        self.listening = True\n"
-              '        log.emit("INFO", "server.started", bind=host, port=bound)\n'),
-         new=('        log.emit("INFO", "server.started", bind=host, port=port)\n'
+              '        self._emit("INFO", "server.started", bind=host, port=bound)\n'),
+         new=('        self._emit("INFO", "server.started", bind=host, port=port)\n'
               "        srv = await asyncio.start_server(self.on_connection, host, port)\n"
               "        bound = srv.sockets[0].getsockname()[1]\n"
               "        self.listening = True\n"),
@@ -466,7 +466,7 @@ MUTANTS = [
          kills=[EP("non-ascii-zone")],
          why="ASCII 밖의 글자를 거부한다"),
     dict(id="main-endpoint-message-has-value", path=M,
-         old='    bad = ConfigError("SANGTACHI_CP_ENDPOINT 는 http://호스트[:포트] 나 https://호스트[:포트] 여야 한다")\n',
+         old='    bad = ConfigError(f"{name} 는 http://호스트[:포트] 나 https://호스트[:포트] 여야 한다")\n',
          new='    bad = ConfigError("SANGTACHI_CP_ENDPOINT 가 틀렸다: " + url)\n',
          kills=[T("test_main_bad_endpoint")],
          why="오류 문구에 값을 싣지 않는다"),

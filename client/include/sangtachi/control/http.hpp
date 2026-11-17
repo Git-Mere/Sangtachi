@@ -85,6 +85,11 @@ inline constexpr std::size_t kMaxHostHeaderBytes = 253 + 1 + 5;
 [[nodiscard]] std::optional<std::string> build_request(std::string_view host, Op op,
                                                        std::string_view body);
 
+// 연산 이름을 직접 받는다. 텔레메트리 서비스가 같은 부분집합에 `report` 하나를 둔다 (architecture.md 6.3).
+// op 는 경로에 그대로 들어가므로 부르는 쪽은 상수만 넘긴다.
+[[nodiscard]] std::optional<std::string> build_request(std::string_view host, std::string_view op,
+                                                       std::string_view body);
+
 enum class ResponseError : std::uint8_t {
     kNone = 0,
     kHeaderIncomplete,        // 빈 줄이 아직 오지 않았다

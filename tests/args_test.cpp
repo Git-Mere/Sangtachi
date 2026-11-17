@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -364,6 +365,74 @@ TEST_CASE("args: the compiled-in server stands in for --server", "[args]") {
     REQUIRE(with_default({}, "").error == ArgError::MissingServer);
     // 기본값이 있어도 다른 필수 판정은 그대로다.
     REQUIRE(with_default({"player"}, "a.example").error == ArgError::MissingRoom);
+}
+
+TEST_CASE("args: telemetry address table", "[args]") {
+    // architecture.md 3.5: 형식과 검사는 --server 와 같고 포트를 생략하면 8001 이다. 이 인자도 빌드 기본값도 없으면 끈다.
+    const auto with = [](std::vector<std::string_view> argv, std::string_view def = {}) {
+        argv.insert(argv.begin(), {"--server", "a.example", "--name", "Alice"});
+        return parse_args(std::span<const std::string_view>(argv), {}, def);
+    };
+    struct Accept {
+        std::vector<std::string_view> argv;
+        std::string_view def;
+        std::string_view host;
+        std::uint16_t port;
+        std::string_view why;
+    };
+    const Accept accepts[] = {
+        {{"--telemetry", "tm.example"}, "", "tm.example", sangtachi::kTelemetryPort, "port defaults to 8001"},
+        {{"--telemetry", "203.0.113.7:9001"}, "", "203.0.113.7", 9001, "explicit port"},
+        {{}, "tm.example", "tm.example", sangtachi::kTelemetryPort, "compiled-in default"},
+        {{}, "tm.example:9002", "tm.example", 9002, "compiled-in default with port"},
+        {{"--telemetry", "127.0.0.1"}, "tm.example", "127.0.0.1", sangtachi::kTelemetryPort, "argument wins"},
+        {{"--telemetry", "127.0.0.1"}, "bad host", "127.0.0.1", sangtachi::kTelemetryPort,
+         "an overridden default is not looked at"},
+        {{"--telemetry", "bad.example", "--telemetry", "b.example"}, "", "b.example", sangtachi::kTelemetryPort,
+         "last value wins"},
+    };
+    for (const auto& c : accepts) {
+        INFO("why=" << c.why);
+        const auto r = with(c.argv, c.def);
+        REQUIRE(r.ok());
+        REQUIRE(r.args->telemetry.has_value());
+        CHECK(r.args->telemetry->host == c.host);
+        CHECK(r.args->telemetry->port == c.port);
+        // --server 의 포트는 그대로 8000 이다. 두 기본 포트가 섞이지 않는다.
+        CHECK(r.args->server->port == sangtachi::kControlPort);
+    }
+
+    const auto off = with({});
+    REQUIRE(off.ok());
+    REQUIRE_FALSE(off.args->telemetry.has_value());
+
+    struct Reject {
+        std::vector<std::string_view> argv;
+        std::string_view def;
+        ArgError error;
+        std::string_view offending;
+        std::string_view why;
+    };
+    const Reject rejects[] = {
+        {{"--telemetry", "bad host"}, "", ArgError::BadHost, "bad host", "same host rule as --server"},
+        {{"--telemetry", "203.0.113.256"}, "", ArgError::BadHost, "203.0.113.256", "bad literal"},
+        {{"--telemetry", "tm.example:0"}, "", ArgError::BadPort, "tm.example:0", "port 0"},
+        {{"--telemetry", "tm.example:65536"}, "", ArgError::BadPort, "tm.example:65536", "port too large"},
+        {{"--telemetry", "tm.example:"}, "", ArgError::BadPort, "tm.example:", "empty port"},
+        {{"--telemetry"}, "", ArgError::MissingValue, "--telemetry", "no value"},
+        {{"--telemetry=tm.example"}, "", ArgError::UnknownOption, "--telemetry=tm.example", "only the spaced form"},
+        {{}, "bad host", ArgError::BadHost, "bad host", "a bad compiled-in default fails startup"},
+        {{}, "tm.example:0", ArgError::BadPort, "tm.example:0", "a bad compiled-in port fails startup"},
+        {{"--telemetry", "bad host", "--telemetry", "tm.example"}, "", ArgError::BadHost, "bad host",
+         "every given value is checked"},
+    };
+    for (const auto& c : rejects) {
+        INFO("why=" << c.why);
+        const auto r = with(c.argv, c.def);
+        REQUIRE_FALSE(r.ok());
+        CHECK(r.error == c.error);
+        CHECK(r.offending == c.offending);
+    }
 }
 
 TEST_CASE("args: the default name is user_ and eight lowercase letters or digits", "[args]") {

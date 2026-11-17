@@ -16,6 +16,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -156,8 +157,8 @@ struct Sent {
 
 class Sim {
 public:
-    explicit Sim(std::string name = std::string(kName))
-        : lobby([this] { return next_nonce(); }, std::move(name), [this] { return now; }) {
+    explicit Sim(std::string name = std::string(kName), CandidateCollector collect = {})
+        : lobby([this] { return next_nonce(); }, std::move(name), [this] { return now; }, std::move(collect)) {
         secrets.emplace_back(kToken);
     }
 
@@ -2265,5 +2266,99 @@ TEST_CASE("lobby guide: going back to the lobby shows the lobby guide, shutdown 
         sim.guides.clear();
         sim.apply(sim.lobby.on_shutdown());
         CHECK(sim.guides.empty());
+    }
+}
+
+// ---------------------------------------------------------------- 텔레메트리 시도 값 (architecture.md 6.3)
+
+TEST_CASE("lobby: attempt facts table for the establish record", "[lobby][telemetry]") {
+    // 공인 IP 는 첫 관측(203.0.113.5)의 IP 다. local_differs_public 은 로컬 후보 가운데 그 IP 가 없으면 참,
+    // same_lan 은 상대 반사 후보 가운데 그 IP 가 있으면 참이다.
+    const Endpoint pub(ip("203.0.113.5"), 40000);
+    struct Row {
+        std::vector<Candidate> locals;
+        std::vector<StunMapping> mappings;
+        std::vector<Candidate> host_candidates;
+        bool local_differs;
+        bool same_endpoint;
+        bool same_lan;
+        const char* why;
+    };
+    const Candidate local_other{Endpoint(ip("192.168.0.10"), 50000), CandidateKind::kLocal};
+    const Candidate local_public{Endpoint(ip("203.0.113.5"), 50000), CandidateKind::kLocal};
+    const Candidate host_same_ip = cand("203.0.113.5", 6000);
+    const Candidate host_other = cand("198.51.100.7", 5000);
+    const Candidate host_local_same_ip{Endpoint(ip("203.0.113.5"), 7000), CandidateKind::kLocal};
+    const std::vector<StunMapping> same{StunMapping{"a", pub}, StunMapping{"b", pub}};
+    const Row rows[] = {
+        {{local_other}, two_mappings(), {host_other}, true, false, false, "behind NAT, ports differ, other LAN"},
+        {{}, same, {host_other}, true, true, false, "no local candidate counts as differs"},
+        {{local_other, local_public}, same, {host_other}, false, true, false, "a local candidate has the public IP"},
+        {{local_other}, same, {host_other, host_same_ip}, true, true, true, "a host reflexive has our public IP"},
+        {{local_other}, same, {host_local_same_ip}, true, true, false, "only reflexive candidates count"},
+    };
+    for (const auto& row : rows) {
+        INFO("why=" << row.why);
+        Sim sim(std::string(kName), [&row](std::span<const Endpoint> reflexive) {
+            CollectedCandidates out;
+            for (const auto& r : reflexive) {
+                out.registration.push_back(Candidate{r, CandidateKind::kReflexive});
+            }
+            out.registration.insert(out.registration.end(), row.locals.begin(), row.locals.end());
+            for (const auto& l : row.locals) {
+                out.local_addresses.push_back(l.endpoint.address());
+            }
+            return out;
+        });
+        sim.player_to_stun();
+        sim.stun_done(true, row.mappings);
+        sim.reply(registered());
+        sim.advance(500);  // 폴링
+        sim.reply(peers({ready(kHostId, row.host_candidates)}));
+        REQUIRE(sim.opened.size() == 1);
+        const AttemptFacts& f = sim.opened[0].facts;
+        CHECK(f.room_id == kRoom);
+        CHECK(f.self_peer_id == kSelf);
+        CHECK(f.local_differs_public == std::optional<bool>(row.local_differs));
+        CHECK(f.stun_same_endpoint == std::optional<bool>(row.same_endpoint));
+        CHECK(f.same_lan == std::optional<bool>(row.same_lan));
+    }
+}
+
+TEST_CASE("lobby: attempt facts are null before they are known", "[lobby][telemetry]") {
+    {
+        // STUN 실패. 방과 peer_id 는 받았다.
+        Sim sim;
+        sim.player_to_stun();
+        sim.stun_done(false, {});
+        REQUIRE(sim.records.size() == 1);
+        const AttemptFacts& f = sim.records[0].facts;
+        CHECK(f.room_id == kRoom);
+        CHECK(f.self_peer_id == kSelf);
+        CHECK_FALSE(f.local_differs_public.has_value());
+        CHECK_FALSE(f.stun_same_endpoint.has_value());
+        CHECK_FALSE(f.same_lan.has_value());
+    }
+    {
+        // join_room 이 확정 오류로 끝났다. 방도 peer_id 도 없다.
+        Sim sim;
+        sim.command("join " + std::string(kRoom));
+        sim.reply(err<Issued>(Outcome::kDefinite, Failure::kRoomNotFound));
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].facts.room_id.empty());
+        CHECK(sim.records[0].facts.self_peer_id == 0);
+    }
+    {
+        // 폴링 중 그만둠. STUN 은 끝났고 상대 후보는 아직이다. 다음 시도는 앞 시도의 관측을 물려받지 않는다.
+        Sim sim;
+        sim.player_polling();
+        sim.command("leave");
+        REQUIRE(sim.records.size() == 1);
+        CHECK(sim.records[0].facts.stun_same_endpoint == std::optional<bool>(false));
+        CHECK_FALSE(sim.records[0].facts.same_lan.has_value());
+        sim.player_to_stun();
+        sim.command("leave");
+        REQUIRE(sim.records.size() == 2);
+        CHECK_FALSE(sim.records[1].facts.stun_same_endpoint.has_value());
     }
 }

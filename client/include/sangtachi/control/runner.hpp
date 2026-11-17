@@ -42,6 +42,19 @@
 //
 // 결과 값은 `record_result` 의 표다. 다시 `CONNECTED` 에 들어가도(재협상 뒤) 수립 줄을 다시 쓰지 않는다.
 //
+// ## 텔레메트리 레코드 (architecture.md 9장 텔레메트리 업로드, 6.3)
+//
+// RunnerDeps::telemetry 가 있으면 기록 줄과 같은 때에 레코드를 낸다. 비어 있으면 텔레메트리를 끈 것이고 아무것도
+// 만들지 않는다.
+//
+// | 때 | 레코드 |
+// |----|--------|
+// | 수립 줄을 쓸 때 (세션의 전이와 RecordAttempt 모두) | `establish`. `seq` 0. 시도의 값은 행동이 실은 AttemptFacts |
+// | 처음 `CONNECTED` 에서 kIntervalMs 마다. 세션이 끝날 때까지 | `interval`. 타이머 이름은 `telemetry.interval.<peer_id>` |
+// | 종료 줄을 쓸 때 | `end`. 마지막 `interval` 뒤의 남은 구간과 세션 전체 |
+//
+// 세션의 값은 전이 콜백에서 베낀다. 전이를 처리할 때는 세션이 이미 지워졌을 수 있다(LeaveRoom).
+//
 // - 행동은 받은 순서대로 한다. 실행 중에 생긴 사건(STUN 이 그 자리에서 끝남, 요청 큐가 참)의
 //   행동은 지금 목록의 뒤에 붙는다. Lobby 의 함수를 다시 들어가지 않는다
 // - STUN 이 끝났는지는 StunClient 를 부른 뒤마다 본다. 끝난 것을 처음 본 때 한 번
@@ -60,6 +73,7 @@
 #include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/peer/candidates.hpp"
 #include "sangtachi/peer/session.hpp"
+#include "sangtachi/telemetry/telemetry.hpp"
 #include "sangtachi/timer.hpp"
 #include "sangtachi/tunnel/tunnel.hpp"
 
@@ -137,6 +151,8 @@ struct RunnerDeps {
 
     tunnel::Tunnel* tunnel = nullptr;  // 세션을 여는 곳. 널이면 OpenSession 이 실패한다
     RecordSink records;
+    // 텔레메트리 레코드를 큐에 넣는다 (위 "텔레메트리 레코드"). 비우면 텔레메트리를 끈 것이다.
+    std::function<void(const telemetry::Record&)> telemetry;
 
     // 가상 어댑터 (architecture.md 7장 어댑터 수명). `--no-adapter` 면 셋 다 비어 있다.
     // own_wintun 은 자기 어댑터의 GUID 다. 로컬 후보 수집이 그 인터페이스를 뺀다 (protocol.md 10.1 제외 단계).
@@ -167,7 +183,7 @@ public:
     // 루프가 STUN 으로 가른 데이터그램 하나 (protocol.md 7장 수신 분류).
     void on_stun_datagram(const network::Endpoint& from, std::span<const std::byte> payload);
 
-    // 타이머 만료 하나. 자기 이름(Lobby 의 것, 지금 StunClient 의 것)이 아니면 무시한다.
+    // 타이머 만료 하나. 자기 이름(Lobby 의 것, 지금 StunClient 의 것, 텔레메트리 구간)이 아니면 무시한다.
     void on_timer(std::string_view name);
 
     // 터널의 전이 콜백. 큐에 넣기만 한다 (위 "세션의 전이").
@@ -192,20 +208,32 @@ private:
     void drop_stun();
     // StunClient 를 부른 뒤에 부른다. 처음 끝난 것을 보면 Lobby 에 알린다.
     void check_stun_done();
-    std::vector<Candidate> collect(std::span<const network::Endpoint> reflexive);
+    CollectedCandidates collect(std::span<const network::Endpoint> reflexive);
     void open_session(const OpenSession& open);
-    void record(const SessionEvent& event, Millis at);
+    // 전이 콜백에서 베낀 세션의 값 (위 "텔레메트리 레코드").
+    struct SessionSnapshot {
+        telemetry::SessionMeter meter;
+        peer::LossStats loss;
+        std::uint64_t tx_err_send = 0;
+    };
+
+    struct QueuedEvent {
+        SessionEvent event;
+        Millis at = 0;
+        SessionSnapshot snapshot;
+    };
+
+    void record(QueuedEvent& queued);
+    // 그 쌍의 `interval` 레코드 하나와 다음 타이머.
+    void interval(std::uint32_t peer_id);
 
     struct Track {
         LobbyRole role = LobbyRole::kNone;
         Millis setup_base_ms = 0;
         bool connected = false;
         std::uint64_t attempt = 0;
-    };
-
-    struct QueuedEvent {
-        SessionEvent event;
-        Millis at = 0;
+        AttemptFacts facts;
+        std::uint64_t next_seq = 0;  // 다음 텔레메트리 레코드의 seq
     };
 
     RunnerDeps deps_;

@@ -548,10 +548,22 @@ void Lobby::print_fail(Batch& out, FailCode code, std::string_view peer) {
 
 void Lobby::record_unfinished(Batch& out, std::string_view result) {
     if (role_ == LobbyRole::kPlayer && pairs_.empty()) {
-        out.push(RecordAttempt{role_, host_peer_, result});
+        out.push(RecordAttempt{role_, host_peer_, result, facts(std::nullopt)});
     } else if (role_ == LobbyRole::kHost && stage_ != LobbyStage::kSettled) {
-        out.push(RecordAttempt{role_, std::nullopt, result});
+        out.push(RecordAttempt{role_, std::nullopt, result, facts(std::nullopt)});
     }
+}
+
+AttemptFacts Lobby::facts(std::optional<bool> same_lan) const {
+    AttemptFacts f;
+    f.room_id = room_id_;
+    f.self_peer_id = peer_id_;
+    if (stun_view_) {
+        f.local_differs_public = stun_view_->local_differs_public;
+        f.stun_same_endpoint = stun_view_->stun_same_endpoint;
+    }
+    f.same_lan = same_lan;
+    return f;
 }
 
 void Lobby::end_room(Batch& out) {
@@ -603,6 +615,7 @@ void Lobby::end_attempt(Batch& out, std::string_view reason, bool leave_room) {
     room_ended_ = false;
     local_vip_ = 0;
     stun_started_ = 0;
+    stun_view_.reset();
     host_peer_.reset();
     pairs_.clear();
     role_ = LobbyRole::kNone;
@@ -773,10 +786,19 @@ LobbyActions Lobby::on_stun_done(bool ok, std::span<const network::StunMapping> 
     for (const network::StunMapping& mapping : mappings) {
         reflexive.push_back(mapping.mapped);
     }
-    const std::vector<Candidate> candidates =
-        collect_ ? collect_(reflexive) : peer::registration_list(reflexive, {}, std::nullopt, 0);
+    const CollectedCandidates collected =
+        collect_ ? collect_(reflexive)
+                 : CollectedCandidates{peer::registration_list(reflexive, {}, std::nullopt, 0), {}};
+    // 텔레메트리의 두 NAT 관측 (architecture.md 6.3 `establish` 에만 있는 필드). 로컬 주소는 등록 목록이 아니라
+    // 수집한 전부와 비교한다. 공인 IP 를 가진 기기에서는 같은 엔드포인트의 로컬 후보가 등록 목록에서 빠진다.
+    StunView view;
+    view.public_ip = mappings[0].mapped.address();
+    view.stun_same_endpoint = mappings.size() >= 2 && mappings[0].mapped == mappings[1].mapped;
+    view.local_differs_public = std::find(collected.local_addresses.begin(), collected.local_addresses.end(),
+                                          view.public_ip) == collected.local_addresses.end();
+    stun_view_ = view;
     std::optional<std::string> body =
-        register_candidate_body(room_id_, peer_id_, *token_, candidates);
+        register_candidate_body(room_id_, peer_id_, *token_, collected.registration);
     if (!body) {
         fail(out, FailCode::kControlPlaneExchangeFailed);
         return std::move(out).finish();
@@ -918,7 +940,14 @@ void Lobby::on_host_report(Batch& out, const Reply<HostReport>& reply, const Pen
 }
 
 void Lobby::open_pair(Batch& out, const PeerView& peer, Millis setup_base_ms) {
-    pairs_[peer.peer_id] = Pair{peer.name, true};
+    // same_lan 은 자기 STUN 이 성공했을 때만 값이 있다 (architecture.md 6.3).
+    std::optional<bool> same_lan;
+    if (stun_view_) {
+        same_lan = std::any_of(peer.candidates.begin(), peer.candidates.end(), [this](const Candidate& c) {
+            return c.kind == CandidateKind::kReflexive && c.endpoint.address() == stun_view_->public_ip;
+        });
+    }
+    pairs_[peer.peer_id] = Pair{peer.name, true, same_lan};
 
     OpenSession open;
     open.request.local_peer_id = peer_id_;
@@ -930,6 +959,7 @@ void Lobby::open_pair(Batch& out, const PeerView& peer, Millis setup_base_ms) {
     open.request.peer_name = peer.name;
     open.role = role_;
     open.setup_base_ms = setup_base_ms;
+    open.facts = facts(same_lan);
     out.push(std::move(open));
 
     // protocol.md 10.2 의 6번. 음수면 즉시 시작한다.
@@ -1001,7 +1031,7 @@ LobbyActions Lobby::on_session_open_failed(std::uint32_t peer_id) {
         fields.push_back(field("code", to_token(code)));
         out.log(LogLevel::Error, "session.failed", std::move(fields));
     }
-    out.push(RecordAttempt{role_, peer_id, to_token(code)});
+    out.push(RecordAttempt{role_, peer_id, to_token(code), facts(it->second.same_lan)});
     // CPEF 의 <상대> 는 `-` 다 (architecture.md 3.5). 그래서 이름을 넘기지 않게 이름을 지운다.
     it->second.name.clear();
     close_pair(out, peer_id, code);

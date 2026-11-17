@@ -36,6 +36,10 @@ endif()
 # 시험 빌드(scripts/build.ps1)는 주지 않는다. 시험이 --server 없는 기동을 기동 실패로 본다.
 set(SANGTACHI_DEFAULT_SERVER "" CACHE STRING "Control server compiled in as the --server default. Empty means --server is required")
 
+# 텔레메트리 서비스 주소의 기본값 (architecture.md 3.5 기동 입력). `--telemetry` 가 덮어쓴다. 이 값도 `--telemetry` 도
+# 없으면 텔레메트리를 끈다. 위 SANGTACHI_DEFAULT_SERVER 와 같이 레포에 실제 주소를 적지 않고 시험 빌드는 비워 둔다.
+set(SANGTACHI_DEFAULT_TELEMETRY "" CACHE STRING "Telemetry service compiled in as the --telemetry default. Empty means telemetry is off unless --telemetry is given")
+
 # 배포 빌드의 관리자 권한 요구 (architecture.md 3.5 기동 입력, windows-prereq.md 1절). 켜면 실행 파일에
 # requireAdministrator 매니페스트를 넣는다. 탐색기에서 더블클릭하면 UAC 창이 뜬다. 관리자가 아닌 셸에서 띄우면
 # Windows 가 프로세스를 만들지 않는다. 시험 빌드는 켜지 않는다. 시험이 관리자가 아닌 셸에서 --no-adapter 로 띄운다.

@@ -72,6 +72,7 @@ std::string_view to_token(Counter counter) noexcept {
         case Counter::RxErrAdapter: return "rx_err_adapter";
         case Counter::RxErrRecv: return "rx_err_recv";
         case Counter::TelemetryQueueDropped: return "telemetry_queue_dropped";
+        case Counter::TelemetryUploadFailed: return "telemetry_upload_failed";
         case Counter::TxBytes: return "tx_bytes";
         case Counter::TxDatagrams: return "tx_datagrams";
         case Counter::TxDropBadSrc: return "tx_drop_bad_src";

@@ -113,6 +113,7 @@
 #include "sangtachi/counters.hpp"
 #include "sangtachi/network/endpoint.hpp"
 #include "sangtachi/peer/epoch.hpp"
+#include "sangtachi/telemetry/telemetry.hpp"
 #include "sangtachi/timer.hpp"
 #include "sangtachi/tunnel/packet.hpp"
 #include "sangtachi/tunnel/replay.hpp"
@@ -281,6 +282,10 @@ public:
     [[nodiscard]] Counters& counters() noexcept { return counters_; }
     [[nodiscard]] const Counters& counters() const noexcept { return counters_; }
     // 세션 표의 counter 줄이 싣는 두 필드. peer_name 은 이 객체를 가리키므로 객체보다 오래 쓰지 않는다.
+    // 텔레메트리의 세션 값 (architecture.md 9장 텔레메트리 업로드). 송신 바이트, RTT 표본, 구간 기점은 이 객체가
+    // 넣는다. 받은 바이트는 8.1 검사 7번이 세션을 정하는 터널이 넣는다.
+    [[nodiscard]] telemetry::SessionMeter& meter() noexcept { return meter_; }
+    [[nodiscard]] const telemetry::SessionMeter& meter() const noexcept { return meter_; }
     [[nodiscard]] CounterPeer counter_peer() const noexcept {
         return CounterPeer{config_.peer_id, config_.peer_name};
     }
@@ -333,6 +338,7 @@ private:
     SessionConfig config_;
     SessionIo io_;
     Counters counters_;  // 이 세션의 표
+    telemetry::SessionMeter meter_;
 
     bool got_ack_ = false;
     bool sent_ack_ = false;

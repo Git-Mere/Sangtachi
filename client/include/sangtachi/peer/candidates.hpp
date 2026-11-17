@@ -138,6 +138,7 @@ struct InterfaceJudgement {
 // 수집 한 번의 결과 (10.1 수집 시점: register_candidate 를 보내기 직전에 한 번).
 struct Collection {
     std::vector<control::Candidate> registration;  // register_candidate 에 그대로 싣는다
+    std::vector<std::uint32_t> local_addresses;    // 판정을 지난 로컬 후보 주소. 중복 제거와 자르기 전, 열거 순서
     OwnSubnets own_subnets;                        // 다음 수집까지 이 값을 쓴다
     bool enumerate_failed = false;
     std::uint32_t enumerate_error = 0;

@@ -332,6 +332,9 @@ void EventLoop::handle_command(std::string_view line) {
     }
     if (command == "counters") {
         // architecture.md 9장이 정한 세 시점 중 하나다.
+        if (on_counter_sync_) {
+            on_counter_sync_();
+        }
         emit_all(counters_);
         if (on_counter_dump_) {
             on_counter_dump_();  // 남아 있는 세션마다 그 세션의 표

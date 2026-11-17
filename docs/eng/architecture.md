@@ -174,11 +174,18 @@ in that document. This section records only architecture-level facts.
 
 **A separate service, split from the control plane.** It is not a module of the control plane. The decisions in this section belong to [ADR 0039](decisions/0039-decisions-before-phase-9.md).
 
+The modules are in the `telemetry-server/telemetry/` package.
+
 | Module | Responsibility |
 |------|------|
 | `server.py` | HTTP/JSON ingest endpoint and the input limits below |
 | `ingest.py` | Record validation (6.3), room check, DynamoDB storage |
 | `metrics.py` | Collecting and sending the CloudWatch metrics below |
+| `__main__.py` | Reading the configuration below and startup |
+
+**HTTP parsing, responses, time limits, the accept loop, and the configuration reading rules come from importing the control server's `controlplane` package.** The process and
+the deployment are separate. This code sharing is not an inter-service contact point under the separation contracts below. But when that part of `controlplane` changes, the telemetry
+service is also retested and redeployed.
 
 The separation has four contracts.
 
@@ -226,8 +233,12 @@ only path is `/v1/report`. Responses and errors use 4.1 Common Envelope of the s
 | `RATE_LIMIT_BUCKET` | 30 | Tokens per source IP. Each request uses one. Successes count too |
 | `RATE_LIMIT_REFILL_PER_MIN` | 30 | Continuous refill. One every 2 seconds |
 | `MAX_RATE_ENTRIES` | 4096 | Cap on the source table. Handling when full is the same as `control_plane.md` 6.4 Rate Limit |
-| `GLOBAL_RATE_PER_S` | 5 | Requests per second for the whole server. Over it is `unavailable` |
+| `GLOBAL_RATE_PER_S` | 5 | Requests per second for the whole server. Over it is `unavailable`. Counted by the rules under this table |
 | `MAX_INFLIGHT` | 32 | Connections in progress. Over it is `unavailable` |
+
+- The per-source budget is checked at the same point as in the control server: after parsing the request, before reading the store (`control_plane.md` 6.4 Rate Limit)
+- The global cap counts only requests that passed parsing and the per-source budget check. It is checked after those, before the record checks and the store
+- The global cap is a token bucket. Capacity 5, refilled continuously at 5 per second. A rejected request does not use a token
 
 > **Why these values.** If all five people are behind one public IP, there are eight sessions, normally eight records a minute, and
 > briefly sixteen when establishments and ends bunch up. The per-source budget is about three times that. The global cap matches the
@@ -257,7 +268,7 @@ The repository owner builds the graphs in a CloudWatch dashboard. Ratios are com
 | Metric | Unit | Value put | Records used |
 |------|------|---------|-------------|
 | `Attempts` | Count | 1 | Player `establish`. Excludes those whose `result` is `ABORTED` |
-| `SetupTime` | Milliseconds | `setup_ms` | Player `establish`, `result` is `OK`, `room_known` is `true` |
+| `SetupTime` | Milliseconds | `setup_ms` | Player `establish`, `result` is `OK`, `room_known` is `true`. Not added when the value is `null` |
 | `StunFailures` | Count | 1 | Player `establish`, `result` is `STUN_DISCOVERY_FAILED` |
 | `PunchFailures` | Count | 1 | Player `establish`, `result` is `HOLE_PUNCH_TIMEOUT` or `PEER_HANDSHAKE_FAILED` |
 | `Rtt` | Milliseconds | One real number per sample of `rtt_us`, divided by 1000 | `interval` and `end` from both sides, `room_known` is `true` |
@@ -269,11 +280,17 @@ The repository owner builds the graphs in a CloudWatch dashboard. Ratios are com
 
 - The success count is the sample count of `SetupTime`, and the count of finished sessions is the sample count of `SessionDuration`
 - The success rate is the sample count of `SetupTime` divided by the sum of `Attempts`. Other failures are `Attempts` minus the successes and the two failures above
+- **These other failures include `OK` records whose `room_known` is not `true`.** The analysis script removes those `OK` records from the
+  denominator (`roadmap.md` Phase 9). So the dashboard's success rate and the analysis script's success rate can differ by that count
+- The server does not check whether `setup_ms` of an `OK` is `null`. When such a player `establish` has `room_known` `true`, it has no `SetupTime` sample, so the dashboard shows it
+  as another failure, while the analysis script drops it only from the setup time distribution and counts it as a success
 - Thanks to the weights, the average of `LossRate` is total lost divided by total expected. Per-session ratios are not simply averaged
 - `LossRate` comes only from `end`. An interval's loss difference can be negative, because a packet missing in an earlier interval can arrive late and count in a later interval's `accepted` ([`protocol.md`](protocol.md) 4.5). If a session ends without an `end`, that session is left out of this metric
 - Only records that passed the checks and whose `PutItem` succeeded go into the metrics. This keeps the dashboard from seeing records the analysis script does not have. Conversely, a batch whose CloudWatch put failed is missing only from the dashboard. Their count shows in `metrics_put_error`
 - Every 60 seconds the service puts the values since the last put, bundled as arrays of values and counts. If one metric has more than
   150 values, the request is split. On failure it drops that batch and increments the counter `metrics_put_error`. It does not resend
+- The data carries no time (`Timestamp`). CloudWatch uses the time it received the data. The resolution is the default, 60 seconds
+- When the service ends, batches not yet sent are dropped
 
 > **Why count players only.** One trial in the statistics design of `roadmap.md` Phase 9 is seen from the player side. Counting both
 > sides counts one connection twice, and the host's setup time has a different start point (setup time in chapter 9 Local Record
@@ -294,7 +311,8 @@ and having isolated resources are different statements.
 **Isolation is done three ways.**
 
 - The telemetry service's systemd unit gets `MemoryMax=256M`, `CPUQuota=20%`, `IOWeight=50`. The control server unit does not
-- journald total usage is capped at 200MB. It is an instance-wide setting, so control server logs are capped too
+- journald total usage is capped at 200MB. A drop-in in `/etc/systemd/journald.conf.d/` sets `SystemMaxUse=200M` and
+  `RuntimeMaxUse=200M`. The first caps the journal on disk, the second the journal in memory (`/run`). It is an instance-wide setting, so control server logs are capped too
 - The input limits above
 
 **This lowers the ceiling on exhaustion but does not remove it.** Whether the two services hold up together with these values is
@@ -317,7 +335,31 @@ Configuration is environment variables. They are read by the same rules as the c
 - The security group opens inbound TCP 8001
 - The same IAM role gets `dynamodb:PutItem` on the telemetry table, `dynamodb:GetItem` on the control plane table (already there),
   and `cloudwatch:PutMetricData`. The last is allowed only for the namespace `Sangtachi` through a condition key
-- The log shape is the same as the control server's. **The request line does not carry the source IP.** The per-source rate limit uses the IP only in memory
+- Time limits and SDK attempts for the DynamoDB and CloudWatch calls are the same as the control server's DynamoDB calls. Connect 1 second, read 1 second, 1 attempt
+  (`DDB_CONNECT_TIMEOUT_S`, `DDB_READ_TIMEOUT_S`, `DDB_MAX_ATTEMPTS` in `control_plane.md` 7.6). The endpoint override applies
+  only to DynamoDB
+
+#### Logs and Counters
+
+The log shape and levels are the same as the control server's (`control_plane.md` 7.5 Logs and Counters). **The request line does not carry the source IP.** The per-source
+rate limit uses the IP only in memory.
+
+| Event key | Required fields |
+|----------|-----------|
+| `http.request` | `op`, `status`, `error` (`-` on success), `ms`. The control server's line of the same name without `src` |
+| `server.started` | `bind`, `port`. Emitted once after listening succeeds |
+| `counter` | `name`, `value` |
+
+The counters are the six below. They are emitted at the same times as the control server's: in full at shutdown and every 60 seconds, including those whose value is 0.
+
+| Counter | Meaning |
+|--------|-----|
+| `http_read_timeout` | Same as `control_plane.md` 3.4 Server-Side Time Limits |
+| `internal_error` | Requests answered `internal` because of an exception during processing. Storage failures land here |
+| `rate_limited` | Requests answered `rate_limited` because they exceeded the per-source budget |
+| `rate_table_full` | Times a new source passed without a limit because the source table was full (`control_plane.md` 6.4) |
+| `unavailable` | Connections rejected by `MAX_INFLIGHT` (`control_plane.md` 7.2) and requests rejected by `GLOBAL_RATE_PER_S`, counted together |
+| `metrics_put_error` | Failed CloudWatch requests (CloudWatch Metrics above) |
 
 ---
 
@@ -344,7 +386,7 @@ gives it at configure time. Test builds leave it empty. The decisions are
 | Display name | `--name <name>` | No. Without it the default name is used | Format from [`control_plane.md`](control_plane.md) 2.7 `name`. Every room creation and join of this process uses this name. It is changed in the lobby with the `name` command below. The default name is `user_` followed by 8 ASCII lowercase letters and digits chosen with a CSPRNG. The generated name is left as one line `INFO lobby.name name=<name>`. If the random source fails, that is a startup failure |
 | STUN servers | `--stun <name or IPv4>:<port>`, repeatable | No | If given, it **replaces the default list below entirely**. The behavior when the list has one entry is below the table |
 | Without adapter | `--no-adapter` | No | A switch without a value. Does not create the virtual adapter and skips every startup step of chapter 7 Adapter lifetime. Starts without administrator rights. A release build with the administrator manifest is the exception ([`windows-prereq.md`](windows-prereq.md) section 1). Used by tests that run several processes on one machine |
-| Telemetry service address | `--telemetry <name or IPv4>[:<port>]` | No. Phase 9 onward | Format and checks are the same as the control server address. If the port is omitted, 8001 (3.4 Telemetry Service). If neither this argument nor a built-in default exists, telemetry is off. The `[telemetry]` thread is not started and one line `INFO telemetry.off` is left |
+| Telemetry service address | `--telemetry <name or IPv4>[:<port>]` | No. Phase 9 onward | Format and checks are the same as the control server address. If the port is omitted, 8001 (3.4 Telemetry Service). If neither this argument nor a built-in default exists, telemetry is off. The `[telemetry]` thread is not started and the 6.3 `instance_id` is not made either. One line `INFO telemetry.off` is left |
 
 **A `--stun` list with one entry leaves one `WARN` line at startup.** That list cannot produce
 responses from two different servers, so it ends as `STUN_DISCOVERY_FAILED` per "Server
@@ -863,7 +905,7 @@ are on the same instance, not because they are the same service.
 |------|----|-----|
 | `v` | Integer | Format version. Currently `1` |
 | `kind` | String | The table above |
-| `instance_id` | 32 hex chars | Made once with a CSPRNG when the process starts. The format is the same as [`control_plane.md`](control_plane.md) 2.4 `client_nonce`. If the random source fails, that is a startup failure |
+| `instance_id` | 32 hex chars | Made once with a CSPRNG when a process with telemetry on starts (3.5 Startup Inputs). The format is the same as [`control_plane.md`](control_plane.md) 2.4 `client_nonce`. If the random source fails, that is a startup failure |
 | `attempt` | Integer | The attempt number of the chapter 9 local record file |
 | `seq` | Integer | Send sequence number within that attempt. `establish` is 0 and it grows by 1 per record. A missing number is a lost record |
 | `role` | String | `host` or `player` |
@@ -880,11 +922,14 @@ are on the same instance, not because they are the same service.
 |------|----|-----|
 | `result` | String | The result value of the establishment line in the local record file |
 | `setup_ms` | Integer or `null` | The setup time of the local record file. Has a value only when `result` is `OK` |
-| `local_differs_public` | bool or `null` | Whether the IP of the local endpoint differs from the public endpoint seen by STUN. `null` if STUN did not finish |
-| `stun_same_endpoint` | bool or `null` | Whether the two STUN servers saw the same public IP:port ([`spec.md`](spec.md) supported network conditions). `null` if STUN did not finish |
-| `same_lan` | bool or `null` | Whether own public IP equals the IP of the server-reflexive candidate the counterpart registered. `null` before the counterpart's candidates are received |
+| `local_differs_public` | bool or `null` | `true` if none of own local addresses equals the public IP. `null` if the STUN phase did not succeed |
+| `stun_same_endpoint` | bool or `null` | Whether the two STUN servers saw the same public IP:port ([`spec.md`](spec.md) supported network conditions). `null` if the STUN phase did not succeed |
+| `same_lan` | bool or `null` | `true` if any server-reflexive candidate the counterpart registered has an IP equal to own public IP. `false` if the counterpart has no reflexive candidate. `null` if own STUN phase did not succeed or before the counterpart's candidates are received |
 
-The host runs STUN once when it creates the room, so the host's two STUN fields are the values from then.
+- The public IP is the mapped address of the first successful response the STUN phase received
+- The local addresses are the IPs of the local candidates chosen by that attempt's [`protocol.md`](protocol.md) 10.1 candidate gathering,
+  before the deduplication and cap of the registration list. Deduplication merges a local candidate equal to the public IP into the reflexive candidate and removes it
+- The host runs STUN once when it creates the room, so the host's two STUN fields are the values from then
 
 **Interval fields in `interval` and `end`.** Values are for that interval. Intervals are set by chapter 9 Telemetry Upload.
 
@@ -914,6 +959,7 @@ The host runs STUN once when it creates the room, so the host's two STUN fields 
 - Every field in the tables for that `kind` is present with the right type. `null` in a field whose type does not include `null` is a wrong type
 - `v` is `1`. A string value is one of those listed in the tables. `result` accepts only values for that line kind in the result value table of the local record file
 - Integers are from 0 to 2^53-1. `attempt` is 1 or more. `peer_id` and `peer` are from 1 to 4294967295
+- `room_id` is `null` or the canonical form of [`control_plane.md`](control_plane.md) 2.1 `room_id` (6 alphabet characters, upper case). The server does not upper-case it. A normal client sends only the canonical form, and the server stores the received value unchanged
 - `rtt_us` has at most 16 entries. In `end`, `total_accepted` is at most `total_expected`
 
 **The client does not retry `report` on failure.** The basis is [`spec.md`](spec.md) NFR-3 and the chapter 9 local record contract. What is used for the decision
@@ -922,7 +968,7 @@ in `seq`. Only losses followed by a later record show as missing numbers. Losing
 does not show.
 
 **Failures are not swallowed.** When an upload fails, `[telemetry]` increments the counter
-`telemetry_upload_failed` and leaves one line in the log. A response with `ok` `false` is also a failure. This is a different counter from
+`telemetry_upload_failed` and leaves one `telemetry.upload_failed` line in the log (chapter 9 Log Output). A response with `ok` `false` is also a failure. This is a different counter from
 dropping because the queue is full (`telemetry_queue_dropped`,
 [`concurrency.md`](concurrency.md) chapter 6 Telemetry Isolation).
 
@@ -1074,10 +1120,12 @@ telemetry service outage does not affect the tunnel. The isolation structure is 
 | Record | When built |
 |--------|-----------|
 | `establish` | When the establishment line is written to the local record file below. Every attempt |
-| `interval` | Every `TELEMETRY_INTERVAL_S` (60 seconds) from when the session first entered `CONNECTED`. It runs until the session ends. It does not stop when renegotiation leaves `CONNECTED` |
+| `interval` | Every `TELEMETRY_INTERVAL_S` (60 seconds) from when the session first entered `CONNECTED`. It runs until the session ends. It does not stop when renegotiation leaves `CONNECTED`. A session left in a terminal state does not emit it |
 | `end` | When the end line is written to the local record file. Carries the remaining interval after the last `interval` |
 
 - Interval values are the difference from when the previous record was built until now. The first interval starts when the session first entered `CONNECTED`
+- The next interval is 60 seconds from when the previous `interval` was built. The interval slips and lengthens by however late the loop processed it. The actual length is carried in `interval_ms`.
+  Where the timer lives is [`concurrency.md`](concurrency.md) chapter 4 Timers
 - While in the lobby there is no attempt, so there are no records
 - On process shutdown, step (3) of [`concurrency.md`](concurrency.md) chapter 7 Shutdown puts the `end` along with the end line. Whether that record
   gets uploaded is set by the join limit of the same section
@@ -1099,6 +1147,9 @@ J = J + (|R_i - R_(i-1)| - J) / 16
 
 This applies the RFC 3550 interarrival jitter formula to differences of consecutive RTT samples. The original formula is applied to differences of one-way delay. This value is not
 compared with RFC 3550 jitter.
+
+`J` is held as a real number. The record's `jitter_us` carries it rounded to the nearest integer. Integer division would lose differences
+smaller than 16.
 
 **Up to 16 RTT samples are carried per interval.** The `PING` interval is 5 seconds, so a 60-second interval has a dozen or so at most. Any beyond that are dropped and
 counted in `rtt_overflow`.
@@ -1411,9 +1462,11 @@ below. Value formats are not fixed. Verification searches by key and field name.
 | `data.echo` | `rtt_ms` (from the send time at offset 32 of a returned echo to its arrival, in milliseconds). **Test build only** | Phase 4 RTT baseline |
 | `roster` | `generation`, `members` (per member `<peer_id>/<virtual IP>/<bit 0>/<name>`, joined with commas) | Phase 4 `ROSTER` receive check ([`protocol.md`](protocol.md) 5.7) |
 | `session.loss` | `peer_id`, `expected`, `accepted`, `lost` (the session values of [`protocol.md`](protocol.md) 4.5, including the totals of renegotiation segments) | Phase 5 loss and reordering accounting |
+| `telemetry.off` | None. The level is `INFO`. Emitted once during startup when telemetry is off per 3.5 Startup Inputs | Phase 9 startup with telemetry off |
+| `telemetry.upload_failed` | `reason` (cause of the failure), `kind` (the 6.3 `kind`). The level is `WARN`. Emitted each time one upload fails (6.3 "Failures are not swallowed") | Phase 9 checking upload failures |
 | `session_end.cleanup` | `elapsed_ms` (milliseconds from receiving `WM_ENDSESSION` to when preparing the cleanup-complete signal of (7) in [`concurrency.md`](concurrency.md) chapter 7 Shutdown begins. The time to write this line and the signal itself are not included. Only the GUI build emits it) | Phase 8 whether host shutdown fits inside the OS grace period |
 
-Events not listed here may be added freely. **Only these twenty keys and their field names do not
+Events not listed here may be added freely. **Only these twenty-two keys and their field names do not
 change.** Changing them makes the verification items stale with them.
 
 **`timer.tick` is emitted by every timer that expires.** `name` tells which timer it was. From
@@ -1522,24 +1575,30 @@ Sangtachi/
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (test build only)
-|   |   +-- telemetry/   telemetry
+|   |   +-- telemetry/   telemetry (records and session values), uploader ([telemetry] thread) (chapter 9 Telemetry Upload)
 |   |   +-- ui/          view, gui_ui, main_window, gui_main (GUI executable)
-|   |   +-- control/     control_client
+|   |   +-- control/     channel, exchange, http, json, lobby, ops, runner
 |   +-- CMakeLists.txt
-+-- control-server/      module responsibilities are in control_plane.md 7.1
-|   +-- server.py
-|   +-- ops.py
-|   +-- ids.py
-|   +-- candidates.py
-|   +-- clock.py
-|   +-- store.py
++-- control-server/
+|   +-- controlplane/    module responsibilities are in control_plane.md 7.1
+|   |   +-- server.py
+|   |   +-- ops.py
+|   |   +-- ids.py
+|   |   +-- candidates.py
+|   |   +-- clock.py
+|   |   +-- store.py
 |   +-- tests/
 +-- telemetry-server/
-|   +-- server.py
-|   +-- ingest.py
-|   +-- metrics.py
+|   +-- telemetry/       module responsibilities are in 3.4. Imports controlplane
+|   |   +-- server.py
+|   |   +-- ingest.py
+|   |   +-- metrics.py
+|   +-- tests/
 +-- tests/
 +-- scripts/
++-- tools/
+|   +-- cp-deploy/       deployment and checks for the control server and the telemetry service
+|   +-- tm-analysis/     builds the experiments.md tables from the telemetry table (roadmap.md Phase 9)
 +-- docs/
 |   +-- kor/                 Korean documents
 |   |   +-- architecture.md      this document

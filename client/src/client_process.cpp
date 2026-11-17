@@ -11,6 +11,8 @@
 #include "sangtachi/log.hpp"
 #include "sangtachi/loop.hpp"
 #include "sangtachi/record.hpp"
+#include "sangtachi/telemetry/telemetry.hpp"
+#include "sangtachi/telemetry/uploader.hpp"
 #include "sangtachi/network/stun_client.hpp"
 #include "sangtachi/network/udp_socket.hpp"
 #include "sangtachi/network/wsa.hpp"
@@ -46,8 +48,28 @@ namespace {
 using sangtachi::kStartupFailure;
 
 // join 상한. `[telemetry]` 와 `[control]` 을 합쳐 2초다 (concurrency.md 7장 종료).
-// `[telemetry]` 는 Phase 9 이므로 지금은 `[control]` 하나가 이 상한을 다 쓴다.
 constexpr std::uint32_t kJoinCapMs = 2000;
+
+// 텔레메트리 레코드의 프로세스 값 (architecture.md 6.3). instance_id 는 run_process 가 채운다.
+sangtachi::telemetry::Stamp process_stamp() {
+    sangtachi::telemetry::Stamp stamp;
+#ifdef _WIN32
+    stamp.os = "windows";
+#else
+    stamp.os = "linux";
+#endif
+#ifdef SANGTACHI_GUI_BUILD
+    stamp.ui = "gui";
+#else
+    stamp.ui = "console";
+#endif
+#ifdef SANGTACHI_TEST_BUILD
+    stamp.build_kind = "test";
+#else
+    stamp.build_kind = "release";
+#endif
+    return stamp;
+}
 
 // 로그 파일 이름. 기동 실패를 알릴 때 화면에 넘긴다. 열기 전이면 비어 있다.
 std::string g_log_name;
@@ -257,7 +279,8 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
                sangtachi::platform::WaitHandle shutdown_event,
                sangtachi::control::ControlChannel& control,
                sangtachi::record::RecordWriter& records,
-               sangtachi::platform::TunDevice* tun, sangtachi::ClientUi& ui) {
+               sangtachi::platform::TunDevice* tun, sangtachi::ClientUi& ui,
+               sangtachi::telemetry::Uploader* uploader, const sangtachi::telemetry::Stamp& stamp) {
     // **이름 해석은 `[loop]` 시작 전에 목록 전체를 한 번 한다** (architecture.md 3.5
     // 기동 입력). getaddrinfo 는 동기 호출이라 `[loop]` 안에 두면 응답이 올 때까지 한
     // 바퀴가 멈춘다. 해석 실패와 중복 엔드포인트를 거르는 규칙은 그 절에 있고
@@ -473,6 +496,15 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
                                   std::optional<std::uint64_t> rtt_us) {
         records.end(attempt, role, peer, result, rtt_us);
     };
+    // 텔레메트리 레코드 (architecture.md 9장 텔레메트리 업로드). 껐으면 비워 둔다. 큐가 차면 uploader 가 세고 버린다.
+    if (uploader != nullptr) {
+        deps.telemetry = [uploader, &stamp](const sangtachi::telemetry::Record& record) {
+            (void)uploader->push(sangtachi::telemetry::QueuedRecord{record.kind, sangtachi::telemetry::to_json(record, stamp)});
+        };
+        loop.set_counter_sync([uploader, &counters] {
+            counters.set(sangtachi::Counter::TelemetryUploadFailed, uploader->upload_failed());
+        });
+    }
     sangtachi::control::ControlRunner runner(std::move(deps), loop.timers(), counters);
 
     // 세션의 전이는 실행기가 베껴 두고, 터널 호출이 끝난 뒤 flush 가 처리한다 (control/runner.hpp).
@@ -577,6 +609,7 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
     loop.set_tunnel_handler(nullptr);
     loop.set_deadline_source({});
     loop.set_counter_dump_handler(nullptr);
+    loop.set_counter_sync(nullptr);
     loop.set_unknown_command_handler(nullptr);
     loop.set_console_line_hooks(nullptr, nullptr);
     loop.set_send_handler(nullptr);
@@ -588,9 +621,9 @@ int run_client(const sangtachi::Args& args, sangtachi::Counters& counters,
 
 
 // 인자 검사 뒤의 전부. 0 이면 종료 절차로 끝났다. 그 밖의 값은 기동 실패의 종료 코드다.
-int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
-                sangtachi::platform::WaitHandle supplied_shutdown) {
-    sangtachi::Counters counters;
+int run_process_body(sangtachi::Args args, sangtachi::ClientUi& ui,
+                     sangtachi::platform::WaitHandle supplied_shutdown, sangtachi::Counters& counters,
+                     std::unique_ptr<sangtachi::telemetry::Uploader>& uploader) {
 
     // 로컬 기록 파일 (architecture.md 9장). 인자 검사 뒤, `[loop]` 를 시작하기 전에 연다. 열지 못하면
     // 기동 실패다. 기록 없이 돈 실행은 M-6 으로 판정할 수 없다. 로그에는 파일 이름만 싣는다.
@@ -631,6 +664,21 @@ int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
         }
         const sangtachi::LogField fields[] = {sangtachi::field("name", std::string_view(*args.name))};
         sangtachi::emit(sangtachi::LogLevel::Info, "lobby.name", fields);
+    }
+
+    // 텔레메트리 (architecture.md 3.5, 6.3). 켰으면 instance_id 를 한 번 만든다. 난수원이 실패하면 기동 실패다.
+    // 껐으면 `[telemetry]` 를 띄우지 않고 한 줄을 남긴다.
+    sangtachi::telemetry::Stamp stamp = process_stamp();
+    if (args.telemetry) {
+        auto instance_id = sangtachi::telemetry::make_instance_id(
+            [](std::span<std::byte> out) { return sangtachi::platform::random_bytes(out); });
+        if (!instance_id) {
+            emit_op_error("random_bytes", 0);
+            return kStartupFailure;
+        }
+        stamp.instance_id = std::move(*instance_id);
+    } else {
+        sangtachi::emit(sangtachi::LogLevel::Info, "telemetry.off", {});
     }
 
     {
@@ -694,6 +742,16 @@ int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
             return kStartupFailure;
         }
 
+        // `[telemetry]` 를 띄운다 (concurrency.md 6장 텔레메트리 격리). 서비스 주소는 레코드마다 그 스레드가 해석한다.
+        if (args.telemetry) {
+            uploader = sangtachi::telemetry::Uploader::start(args.telemetry->host, args.telemetry->port,
+                                                            shutdown_event.get(), counters);
+            if (!uploader) {
+                emit_op_error("TelemetryUploader.start", 0);
+                return kStartupFailure;
+            }
+        }
+
         // `[control]` 을 띄우고 제어 서버 주소를 한 번 해석한다 (control_plane.md 8.2,
         // 8.4 의 2번). 해석은 그 스레드가 하고 여기서는 결과를 기다린다. 해석이 UDP bind(3번)
         // 보다 먼저다. 그래서 해석에 실패하면 socket.bind 줄이 나오지 않는다.
@@ -742,13 +800,17 @@ int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
         }
         if (!stopped_during_startup) {
             const int code =
-                run_client(args, counters, shutdown_event.get(), *control, records, tun.get(), ui);
+                run_client(args, counters, shutdown_event.get(), *control, records, tun.get(), ui,
+                           uploader.get(), stamp);
             if (code != 0) {
                 return code;
             }
         }
 
-        // concurrency.md 7장 종료의 (4). 카운터 전량을 낸다.
+        // concurrency.md 7장 종료의 (4). 카운터 전량을 낸다. `[telemetry]` 가 올린 값을 먼저 옮긴다.
+        if (uploader) {
+            counters.set(sangtachi::Counter::TelemetryUploadFailed, uploader->upload_failed());
+        }
         sangtachi::emit_all(counters);
 
         // 같은 장의 (5)(6). 세션을 닫고 주소와 경로를 지우고 어댑터를 닫는다.
@@ -781,6 +843,10 @@ int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
     // Phase 3 부터 Winsock 의 실제 해제는 이 줄 뒤다. `[control]` 의 채널이 참조 하나를 따로
     // 들고 아래 join 뒤에 놓는다. 블록이 닫힐 때 줄어드는 것은 이 함수의 참조뿐이다.
     ui.cleanup_done(g_log_name);
+    // 같은 (7). `[telemetry]` 는 이것을 보고 큐에 남은 레코드를 비운다.
+    if (uploader) {
+        uploader->cleanup_done();
+    }
 
     // concurrency.md 7장 종료의 (8). `[control]` 을 join 한다. 종료 이벤트는 이미 신호돼
     // 있다(quit, 콘솔 제어 핸들러, 대기 실패). `[control]` 은 그것을 보면 진행 중인 요청을 버리고 돌아온다.
@@ -789,16 +855,44 @@ int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
     // 아니라 이것이다. 정리는 (7) 에서 이미 끝났으므로 안전하다. 표준 출력과 표준 오류는
     // `_exit` 가 비우지 않으므로 먼저 비운다. 종료 코드는 정상 종료와 같은 0 이다. 문서가
     // 정했다 (concurrency.md 7장 종료).
-    if (control && !control->join_for(kJoinCapMs)) {
+    //
+    // 상한은 두 스레드 합계다. `[control]` 이 쓰고 남은 만큼을 `[telemetry]` 가 쓴다.
+    const auto join_start = sangtachi::platform::monotonic_ms();
+    const auto remaining = [join_start]() -> std::uint32_t {
+        const auto spent = sangtachi::platform::monotonic_ms() - join_start;
+        return spent >= kJoinCapMs ? 0 : static_cast<std::uint32_t>(kJoinCapMs - spent);
+    };
+    if ((control && !control->join_for(remaining())) || (uploader && !uploader->join_for(remaining()))) {
         std::cout.flush();
         std::fflush(stdout);
         std::fflush(stderr);
         std::_Exit(0);
     }
     // 여기서 채널이 사라지며 마지막 Winsock 참조를 놓는다.
+    uploader.reset();
     control.reset();
 
     return 0;
+}
+
+// run_process_body 와 `[telemetry]`. 텔레메트리 스레드는 이 함수가 든다. 본체가 종료 절차 (8)까지 가면 거기서 join 하고
+// 놓는다. 그 전에 0 이 아닌 코드로 돌아오면 여기서 같은 상한으로 join 하고, 넘기면 그 코드로 `_exit` 한다
+// (concurrency.md 7장 종료). 소멸자의 join 은 상한이 없다.
+int run_process(sangtachi::Args args, sangtachi::ClientUi& ui,
+                sangtachi::platform::WaitHandle supplied_shutdown) {
+    sangtachi::Counters counters;
+    std::unique_ptr<sangtachi::telemetry::Uploader> uploader;
+    const int code = run_process_body(std::move(args), ui, supplied_shutdown, counters, uploader);
+    if (uploader) {
+        uploader->stop();
+        if (!uploader->join_for(kJoinCapMs)) {
+            std::cout.flush();
+            std::fflush(stdout);
+            std::fflush(stderr);
+            std::_Exit(code);
+        }
+    }
+    return code;
 }
 
 }  // namespace

@@ -167,11 +167,18 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 
 **제어 평면과 분리된 별개 서비스다.** 제어 평면의 모듈이 아니다. 이 절의 결정은 [ADR 0039](decisions/0039-phase-9-착수-전-결정.md) 가 갖는다.
 
+모듈은 `telemetry-server/telemetry/` 패키지에 있다.
+
 | 모듈 | 책임 |
 |------|------|
 | `server.py` | HTTP/JSON 수집 엔드포인트와 아래 입력 상한 |
 | `ingest.py` | 레코드 검증(6.3), 방 대조, DynamoDB 저장 |
 | `metrics.py` | 아래 CloudWatch 지표의 모음과 전송 |
+| `__main__.py` | 아래 설정 읽기와 기동 |
+
+**HTTP 파싱, 응답, 시간 제한, 수락 루프, 설정 읽기 규칙은 제어 서버의 `controlplane` 패키지를 import 해 쓴다.** 프로세스와
+배포는 따로다. 이 코드 공유는 아래 분리 계약의 서비스 간 접점이 아니다. 다만 `controlplane` 의 그 부분을 고치면 텔레메트리
+서비스도 다시 시험하고 배포한다.
 
 분리의 계약은 넷이다.
 
@@ -218,8 +225,12 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 | `RATE_LIMIT_BUCKET` | 30 | 출발지 IP 마다 토큰. 요청마다 하나 쓴다. 성공도 센다 |
 | `RATE_LIMIT_REFILL_PER_MIN` | 30 | 연속형 보충. 2초마다 1개 |
 | `MAX_RATE_ENTRIES` | 4096 | 출발지 표 상한. 찼을 때의 처리는 `control_plane.md` 6.4 속도 제한과 같다 |
-| `GLOBAL_RATE_PER_S` | 5 | 서버 전체 초당 요청. 넘으면 `unavailable` |
+| `GLOBAL_RATE_PER_S` | 5 | 서버 전체 초당 요청. 넘으면 `unavailable`. 아래 표 밑의 규칙으로 센다 |
 | `MAX_INFLIGHT` | 32 | 처리 중 연결. 넘으면 `unavailable` |
+
+- 출발지 예산을 보는 자리는 제어 서버와 같다. 요청을 파싱한 뒤, 저장소를 읽기 전이다(`control_plane.md` 6.4 속도 제한)
+- 전체 상한은 파싱과 출발지 예산 검사를 지난 요청만 센다. 그 뒤, 레코드 검사와 저장소 앞에서 본다
+- 전체 상한은 토큰 버킷이다. 용량 5, 초당 5개를 연속으로 채운다. 거절한 요청은 토큰을 쓰지 않는다
 
 > **왜 이 값인가.** 한 공인 IP 뒤에 다섯 명이 다 있으면 세션이 여덟이고 평소 분당 여덟 건, 수립과 종료가 몰리면 잠깐 열여섯
 > 건이다. 출발지 예산은 그 약 세 배다. 전체 상한은 텔레메트리 테이블의 쓰기 용량 5 WCU 에 맞췄다.
@@ -248,7 +259,7 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 | 지표 | 단위 | 넣는 값 | 쓰는 레코드 |
 |------|------|---------|-------------|
 | `Attempts` | Count | 1 | 플레이어의 `establish`. `result` 가 `ABORTED` 인 것은 뺀다 |
-| `SetupTime` | Milliseconds | `setup_ms` | 플레이어의 `establish`, `result` 가 `OK`, `room_known` 이 `true` |
+| `SetupTime` | Milliseconds | `setup_ms` | 플레이어의 `establish`, `result` 가 `OK`, `room_known` 이 `true`. 값이 `null` 이면 넣지 않는다 |
 | `StunFailures` | Count | 1 | 플레이어의 `establish`, `result` 가 `STUN_DISCOVERY_FAILED` |
 | `PunchFailures` | Count | 1 | 플레이어의 `establish`, `result` 가 `HOLE_PUNCH_TIMEOUT` 또는 `PEER_HANDSHAKE_FAILED` |
 | `Rtt` | Milliseconds | `rtt_us` 의 표본마다 1000 으로 나눈 실수 하나 | 양쪽의 `interval` 과 `end`, `room_known` 이 `true` |
@@ -260,11 +271,17 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 
 - 성공 수는 `SetupTime` 의 표본 수이고 끝난 세션 수는 `SessionDuration` 의 표본 수다
 - 성공률은 `SetupTime` 표본 수를 `Attempts` 합으로 나눈 것이다. 나머지 실패는 `Attempts` 에서 성공과 위 두 실패를 뺀 것이다
+- **이 나머지 실패에는 `room_known` 이 `true` 가 아닌 `OK` 도 든다.** 분석 스크립트는 그 `OK` 를 분모에서 뺀다(`roadmap.md`
+  Phase 9). 그래서 대시보드의 성공률과 분석 스크립트의 성공률은 그 수만큼 다를 수 있다
+- 서버는 `OK` 의 `setup_ms` 가 `null` 인지 검사하지 않는다. 그런 플레이어 `establish` 가 `room_known` 이 `true` 이면 `SetupTime` 표본이 없어 대시보드에서는 나머지 실패로
+  보이고, 분석 스크립트에서는 수립 시간 분포에서만 빠지고 성공으로 센다
 - `LossRate` 의 평균은 가중치 덕분에 전체 잃은 수를 전체 기대 수로 나눈 값이다. 세션마다의 비율을 그냥 평균하지 않는다
 - `LossRate` 는 `end` 에서만 낸다. 구간의 손실 차이는 음수일 수 있다. 앞 구간에서 빠진 패킷이 늦게 와 뒤 구간의 `accepted` 에 들기 때문이다([`protocol.md`](protocol.md) 4.5). 세션이 `end` 없이 끝나면 그 세션은 이 지표에서 빠진다
 - 지표에는 검사를 지나고 `PutItem` 이 성공한 레코드만 넣는다. 대시보드가 분석 스크립트에 없는 레코드를 보지 않게 하려는 것이다. 반대로 CloudWatch 전송이 실패한 묶음은 대시보드에서만 빠진다. 그 수는 `metrics_put_error` 로 보인다
 - 서비스는 60초마다 그 사이의 값을 값과 횟수의 배열로 묶어 넣는다. 지표 하나의 값이 150개를 넘으면 요청을 나눈다. 실패하면 그
   묶음을 버리고 카운터 `metrics_put_error` 를 올린다. 다시 보내지 않는다
+- 데이터에 시각(`Timestamp`)을 싣지 않는다. CloudWatch 가 받은 시각을 쓴다. 해상도는 기본값인 60초다
+- 서비스가 끝날 때 아직 보내지 않은 묶음은 버린다
 
 > **왜 플레이어만 세나.** `roadmap.md` Phase 9 통계 설계의 한 시행은 플레이어 쪽에서 본 것이다. 양쪽을 다 세면 연결 하나가 두
 > 번 세지고, 호스트의 수립 시간은 기점이 다르다(9장 로컬 기록 파일의 수립 시간). 전송량은 보낸 바이트만 세므로 양쪽을 더해도
@@ -285,7 +302,8 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 **격리는 세 가지로 한다.**
 
 - 텔레메트리 서비스의 systemd 유닛에 `MemoryMax=256M`, `CPUQuota=20%`, `IOWeight=50` 을 건다. 제어 서버 유닛에는 걸지 않는다
-- journald 의 전체 사용량을 200MB 로 묶는다. 인스턴스 전체 설정이라 제어 서버 로그도 같이 묶인다
+- journald 의 전체 사용량을 200MB 로 묶는다. `/etc/systemd/journald.conf.d/` 의 드롭인에 `SystemMaxUse=200M` 과
+  `RuntimeMaxUse=200M` 을 둔다. 앞의 것은 디스크의 저널, 뒤의 것은 메모리(`/run`)의 저널을 묶는다. 인스턴스 전체 설정이라 제어 서버 로그도 같이 묶인다
 - 위 입력 상한
 
 **이것은 고갈의 상한을 낮출 뿐 없애지 않는다.** 이 값으로 두 서비스가 함께 버티는지는 배포 뒤 부하로
@@ -308,7 +326,31 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 - 보안 그룹은 인바운드 TCP 8001 을 연다
 - 같은 IAM 역할에 텔레메트리 테이블의 `dynamodb:PutItem`, 제어 평면 테이블의 `dynamodb:GetItem`(이미 있다),
   `cloudwatch:PutMetricData` 를 둔다. 마지막 것은 조건 키로 이름 공간 `Sangtachi` 에만 허용한다
-- 로그 모양은 제어 서버의 것과 같다. **요청 줄에 출발지 IP 를 싣지 않는다.** 출발지별 속도 제한은 메모리에서만 IP 를 쓴다
+- DynamoDB 와 CloudWatch 호출의 시간 제한과 SDK 횟수는 제어 서버의 DynamoDB 호출과 같다. connect 1초, read 1초, 1회다
+  (`control_plane.md` 7.6 의 `DDB_CONNECT_TIMEOUT_S`, `DDB_READ_TIMEOUT_S`, `DDB_MAX_ATTEMPTS`). 엔드포인트 덮어쓰기는
+  DynamoDB 에만 건다
+
+#### 로그와 카운터
+
+로그 모양과 수준은 제어 서버의 것과 같다(`control_plane.md` 7.5 로그와 카운터). **요청 줄에 출발지 IP 를 싣지 않는다.** 출발지별
+속도 제한은 메모리에서만 IP 를 쓴다.
+
+| 이벤트키 | 필수 필드 |
+|----------|-----------|
+| `http.request` | `op`, `status`, `error`(성공이면 `-`), `ms`. 제어 서버의 같은 줄에서 `src` 를 뺀 것이다 |
+| `server.started` | `bind`, `port`. 리슨이 성공한 뒤 한 번 낸다 |
+| `counter` | `name`, `value` |
+
+카운터는 아래 여섯이다. 내는 때는 제어 서버와 같다. 종료 시와 60초마다 전량을 내고 값이 0 인 것도 낸다.
+
+| 카운터 | 뜻 |
+|--------|-----|
+| `http_read_timeout` | `control_plane.md` 3.4 서버 쪽 시간 제한과 같다 |
+| `internal_error` | 처리 중 예외가 나 `internal` 로 답한 요청. 저장 실패가 여기에 든다 |
+| `rate_limited` | 출발지 예산을 넘어 `rate_limited` 로 답한 요청 |
+| `rate_table_full` | 출발지 표가 차서 새 출발지를 제한 없이 통과시킨 횟수(`control_plane.md` 6.4) |
+| `unavailable` | `MAX_INFLIGHT` 로 거절한 연결(`control_plane.md` 7.2)과 `GLOBAL_RATE_PER_S` 로 거절한 요청을 합쳐 센다 |
+| `metrics_put_error` | 실패한 CloudWatch 요청(위 CloudWatch 지표) |
 
 ---
 
@@ -326,7 +368,7 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 | 표시 이름 | `--name <이름>` | 아니오. 없으면 기본 이름이다 | [`control_plane.md`](control_plane.md) 2.7 `name` 의 형식. 이 프로세스의 모든 방 만들기와 참가가 이 이름을 쓴다. 로비에서 아래 `name` 명령으로 바꾼다. 기본 이름은 `user_` 뒤에 ASCII 소문자와 숫자 8자를 CSPRNG 로 고른 것이다. 만든 이름을 `INFO lobby.name name=<이름>` 한 줄로 남긴다. 난수원이 실패하면 기동 실패다 |
 | STUN 서버 | `--stun <이름 또는 IPv4>:<포트>` 반복 | 아니오 | 주면 아래 기본 목록을 **통째로 대체**한다. 목록이 한 개일 때의 거동은 표 아래에 있다 |
 | 어댑터 없이 | `--no-adapter` | 아니오 | 값이 없는 스위치다. 가상 어댑터를 만들지 않고 7장 어댑터 수명의 기동 단계를 모두 건너뛴다. 관리자 권한이 없어도 기동한다. 관리자 권한 매니페스트를 넣은 배포 빌드는 예외다([`windows-prereq.md`](windows-prereq.md) 1절). 한 기기에서 여러 프로세스를 띄우는 시험이 쓴다 |
-| 텔레메트리 서비스 주소 | `--telemetry <이름 또는 IPv4>[:<포트>]` | 아니오. Phase 9 이후 | 형식과 검사는 제어 서버 주소와 같다. 포트를 생략하면 8001(3.4 텔레메트리 서비스). 이 인자도 빌드에 넣은 기본값도 없으면 텔레메트리를 끈다. `[telemetry]` 스레드를 띄우지 않고 `INFO telemetry.off` 한 줄을 남긴다 |
+| 텔레메트리 서비스 주소 | `--telemetry <이름 또는 IPv4>[:<포트>]` | 아니오. Phase 9 이후 | 형식과 검사는 제어 서버 주소와 같다. 포트를 생략하면 8001(3.4 텔레메트리 서비스). 이 인자도 빌드에 넣은 기본값도 없으면 텔레메트리를 끈다. `[telemetry]` 스레드를 띄우지 않고 6.3 의 `instance_id` 도 만들지 않는다. `INFO telemetry.off` 한 줄을 남긴다 |
 
 **`--stun` 목록이 한 개면 기동 시 `WARN` 한 줄을 남긴다.** 그 목록으로는 서로 다른 두 서버의
 응답을 얻을 수 없어 아래 "서버 선택" 대로 `STUN_DISCOVERY_FAILED` 로 끝난다.
@@ -777,7 +819,7 @@ Host                 AWS (조율 / 텔레메트리)            Player
 |------|----|-----|
 | `v` | 정수 | 형식 버전. 지금은 `1` |
 | `kind` | 문자열 | 위 표 |
-| `instance_id` | 16진수 32자 | 프로세스가 기동할 때 CSPRNG 로 한 번 만든다. 형식은 [`control_plane.md`](control_plane.md) 2.4 `client_nonce` 와 같다. 난수원이 실패하면 기동 실패다 |
+| `instance_id` | 16진수 32자 | 텔레메트리를 켠 프로세스가 기동할 때 CSPRNG 로 한 번 만든다(3.5 기동 입력). 형식은 [`control_plane.md`](control_plane.md) 2.4 `client_nonce` 와 같다. 난수원이 실패하면 기동 실패다 |
 | `attempt` | 정수 | 9장 로컬 기록 파일의 시도 번호 |
 | `seq` | 정수 | 그 시도 안의 전송 순번. `establish` 가 0 이고 레코드마다 1씩 는다. 빈 번호는 잃은 레코드다 |
 | `role` | 문자열 | `host` 또는 `player` |
@@ -794,11 +836,14 @@ Host                 AWS (조율 / 텔레메트리)            Player
 |------|----|-----|
 | `result` | 문자열 | 로컬 기록 파일의 수립 줄 결과 값 |
 | `setup_ms` | 정수 또는 `null` | 로컬 기록 파일의 수립 시간. `result` 가 `OK` 일 때만 값이 있다 |
-| `local_differs_public` | bool 또는 `null` | 로컬 엔드포인트와 STUN 이 본 공인 엔드포인트의 IP 가 다른가. STUN 이 끝나지 않았으면 `null` |
-| `stun_same_endpoint` | bool 또는 `null` | 두 STUN 서버가 같은 공인 IP:포트를 봤는가([`spec.md`](spec.md) 지원 네트워크 조건). STUN 이 끝나지 않았으면 `null` |
-| `same_lan` | bool 또는 `null` | 자기 공인 IP 와 상대가 등록한 서버 반사 후보의 IP 가 같은가. 상대 후보를 받기 전이면 `null` |
+| `local_differs_public` | bool 또는 `null` | 자기 로컬 주소 가운데 공인 IP 와 같은 것이 없으면 `true`. STUN 단계가 성공하지 않았으면 `null` |
+| `stun_same_endpoint` | bool 또는 `null` | 두 STUN 서버가 같은 공인 IP:포트를 봤는가([`spec.md`](spec.md) 지원 네트워크 조건). STUN 단계가 성공하지 않았으면 `null` |
+| `same_lan` | bool 또는 `null` | 상대가 등록한 서버 반사 후보 가운데 IP 가 자기 공인 IP 와 같은 것이 있으면 `true`. 상대의 반사 후보가 없으면 `false`. 자기 STUN 단계가 성공하지 않았거나 상대 후보를 받기 전이면 `null` |
 
-호스트의 STUN 은 방을 만들 때 한 번이므로 호스트의 두 STUN 필드는 그때의 값이다.
+- 공인 IP 는 STUN 단계가 처음 받은 성공 응답의 매핑 주소다
+- 로컬 주소는 그 시도의 [`protocol.md`](protocol.md) 10.1 후보 수집이 고른 로컬 후보의 IP 다. 등록 목록의 중복 제거와 상한을
+  적용하기 전의 것이다. 중복 제거는 공인 IP 와 같은 로컬 후보를 반사 후보와 하나로 합쳐 지우기 때문이다
+- 호스트의 STUN 은 방을 만들 때 한 번이므로 호스트의 두 STUN 필드는 그때의 값이다
 
 **`interval` 과 `end` 에 있는 구간 필드.** 값은 그 구간의 것이다. 구간은 9장 텔레메트리 업로드가 정한다.
 
@@ -828,6 +873,7 @@ Host                 AWS (조율 / 텔레메트리)            Player
 - 그 `kind` 의 표에 있는 필드가 모두 있고 형이 맞다. 형에 `null` 이 없는 필드의 `null` 은 형이 틀린 것이다
 - `v` 는 `1` 이다. 문자열 값은 표에 적은 것 가운데 하나다. `result` 는 로컬 기록 파일의 결과 값 표에서 그 줄 종류의 것만 받는다
 - 정수는 0 이상 2^53-1 이하다. `attempt` 는 1 이상이다. `peer_id` 와 `peer` 는 1 이상 4294967295 이하다
+- `room_id` 는 `null` 이거나 [`control_plane.md`](control_plane.md) 2.1 `room_id` 의 정규형(알파벳 6자, 대문자)이다. 서버가 대문자로 바꿔 주지 않는다. 정상 클라이언트는 정규형만 보내고, 서버는 받은 값을 바꾸지 않고 저장한다
 - `rtt_us` 는 16개 이하다. `end` 의 `total_accepted` 는 `total_expected` 이하다
 
 **`report` 는 실패해도 클라이언트가 재시도하지 않는다.** 근거는 [`spec.md`](spec.md) NFR-3과 9장 로컬 기록 계약이다. 판정에
@@ -836,7 +882,7 @@ Host                 AWS (조율 / 텔레메트리)            Player
 보이지 않는다.
 
 **실패를 삼키지는 않는다.** 업로드가 실패하면 `[telemetry]` 가 카운터 `telemetry_upload_failed`
-를 올리고 로그에 한 줄 남긴다. `ok` 가 `false` 인 응답도 실패다. 큐가 가득 차 버리는 것(`telemetry_queue_dropped`,
+를 올리고 로그에 `telemetry.upload_failed` 한 줄(9장 로그 출력)을 남긴다. `ok` 가 `false` 인 응답도 실패다. 큐가 가득 차 버리는 것(`telemetry_queue_dropped`,
 [`concurrency.md`](concurrency.md) 6장 텔레메트리 격리)과 다른 카운터다.
 
 > **왜.** 앞의 것은 원격이 받지 못한 것이고 뒤의 것은 보내기 전에 버린 것이라, 둘을 한
@@ -973,10 +1019,12 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 | 레코드 | 만드는 때 |
 |--------|-----------|
 | `establish` | 아래 로컬 기록 파일에 수립 줄을 쓰는 때. 모든 시도다 |
-| `interval` | 그 세션이 처음 `CONNECTED` 에 들어간 때부터 `TELEMETRY_INTERVAL_S`(60초)마다. 세션이 끝날 때까지 돈다. 재협상으로 `CONNECTED` 를 벗어나도 멈추지 않는다 |
+| `interval` | 그 세션이 처음 `CONNECTED` 에 들어간 때부터 `TELEMETRY_INTERVAL_S`(60초)마다. 세션이 끝날 때까지 돈다. 재협상으로 `CONNECTED` 를 벗어나도 멈추지 않는다. 종료 상태로 남은 세션은 내지 않는다 |
 | `end` | 로컬 기록 파일에 종료 줄을 쓰는 때. 마지막 `interval` 뒤의 남은 구간을 싣는다 |
 
 - 구간 값은 앞 레코드를 만든 때부터 지금까지의 차이다. 첫 구간은 처음 `CONNECTED` 에 들어간 때부터다
+- 다음 구간은 앞 `interval` 을 만든 때부터 60초다. 루프가 늦게 처리한 만큼 구간이 밀리고 길어진다. 실제 길이는 `interval_ms` 가
+  싣는다. 타이머의 자리는 [`concurrency.md`](concurrency.md) 4장 타이머다
 - 로비에 있는 동안에는 시도가 없으므로 레코드도 없다
 - 프로세스 종료 때는 [`concurrency.md`](concurrency.md) 7장 종료의 (3)이 종료 줄과 함께 `end` 를 넣는다. 그 레코드가 올라가는지는
   같은 절의 join 상한이 정한다
@@ -998,6 +1046,9 @@ J = J + (|R_i - R_(i-1)| - J) / 16
 
 RFC 3550 의 도착 간 지터 식을 연속 RTT 표본의 차에 쓴 것이다. 원래 식은 단방향 지연의 차에 쓴다. 이 값은 RFC 3550 의 지터와
 비교하지 않는다.
+
+`J` 는 실수로 든다. 레코드의 `jitter_us` 에는 가장 가까운 정수로 반올림해 싣는다. 정수로 나누면 16 보다 작은 차이가 사라지기
+때문이다.
 
 **RTT 표본은 구간마다 16개까지 싣는다.** `PING` 간격이 5초라 60초 구간에 많아야 열둘 남짓이다. 넘는 것은 버리고
 `rtt_overflow` 에 센다.
@@ -1273,9 +1324,11 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 | `data.echo` | `rtt_ms` (되돌아온 에코의 오프셋 32 송신 시각에서 받은 시각까지. 밀리초). **시험 빌드에만 있다** | Phase 4 RTT 기준선 |
 | `roster` | `generation`, `members` (멤버마다 `<peer_id>/<가상 IP>/<비트 0>/<이름>` 을 쉼표로 이어 붙인 것) | Phase 4 `ROSTER` 수신 확인 ([`protocol.md`](protocol.md) 5.7) |
 | `session.loss` | `peer_id`, `expected`, `accepted`, `lost` ([`protocol.md`](protocol.md) 4.5 의 세션 값. 재협상 구간의 합계를 포함한다) | Phase 5 손실·재정렬 집계 |
+| `telemetry.off` | 없음. 수준은 `INFO` 다. 3.5 기동 입력에서 텔레메트리를 껐을 때 기동 중에 한 번 낸다 | Phase 9 텔레메트리를 끈 기동 |
+| `telemetry.upload_failed` | `reason` (실패 사유), `kind` (6.3 의 `kind`). 수준은 `WARN` 이다. 업로드 하나가 실패할 때마다 낸다(6.3 의 "실패를 삼키지는 않는다") | Phase 9 업로드 실패 확인 |
 | `session_end.cleanup` | `elapsed_ms` (`WM_ENDSESSION` 을 받은 때부터 [`concurrency.md`](concurrency.md) 7장 종료의 (7) 정리 완료 신호를 준비하기 시작한 때까지 흐른 밀리초. 이 줄을 쓰는 시간과 신호 자체는 들지 않는다. GUI 빌드만 낸다) | Phase 8 호스트 종료가 OS 유예 안에 드는지 |
 
-여기 없는 이벤트는 자유롭게 늘려도 된다. **이 스무 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
+여기 없는 이벤트는 자유롭게 늘려도 된다. **이 스물두 개의 키와 필드 이름만 바꾸지 않는다.** 바꾸면 검증 항목이 같이 낡는다.
 
 **`timer.tick` 은 만료하는 모든 타이머가 낸다.** `name` 이 어느 타이머인지를 가른다. Phase 2
 부터는 STUN 재시도와 마감이 `[loop]` 의 같은 집합에 들어가므로 제품 빌드에서도 이 줄이 나간다
@@ -1377,24 +1430,30 @@ Sangtachi/
 |   |   +-- peer/        peer, hole_punch, session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (시험 빌드에서만)
-|   |   +-- telemetry/   telemetry
+|   |   +-- telemetry/   telemetry (레코드와 세션 값), uploader ([telemetry] 스레드) (9장 텔레메트리 업로드)
 |   |   +-- ui/          view, gui_ui, main_window, gui_main (GUI 실행 파일)
-|   |   +-- control/     control_client
+|   |   +-- control/     channel, exchange, http, json, lobby, ops, runner
 |   +-- CMakeLists.txt
-+-- control-server/      모듈 책임은 control_plane.md 7.1
-|   +-- server.py
-|   +-- ops.py
-|   +-- ids.py
-|   +-- candidates.py
-|   +-- clock.py
-|   +-- store.py
++-- control-server/
+|   +-- controlplane/    모듈 책임은 control_plane.md 7.1
+|   |   +-- server.py
+|   |   +-- ops.py
+|   |   +-- ids.py
+|   |   +-- candidates.py
+|   |   +-- clock.py
+|   |   +-- store.py
 |   +-- tests/
 +-- telemetry-server/
-|   +-- server.py
-|   +-- ingest.py
-|   +-- metrics.py
+|   +-- telemetry/       모듈 책임은 3.4. controlplane 을 import 한다
+|   |   +-- server.py
+|   |   +-- ingest.py
+|   |   +-- metrics.py
+|   +-- tests/
 +-- tests/
 +-- scripts/
++-- tools/
+|   +-- cp-deploy/       제어 서버와 텔레메트리 서비스의 배포와 확인
+|   +-- tm-analysis/     텔레메트리 테이블에서 experiments.md 의 표를 낸다 (roadmap.md Phase 9)
 +-- docs/
 |   +-- kor/                 한국어 문서 (이 트리)
 |   |   +-- architecture.md      이 문서

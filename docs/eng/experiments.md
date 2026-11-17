@@ -204,3 +204,24 @@ The record of running the pass conditions of `spec.md` T-7 in one flow with two 
 
 - A's list was captured only after F's row was removed. The intermediate display with connection bit 0 was not recorded
 - One network pair
+
+## 5. Limits of the Telemetry Tables
+
+These are the limits for reading the tables produced by the analysis script of `roadmap.md` Phase 9 ([`tools/tm-analysis`](../../tools/tm-analysis/README.md)). What is
+counted and how belongs to the `roadmap.md` Phase 9 tasks. There are no results yet.
+
+**The `room_known` filter.**
+
+- An attempt that is `OK` but whose `room_known` is not `true` drops out of both the successes and the denominator. Genuine records that arrived after the room item was deleted and
+  records whose check read failed fall here ([`architecture.md`](architecture.md) 3.4 Room Check). Their count is written separately as "excluded OK"
+- Failures are counted regardless of `room_known`, because a failure before establishment has no room to check. So fake failure records are not filtered and can raise the failure rate
+- The check only sees whether the room exists. Fake records sent by someone who knows a live room code enter both the successes and the session values
+
+**Lost records.**
+
+- An attempt whose `establish` (send sequence number 0) was lost while later records arrived drops out of the attempt denominator. That attempt's loss count is at least 1, and any other gaps are added to it
+- Losing the last record of an attempt or a whole attempt does not show in the loss count either
+- If a session ends without an `end`, that session drops out of loss and session duration
+
+**Jitter.** A record's `jitter_us` is one smoothed jitter value at the end of the interval (`architecture.md` chapter 9 Telemetry Upload). The jitter median in the tables is
+"the median of end-of-interval smoothed jitters". It is not the median of differences of consecutive RTT samples. It is not compared with RFC 3550 jitter.

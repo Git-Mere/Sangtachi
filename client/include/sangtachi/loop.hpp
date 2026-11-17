@@ -229,6 +229,10 @@ public:
         on_counter_dump_ = std::move(handler);
     }
 
+    // 콘솔 `counters` 가 프로세스 표를 내기 직전에 부르는 곳. 다른 스레드가 올리는 원자 변수를 표에 옮긴다
+    // (counters.hpp 의 예외). 제품 경로는 telemetry_upload_failed 를 옮긴다. 비워 두면 아무것도 하지 않는다.
+    void set_counter_sync(std::function<void()> sync) { on_counter_sync_ = std::move(sync); }
+
     // 알 수 없는 콘솔 명령을 받은 뒤 부르는 곳. `console.rejected reason=unknown_command` 줄은 그대로
     // 나가고 이것이 더 불린다. 제품 경로는 안내 한 줄을 낸다 (architecture.md 3.5 로비 안내).
     void set_unknown_command_handler(std::function<void()> handler) {
@@ -302,6 +306,7 @@ private:
     DatagramHandler on_tunnel_;
     DeadlineSource deadlines_;
     std::function<void()> on_counter_dump_;
+    std::function<void()> on_counter_sync_;
     std::function<void()> on_unknown_command_;
     std::function<void()> on_console_before_;
     std::function<void()> on_console_after_;

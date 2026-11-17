@@ -277,6 +277,8 @@ void Tunnel::on_datagram(const network::Endpoint& from, std::span<const std::byt
     const Millis t = now();
     // 여기부터 세션이 정해졌다. 판정은 전부 그 세션의 표에 오른다 (counters.hpp).
     peer::Session& session = *it->second.session;
+    // architecture.md 9장 세션 바이트. 검사 7번을 지나 이 세션으로 정해진 데이터그램이다.
+    session.meter().add_in(datagram.size());
     // 8.1 검사 8. 8.2 의 epoch 비교보다 먼저다 (roadmap.md Phase 4 재협상 뒤 지연 패킷).
     if (retired_.contains(common.header.session_epoch, t)) {
         session.counters().increment(Counter::DropRetiredEpoch);

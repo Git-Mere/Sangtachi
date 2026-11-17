@@ -83,6 +83,15 @@ $cases = @(
     # 카운터 전량은 종료 절차에서 낸다. 값이 0 인 것도 함께 낸다.
     @{ args = @('--server', $srv, '--name', $nm); expect = 0; contains = 'INFO counter name=drop_magic value=0' }
     @{ args = @('--server', $srv, '--name', $nm); expect = 0; contains = 'INFO counter name=control_queue_dropped value=0' }
+
+    # 텔레메트리 (architecture.md 3.5, 6.3). 시험 빌드에는 빌드에 넣은 주소가 없어 --telemetry 가 없으면 끈다.
+    @{ args = @('--server', $srv, '--name', $nm);                                   expect = 0; contains = 'INFO telemetry.off' }
+    @{ args = @('--server', $srv, '--name', $nm, '--telemetry', '127.0.0.1:9');     expect = 0; contains = 'INFO counter name=telemetry_upload_failed value=0'; absent = 'telemetry.off' }
+    @{ args = @('--server', $srv, '--name', $nm, '--telemetry', 'a.example:0');     expect = 2; contains = 'reason=bad_port arg=a.example:0' }
+    @{ args = @('--server', $srv, '--name', $nm, '--telemetry', '999.999.999.999'); expect = 2; contains = 'reason=bad_host' }
+    @{ args = @('--server', $srv, '--name', $nm, '--telemetry');                    expect = 2; contains = 'reason=missing_value arg=--telemetry' }
+    # [telemetry] 를 띄운 뒤의 기동 실패도 그 스레드를 거두고 기동 실패 코드로 끝난다.
+    @{ args = @('--server', '1.0x7f', '--name', $nm, '--telemetry', '127.0.0.1:9'); expect = 2; contains = 'ERROR control.server reason=resolve_failed' }
 )
 
 # 인자 하나를 Windows 명령줄 규칙대로 감싼다.

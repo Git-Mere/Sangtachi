@@ -10,7 +10,7 @@ MUTANTS = [
                T + "test_fields_are_an_allow_list[http.request-fields1]"],
      "why": "7.5 room_id 와 peer_token 을 싣지 않는다. 표에 있는 필드만 받는다"},
     {"id": "log-event-not-checked", "path": P,
-     "old": "    required = EVENTS.get(event)\n    if required is None:", "new": "    required = EVENTS.get(event, tuple(fields))\n    if required is None:",
+     "old": "    required = events.get(event)\n    if required is None:", "new": "    required = events.get(event, tuple(fields))\n    if required is None:",
      "kills": [T + "test_fields_are_an_allow_list[room.joined-fields3]"],
      "why": "7.5 표에 없는 이벤트"},
     {"id": "log-value-not-checked", "path": P,

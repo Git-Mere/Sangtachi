@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 LEVELS = ("INFO", "WARN", "ERROR")
 
@@ -48,10 +48,12 @@ def set_sink(sink: Sink | None) -> None:
     _sink = sink or _default_sink
 
 
-def format_line(level: str, event: str, fields: dict[str, object]) -> str:
+def format_line(level: str, event: str, fields: dict[str, object],
+                events: Mapping[str, tuple[str, ...]] = EVENTS) -> str:
+    """events 는 이벤트 허용 목록이다. 기본값이 7.5 표이고 텔레메트리 서비스는 자기 표를 준다."""
     if level not in LEVELS:
         raise ValueError(f"모르는 수준 {level!r}")
-    required = EVENTS.get(event)
+    required = events.get(event)
     if required is None:
         raise ValueError(f"7.5 에 없는 이벤트 {event!r}")
     if set(fields) != set(required):
@@ -70,3 +72,10 @@ def format_line(level: str, event: str, fields: dict[str, object]) -> str:
 
 def emit(level: str, event: str, **fields: object) -> None:
     _sink(format_line(level, event, fields))
+
+
+def emitter(events: Mapping[str, tuple[str, ...]]) -> Callable[..., None]:
+    """emit 과 같되 다른 허용 목록을 쓰는 함수. 줄은 같은 sink 로 간다."""
+    def emit_with(level: str, event: str, **fields: object) -> None:
+        _sink(format_line(level, event, fields, events))
+    return emit_with

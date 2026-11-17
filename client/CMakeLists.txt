@@ -88,6 +88,16 @@ endif()
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated_client/sangtachi/default_server.hpp"
      CONTENT "#pragma once\n\n// client/CMakeLists.txt 에서 만든다. 고치지 않는다.\n\n#include <string_view>\n\nnamespace sangtachi {\ninline constexpr std::string_view kDefaultServer = \"@SANGTACHI_DEFAULT_SERVER@\";\n}  // namespace sangtachi\n"
      @ONLY)
+
+if(NOT SANGTACHI_DEFAULT_TELEMETRY MATCHES "^[A-Za-z0-9.:-]*$")
+    message(FATAL_ERROR "SANGTACHI_DEFAULT_TELEMETRY may only contain letters, digits, '.', '-' and ':' (got '${SANGTACHI_DEFAULT_TELEMETRY}')")
+endif()
+
+# --telemetry 의 기본값 (architecture.md 3.5). 규칙은 위 SANGTACHI_DEFAULT_SERVER 와 같다. 비우면 --telemetry 가 없을 때
+# 텔레메트리를 끈다.
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated_client/sangtachi/default_telemetry.hpp"
+     CONTENT "#pragma once\n\n// client/CMakeLists.txt 에서 만든다. 고치지 않는다.\n\n#include <string_view>\n\nnamespace sangtachi {\ninline constexpr std::string_view kDefaultTelemetry = \"@SANGTACHI_DEFAULT_TELEMETRY@\";\n}  // namespace sangtachi\n"
+     @ONLY)
 target_include_directories(sangtachi_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated_client")
 
 # 배포 빌드의 관리자 권한 요구. 근거는 최상위 CMakeLists.txt 의 SANGTACHI_REQUIRE_ADMIN 에 있다.
@@ -118,6 +128,8 @@ if(SANGTACHI_BUILD_GUI)
         PRIVATE sangtachi_warnings
         PRIVATE Qt6::Widgets
     )
+    # 텔레메트리 레코드의 `ui` 가 `gui` 다 (architecture.md 6.3). client_process.cpp 가 본다.
+    target_compile_definitions(sangtachi_gui PRIVATE SANGTACHI_GUI_BUILD)
     # Qt 의 emit, signals, slots 매크로를 끈다. log.hpp 의 sangtachi::emit 을 Qt 의 emit 매크로가 지운다.
     target_compile_definitions(sangtachi_gui PRIVATE QT_NO_KEYWORDS)
     target_include_directories(sangtachi_gui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated_client")

@@ -2,6 +2,7 @@
 #include "sangtachi/client_process.hpp"
 #include "sangtachi/console.hpp"
 #include "sangtachi/default_server.hpp"
+#include "sangtachi/default_telemetry.hpp"
 #include "sangtachi/log.hpp"
 #include "sangtachi/loop.hpp"
 #include "sangtachi/platform/console_ctrl.hpp"
@@ -157,9 +158,9 @@ int main(int argc, char** argv) {
     }
 
     // 빌드에 넣은 제어 서버 주소가 --server 의 기본값이다 (architecture.md 3.5, CMake 의
-    // SANGTACHI_DEFAULT_SERVER). 비어 있으면 --server 가 필수다.
+    // SANGTACHI_DEFAULT_SERVER). 비어 있으면 --server 가 필수다. 텔레메트리 서비스 주소도 같다.
     const auto parsed = sangtachi::parse_args(std::span<const std::string_view>(raw),
-                                              sangtachi::kDefaultServer);
+                                              sangtachi::kDefaultServer, sangtachi::kDefaultTelemetry);
     if (!parsed.ok()) {
         const sangtachi::LogField fields[] = {
             sangtachi::field("reason", sangtachi::to_token(parsed.error)),

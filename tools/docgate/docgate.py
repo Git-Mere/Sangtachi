@@ -66,9 +66,7 @@ COUNTERS_SOURCE = "client/src/counters.cpp"
 
 # 문서에는 있고 코드에는 아직 없는 카운터. 이름과 들어오는 Phase 다. 구현하면 여기서 뺀다.
 # **남겨 두면 결함이다.** 코드에 이미 있는 이름이 여기 있으면 `counter` 검사가 떨어진다.
-PENDING_COUNTERS = {
-    "telemetry_upload_failed": "Phase 9",
-}
+PENDING_COUNTERS: dict[str, str] = {}
 
 # 문서 본문 코드 스팬 가운데 카운터로 읽는 모양. 코드에서 문서로 갈 때는 이 모양을 보지 않고
 # 이름 그대로 찾으므로, 모양에 맞지 않는 새 이름도 문서에 없으면 걸린다.

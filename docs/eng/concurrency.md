@@ -438,6 +438,8 @@ list.
     walking those items
   - The telemetry interval (`TELEMETRY_INTERVAL_S`) is one session timer outside the table in `protocol.md` chapter 11. It sends
     nothing on the wire. Its value and start time are in [`architecture.md`](architecture.md) chapter 9 Telemetry Upload
+  - That timer is set and removed in this timer set, one per session, by the attempt runner, not by the session object. Its name is
+    `telemetry.interval.<peer_id>`. When the expiry is processed, the next 60 seconds are set again
 - `protocol.md` chapter 11 Timers defines the deadline comparison as `deadline <= now` and defines
   priority by dequeue time. Receive events dequeued in the same iteration are processed before
   that iteration's timers. **This loop order, drain receives first and run timers after, is the
@@ -517,11 +519,11 @@ records in the same second, and then it fills faster. Then new records are dropp
 is dropped and `console_queue_dropped` is incremented. The producer is `[console]` and the
 consumer is `[loop]`, one each, so no lock is needed here either.
 
-- **This counter alone is an exception to the sole-ownership rule of chapter 5 State Ownership.**
-  The side that drops is the producer `[console]`, so that thread increments it. It is one atomic
-  variable and `[loop]` only reads it (the `counter` event in
-  [`architecture.md`](architecture.md) chapter 9). Every other drop counter is incremented by
-  `[loop]`
+- **Two counters are exceptions to the sole-ownership rule of chapter 5 State Ownership: this one and `telemetry_upload_failed`.**
+  - `console_queue_dropped`: the side that drops is the producer `[console]`, so that thread increments it
+  - `telemetry_upload_failed`: `[telemetry]`, which does the upload, increments it ([`architecture.md`](architecture.md) 6.3)
+  - Each is one atomic variable and `[loop]` only reads it (the `counter` event in `architecture.md` chapter 9). Every other drop counter is
+    incremented by `[loop]`
 - **The two queues do not share one counter name.** Without names, Phase 1 verification cannot
   say what it is looking at
 
@@ -570,14 +572,14 @@ It holds whether it is in the lobby, the role, whether a control request is outs
 - `[telemetry]` wakes every second with `WaitForSingleObject(shutdown_ev, 1000)` and drains the
   queue. The event is not signaled on every push. The shutdown event is manual reset, so
   signaling it wakes this wait as well, immediately.
-- `[telemetry]` sets `SO_SNDTIMEO` / `SO_RCVTIMEO` to 1.5 seconds on the upload socket. It
-  checks the shutdown event between uploads.
+- `[telemetry]` puts a 1.5-second time limit on the upload socket's connect and sets `SO_SNDTIMEO` / `SO_RCVTIMEO` to 1.5 seconds on the socket.
+  It checks the shutdown event between uploads.
 - **When `[telemetry]` sees the shutdown event, it does not end right away.** It waits for the (7) cleanup-complete event
   below. That is when it becomes certain that (3) has put in the last records. After that it drains what is left in the queue,
   sends the records one by one, and ends. How much it sends is cut off by the (8) join bound.
 
-**1.5 seconds does not bring the total time of one upload under 2 seconds.** The two timeouts
-are per operation, so if send and receive each hit theirs the sum goes up to 3 seconds. So what
+**1.5 seconds does not bring the total time of one upload under 2 seconds.** The three time limits
+are per operation, so if connect, send, and receive each hit theirs once the sum is 4.5 seconds, and a send split into several parts can take longer because each part can hit the limit. The name resolution before them (chapter 6) has no time limit. So what
 keeps the join bound is not this value but the `_exit` below. The reason for 1.5 seconds is
 **to finish the common case fast**, and going larger loses even that effect.
 

@@ -57,6 +57,7 @@ from pathlib import Path
 
 CP_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "controlplane"
+SRC_ENV = "CP_SRC"  # 고친 패키지 폴더를 시험에 넘기는 변수. telemetry-server/tests/mutate.py 가 바꿔 쓴다
 MUTANT_DIR = CP_ROOT / "tests" / "mutants"
 MUTANT_KEYS = frozenset({"id", "path", "old", "new", "kills", "why"})
 TIMEOUT_S = 120
@@ -226,7 +227,8 @@ def judge(exit_code: int | None, output: str, kills: tuple[str, ...]) -> Outcome
 
 def run_pytest(src: Path, targets: list[str], flags: list[str] | tuple[str, ...] = (),
                report: str = "-rfE", timeout_s: float = TIMEOUT_S) -> tuple[int | None, str]:
-    env = dict(os.environ, CP_SRC=str(src), PYTHONDONTWRITEBYTECODE="1")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env[SRC_ENV] = str(src)
     cmd = [sys.executable, "-m", "pytest", "-q", report, "--no-header", "-p", "no:cacheprovider", *flags,
            *targets]
     try:

@@ -13,6 +13,7 @@
 //                          tx_bytes, rx_bytes, tx_datagrams, rx_datagrams
 //   concurrency.md 6장·8장  telemetry_queue_dropped, console_queue_dropped, control_queue_dropped
 //   architecture.md 9장     record_write_failed
+//   architecture.md 6.3     telemetry_upload_failed
 //
 // 아직 아무도 올리지 않는 이름도 들고 있다. 9장이 "값이 0인 카운터도 함께 낸다" 로 정했고,
 // 그래야 검증이 "오르지 않았다" 를 판정할 수 있다. 없는 것과 0 인 것은 다르다.
@@ -24,9 +25,9 @@
 // 큐 카운터, 세션을 고르기 전의 송신 측 검사)는 프로세스 표다. 같은 이름이 두 범위에 다 생길 수
 // 있다. 예: `drop_type_length` 는 8.1 6번이면 프로세스, 5.7 구조 검사면 세션이다.
 //
-// **이 표는 `[loop]` 가 단독 소유한다** (concurrency.md 5장 상태 소유). 예외는
-// `console_queue_dropped` 하나이고, 그것은 `[console]` 이 올리는 원자 변수라 큐 쪽이
-// 들고 있다. `[loop]` 가 낼 때 그 값을 읽어 `set` 으로 이 표에 반영한다 (concurrency.md 6장).
+// **이 표는 `[loop]` 가 단독 소유한다** (concurrency.md 5장 상태 소유). 예외는 둘이다.
+// `console_queue_dropped` 는 `[console]` 이, `telemetry_upload_failed` 는 `[telemetry]` 가 올리는 원자
+// 변수라 각자의 큐 쪽이 들고 있다. `[loop]` 가 낼 때 그 값을 읽어 `set` 으로 이 표에 반영한다 (concurrency.md 6장).
 
 #include <array>
 #include <cstddef>
@@ -89,6 +90,7 @@ enum class Counter : std::size_t {
     RxErrAdapter,
     RxErrRecv,
     TelemetryQueueDropped,
+    TelemetryUploadFailed,
     TxBytes,
     TxDatagrams,
     TxDropBadSrc,
@@ -103,7 +105,7 @@ enum class Counter : std::size_t {
 };
 
 // 이름 순으로 적어 두었다. 값 자체에 의미를 두지 않는다.
-inline constexpr std::size_t kCounterCount = 62;
+inline constexpr std::size_t kCounterCount = 63;
 
 // architecture.md 9장의 `counter` 이벤트가 `name` 으로 싣는 문자열.
 [[nodiscard]] std::string_view to_token(Counter counter) noexcept;

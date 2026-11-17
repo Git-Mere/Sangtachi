@@ -16,13 +16,11 @@
 ## 다음에 할 일
 
 Phase 9 의 코드(텔레메트리 서비스, 클라이언트의 레코드와 업로드, 배포 도구의 `tm` 대상, 분석 도구 `tools/tm-analysis`)는 구현했다.
+텔레메트리 서비스는 인스턴스에 배포했고 연기 시험을 통과했다. Linux 빌드와 GUI 빌드도 확인했다.
 AWS 콘솔 작업은 대시보드만 남았다. 남은 것은 아래다.
 
 | 무엇 | 누가 | 메모 |
 |------|------|------|
-| Linux 빌드와 `ctest` 확인 | 에이전트 | `mere-galaxy` 에 닿지 않아 못 했다(아래 시험 기기 절) |
-| GUI 빌드 확인 | 에이전트 | Qt 가 있는 빌드 폴더에서. 바뀐 것은 `gui_main` 의 인자 하나와 컴파일 정의 하나다 |
-| 텔레메트리 서비스의 실제 배포와 `verify.py --target tm` | 소유자 승인 뒤 | `deploy.py --target tm` 은 실제 인스턴스에서 돌려 보지 않았다 |
 | CloudWatch 대시보드 | 소유자 | `architecture.md` 3.4 CloudWatch 지표 |
 | 전체 상한까지의 부하를 거는 방법 | 결정 필요 | 출발지 예산이 분당 30 이라 한 기기로는 닿지 않는다(`roadmap.md` Phase 9 작업) |
 | 실측 계획 | 결정 필요 | 실측 전에 정한다(`roadmap.md` Phase 9 작업) |
@@ -36,6 +34,8 @@ Linux 시험 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다([A
 - **메모.** `/etc/sudoers.d/90-sangtachi`(암호 없는 `sudo`)를 남겨 둔다. 계속 시험에 쓰기 때문이다(소유자 결정). 이 기기를 시험에서 뺄 때 지운다
 - Wi-Fi 절전은 재부팅하거나 다른 망에 붙으면 다시 켜진다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 켜져 있으면 무선 지연이 평균 96ms 까지 오르므로 실측 전에 `iw dev wlo1 set power_save off` 로 끈다
 - `field-kit-p8` 의 Linux 빌드는 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
+- Phase 9 커밋 `5d5b594` 의 Debug 시험 빌드는 `~/sangtachi-p9/build/` 다. 소스는 `git archive` 로 옮긴 `~/sangtachi-p9/src/` 다
+- `linux_tun` 의 어댑터 시험은 `CAP_NET_ADMIN` 이 없으면 건너뛴다. 이 기기에서는 `sudo ctest` 로 돌린다. 호스트가 떠 있으면 `Sangtachi` 장치를 쥐고 있어 `TUNSETIFF` 가 EBUSY(16)로 실패한다
 - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
 - 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
 

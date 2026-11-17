@@ -18,14 +18,14 @@
 Phase 9 의 코드(텔레메트리 서비스, 클라이언트의 레코드와 업로드, 배포 도구의 `tm` 대상, 분석 도구 `tools/tm-analysis`)는 구현했다.
 텔레메트리 서비스는 인스턴스에 배포했고 연기 시험과 전체 상한까지의 부하 확인을 통과했다. Linux 빌드와 GUI 빌드도 확인했다.
 `roadmap.md` Phase 9 검증 가운데 상대가 필요 없는 것(두 서비스 분리, 함께 내린 10분 동안의 터널 유지, 포트 8001, 통제된 실패 둘)도 통과했다. 실측은 동일 LAN 과 가정망 대 모바일 핫스팟을 10회씩 돌렸다.
-AWS 콘솔 작업은 대시보드만 남았고, 대시보드는 실측 뒤에 만든다(`roadmap.md` Phase 9 작업). 남은 것은 아래다.
+AWS 콘솔 작업은 대시보드까지 끝났다. 남은 것은 아래다.
 
 | 무엇 | 누가 | 메모 |
 |------|------|------|
 | 남은 실측 | 소유자 | 가정망 대 가정망, 캠퍼스망 대 가정망, 가용한 다른 NAT 거동(`roadmap.md` Phase 9 테스트 환경 표). 상대와 일정은 소유자가 잡는다. 환경마다 10회 이상이고 묶음마다 `tools/tm-analysis/local/batches.txt` 에 적는다. 그 파일에 지금 묶음 넷(통제된 실패 둘, 동일 LAN, 가정망 대 핫스팟)이 있다 |
-| 분석 도구 실행과 `room_known` 저장값 확인 | 소유자 | 이 PC 에는 AWS 자격 증명이 없고 인스턴스 역할은 텔레메트리 테이블을 읽지 못한다. 자격 증명이 있는 기기에서 `tools/tm-analysis` 를 돌린다. 제어 서버만 내린 동안 받은 레코드의 `room_known` 도 거기서 본다 |
+| 분석 도구 실행 | 소유자 | 이 PC 와 인스턴스 역할은 텔레메트리 테이블을 읽지 못한다. 묶음을 더할 때마다 AWS CloudShell 에서 `tmanalysis.py --save` 로 돌려 `report.md` 와 `records.json` 을 `tools/tm-analysis/local/` 에 받는다. 그 뒤는 `--load` 로 이 PC 에서 다시 낸다. 제어 서버만 내린 동안 받은 시험 레코드 셋(2026-11-17 21:57 UTC)의 `room_known` 은 묶음 밖이라 아직 보지 않았다 |
 | 재현 시행 1회 | 미정 | `spec.md` A-4 |
-| CloudWatch 대시보드와 그래프 | 소유자, 실측 뒤 | 분 단위 그래프는 묶음마다 측정하고 15일 안에 뽑는다. 지표는 `architecture.md` 3.4 CloudWatch 지표 |
+| CloudWatch 그래프 | 소유자, 실측 뒤 | 대시보드는 만들었다. 정의는 git 이 무시하는 `tools/tm-analysis/local/dashboard.json` 이다. 2026-11-17 묶음의 1분 해상도 값은 인스턴스 역할의 `GetMetricStatistics` 로 받아 `tools/tm-analysis/local/cw-2026-11-17-1min.json` 에 두었다. 다음 묶음도 측정하고 15일 안에 같은 식으로 받는다. 분석 도구와의 백분위수 대조는 끝났다 |
 | `experiments.md` 의 Phase 9 장 | 실측 뒤 | 장 구성은 실측 계획과 같이 정한다. 분석의 한계는 이미 5장에 있다 |
 
 ## 시험 기기 `mere-galaxy`

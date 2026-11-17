@@ -103,7 +103,7 @@ python tools/cp-deploy/verify.py --target tm --host <Elastic IP> [--tm-load SECO
 - `--tm-load SECONDS` 는 초당 `--tm-rate`(기본 5) 건의 `report` 를 보내고 응답을 오류 코드별로 센다. 레코드는 호스트의
   `interval`, `room_id` 가 `null`, `build_kind` 가 `test` 다. CloudWatch 지표 어느 것에도 들지 않고 분석에서도 빠지지만 실제
   텔레메트리 테이블에 남는다. 한 출발지의 예산이 분당 30 이므로 이 기기 하나로는 그 위가 `rate_limited` 다
-- 연기 시험은 실제 인스턴스에서 통과했다. `--tm-load` 는 실제 인스턴스에서 돌려 보지 않았다
+- 연기 시험은 실제 인스턴스에서 통과했다. `--tm-load` 는 실제 인스턴스에서 아래 `--tm-sources` 와 같이 돌렸다
 
 ```text
 python3 verify.py --target tm --host 127.0.0.1 --tm-load SECONDS --tm-rate R --tm-sources N

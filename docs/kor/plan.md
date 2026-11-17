@@ -16,12 +16,11 @@
 ## 다음에 할 일
 
 Phase 9 의 코드(텔레메트리 서비스, 클라이언트의 레코드와 업로드, 배포 도구의 `tm` 대상, 분석 도구 `tools/tm-analysis`)는 구현했다.
-텔레메트리 서비스는 인스턴스에 배포했고 연기 시험을 통과했다. Linux 빌드와 GUI 빌드도 확인했다.
+텔레메트리 서비스는 인스턴스에 배포했고 연기 시험과 전체 상한까지의 부하 확인을 통과했다. Linux 빌드와 GUI 빌드도 확인했다.
 AWS 콘솔 작업은 대시보드만 남았고, 대시보드는 실측 뒤에 만든다(`roadmap.md` Phase 9 작업). 남은 것은 아래다.
 
 | 무엇 | 누가 | 메모 |
 |------|------|------|
-| 전체 상한까지의 부하 확인 | 소유자 승인 뒤 돌린다 | 방법은 인스턴스 안의 루프백 출발지다(`roadmap.md` Phase 9 작업). 도구는 `verify.py --tm-sources` 이고 쓰는 법은 `tools/cp-deploy` README 다. 이 PC 의 `verify.py --soak` 와 같이 돌린다 |
 | 실측 | 소유자 | 환경은 `roadmap.md` Phase 9 테스트 환경 표의 다섯이다. 상대와 일정은 소유자가 잡는다. 환경마다 10회 이상이고 묶음마다 `tools/tm-analysis/local/batches.txt` 에 적는다 |
 | CloudWatch 대시보드와 그래프 | 소유자, 실측 뒤 | 분 단위 그래프는 묶음마다 측정하고 15일 안에 뽑는다. 지표는 `architecture.md` 3.4 CloudWatch 지표 |
 | `experiments.md` 의 Phase 9 장 | 실측 뒤 | 장 구성은 실측 계획과 같이 정한다. 분석의 한계는 이미 5장에 있다 |

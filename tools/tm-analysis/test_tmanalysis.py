@@ -220,6 +220,61 @@ def test_summarize_session_values():
     assert s.missing == 3                    # a 의 seq 2, 두 end 시도의 seq 0. room_known 과 무관하게 센다
 
 
+# ---- 호스트와 짝지은 매핑 거동. 같은 방 호스트 establish 의 값과 짝짓는다 ----
+def host(n, room, **over):
+    return attempt(n, role="host", room_id=room, **over)
+
+
+PAIRED = [
+    ("같은 방 호스트", [host(9, "AAAAAA", stun_same_endpoint=False)], "AAAAAA", (True, False)),
+    ("호스트 레코드가 여럿이어도 값이 같으면 하나", [host(9, "AAAAAA"), host(10, "AAAAAA")], "AAAAAA", (True, True)),
+    ("호스트 값 null", [host(9, "AAAAAA", stun_same_endpoint=None)], "AAAAAA", (True, None)),
+    ("방에 호스트 레코드 없음", [], "AAAAAA", (True, tm.NO_PAIR)),
+    ("다른 방 호스트만 있음", [host(9, "BBBBBB")], "AAAAAA", (True, tm.NO_PAIR)),
+    ("플레이어 방 없음", [host(9, "AAAAAA")], None, (True, tm.NO_PAIR)),
+    ("방 없는 호스트 레코드는 쓰지 않는다", [host(9, None)], None, (True, tm.NO_PAIR)),
+    ("같은 방 호스트 값이 엇갈림", [host(9, "AAAAAA"), host(10, "AAAAAA", stun_same_endpoint=False)], "AAAAAA",
+     (True, tm.CONFLICT)),
+    ("호스트 interval 은 쓰지 않는다", [attempt(9, role="host", kind="interval", room_id="AAAAAA", room_known=None,
+                                                 stun_same_endpoint=False)],
+     "AAAAAA", (True, tm.NO_PAIR)),
+]
+
+
+@pytest.mark.parametrize("name,hosts,room,key", PAIRED, ids=[c[0] for c in PAIRED])
+def test_paired_key(name, hosts, room, key):
+    s = tm.summarize([attempt(1, room_id=room)] + hosts)
+    assert s.paired["stun_same_endpoint"] == {key: (1, 1)}
+
+
+def test_paired_counts_like_by():
+    # 분모는 by 와 같다. ABORTED 와 room_known 이 true 가 아닌 OK 는 빠지고 실패는 든다.
+    attempts = [
+        attempt(1, room_id="AAAAAA"),
+        attempt(2, room_id="AAAAAA", result="HOLE_PUNCH_TIMEOUT", setup_ms=None),
+        attempt(3, room_id="AAAAAA", result="ABORTED", setup_ms=None),
+        attempt(4, room_id="AAAAAA", room_known=False),
+        attempt(5, room_id="BBBBBB", result="HOLE_PUNCH_TIMEOUT", setup_ms=None, local_differs_public=False),
+        host(9, "AAAAAA", stun_same_endpoint=False),
+        host(10, "BBBBBB", local_differs_public=None),
+    ]
+    s = tm.summarize(attempts)
+    assert s.paired["stun_same_endpoint"] == {(True, False): (2, 1), (True, True): (1, 0)}
+    assert s.paired["local_differs_public"] == {(True, True): (2, 1), (False, None): (1, 0)}
+    assert sum(n for n, _ in s.paired["stun_same_endpoint"].values()) == s.attempts
+
+
+def test_report_paired_table():
+    batches = tm.parse_batches("2026-11-20T10:00:00Z 2026-11-20T11:00:00Z e1 real\n")
+    records = [rec(inst="1" * 32, at="10:10:00", room_id="ABCDEF"),
+               rec(inst="2" * 32, at="10:10:00", role="host", room_id="ABCDEF", stun_same_endpoint=False),
+               rec(inst="3" * 32, at="10:10:00", result="STUN_DISCOVERY_FAILED", setup_ms=None, stun_same_endpoint=None)]
+    out = tm.report(records, batches)
+    assert "| true | false | 1/1 (100.0%)" in out
+    assert f"| null | {tm.NO_PAIR} | 0/1 (0.0%)" in out
+    assert "ABCDEF" not in out
+
+
 # ---- Scan 의 페이지 조절. 가짜 테이블이다 ----
 class FakeTable:
     def __init__(self, pages):

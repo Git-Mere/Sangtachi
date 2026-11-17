@@ -105,11 +105,26 @@ python tools/cp-deploy/verify.py --target tm --host <Elastic IP> [--tm-load SECO
   텔레메트리 테이블에 남는다. 한 출발지의 예산이 분당 30 이므로 이 기기 하나로는 그 위가 `rate_limited` 다
 - 연기 시험은 실제 인스턴스에서 통과했다. `--tm-load` 는 실제 인스턴스에서 돌려 보지 않았다
 
+```text
+python3 verify.py --target tm --host 127.0.0.1 --tm-load SECONDS --tm-rate R --tm-sources N
+```
+
+- 전체 상한까지의 부하는 인스턴스 안에서 이렇게 건다(`roadmap.md` Phase 9 작업). `verify.py` 와 `deploy.py` 를 인스턴스의 한
+  폴더에 올려 시스템 `python3` 로 돌린다. 둘 다 표준 라이브러리만 쓴다
+- `--tm-sources N` 은 요청마다 출발지를 `127.0.0.2` 부터 N 개의 루프백 주소로 돌려 쓴다. 서버는 연결의 상대 IP 로 출발지를
+  가르므로 주소마다 예산이 따로다. 이때 `--host` 는 `127.0.0.1` 만 받는다. N 은 1~250 이다
+- 출발지 하나가 받는 것은 초당 `R / N` 건이다. 이것이 0.5(분당 30)를 넘으면 `rate_limited` 가 섞인다. 전체 상한만 보려면
+  N 을 `2R` 이상으로 둔다. 예를 들어 `--tm-rate 5 --tm-sources 12` 는 상한에 닿고, `--tm-rate 8 --tm-sources 20` 은 상한을 넘겨
+  `unavailable` 이 나온다
+- 연기 시험은 `127.0.0.1` 을 출발지로 쓴다. 부하 출발지와 겹치지 않는다
+- 부하 프로그램이 같은 인스턴스의 CPU 를 쓰고 망과 보안 그룹을 지나지 않는다. 결과와 같이 적는다
+
 ## 시험
 
 ```text
 python -m pytest -q -p no:cacheprovider tools/cp-deploy
 ```
 
-입력 검사의 케이스 표와 대상별 유닛, 설정 파일, 올리는 경로다. 원격 동작은 시험하지 않는다. 텔레메트리 관련 행은
+입력 검사의 케이스 표(`deploy.py`, `verify.py`)와 대상별 유닛, 설정 파일, 올리는 경로다. `--tm-sources` 는 진짜 텔레메트리
+수락 루프를 루프백에 띄워 출발지가 주소마다 따로 잡히는지 본다. 원격 동작은 시험하지 않는다. 텔레메트리 관련 행은
 `telemetry-server` 와 `control-server` 의 패키지를 import 한다.

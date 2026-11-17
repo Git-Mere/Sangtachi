@@ -27,6 +27,10 @@ DEFAULT_BATCHES = HERE / "local" / "batches.txt"
 Z95 = 1.959963984540054
 KINDS = ("real", "controlled")
 BY_FIELDS = ("stun_same_endpoint", "local_differs_public", "same_lan", "build_kind")
+# 플레이어 값과 같은 방 호스트 값의 짝으로 가르는 필드. 홀펀칭은 양쪽 NAT 에 달렸다.
+PAIRED_FIELDS = ("stun_same_endpoint", "local_differs_public")
+NO_PAIR = "짝 없음"
+CONFLICT = "불일치"
 # 레코드 한 건은 1KB 안쪽이다(architecture.md 3.4 입력 상한). 최종 일관 읽기는 4KB 에 0.5 RCU 라 한 페이지를
 # 이 수로 자르면 페이지 하나가 초당 상한 하나를 넘지 않는다.
 ITEMS_PER_RCU = 8
@@ -170,6 +174,7 @@ class Summary:
     excluded_ok: int = 0
     failures: Counter = field(default_factory=Counter)
     by: dict[str, dict] = field(default_factory=dict)  # 필드 -> 값 -> (시도, 성공)
+    paired: dict[str, dict] = field(default_factory=dict)  # 필드 -> (플레이어 값, 호스트 값) -> (시도, 성공)
     player_setup: list[int] = field(default_factory=list)
     host_setup: list[int] = field(default_factory=list)
     rtt_ms: list[float] = field(default_factory=list)
@@ -181,9 +186,30 @@ class Summary:
     missing: int = 0
 
 
+def host_values(attempts: list[list[dict]]) -> dict[str, dict[str, set]]:
+    """방마다 호스트 establish 의 PAIRED_FIELDS 값. 호스트의 STUN 은 방을 만들 때 한 번이라 한 방의 값은 하나다
+    (architecture.md 6.3). 그래서 상대 peer_id 를 맞추지 않고 방으로 짝짓는다."""
+    rooms: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    for recs in attempts:
+        for r in recs:
+            if r["kind"] == "establish" and r["role"] == "host" and r.get("room_id") is not None:
+                for f in PAIRED_FIELDS:
+                    rooms[r["room_id"]][f].add(r.get(f))
+    return rooms
+
+
+def host_value(rooms: dict[str, dict[str, set]], room_id: str | None, f: str):
+    vals = rooms[room_id][f] if room_id in rooms else set()
+    if not vals:
+        return NO_PAIR
+    return CONFLICT if len(vals) > 1 else next(iter(vals))
+
+
 def summarize(attempts: list[list[dict]]) -> Summary:
     s = Summary()
     by: dict[str, dict] = {f: defaultdict(lambda: [0, 0]) for f in BY_FIELDS}
+    paired: dict[str, dict] = {f: defaultdict(lambda: [0, 0]) for f in PAIRED_FIELDS}
+    rooms = host_values(attempts)
     for recs in attempts:
         s.missing += missing_seq(recs)
         for r in recs:
@@ -209,6 +235,10 @@ def summarize(attempts: list[list[dict]]) -> Summary:
                     cell = by[f][r.get(f)]
                     cell[0] += 1
                     cell[1] += ok
+                for f in PAIRED_FIELDS:
+                    cell = paired[f][(r.get(f), host_value(rooms, r.get("room_id"), f))]
+                    cell[0] += 1
+                    cell[1] += ok
             elif r["kind"] == "establish":
                 if r["result"] == "OK" and known and r.get("setup_ms") is not None:
                     s.host_setup.append(r["setup_ms"])
@@ -223,6 +253,7 @@ def summarize(attempts: list[list[dict]]) -> Summary:
                         s.duration_s.append(r["duration_ms"] / 1000)
                         s.end_results[r["result"]] += 1
     s.by = {f: {k: tuple(v) for k, v in by[f].items()} for f in BY_FIELDS}
+    s.paired = {f: {k: tuple(v) for k, v in paired[f].items()} for f in PAIRED_FIELDS}
     return s
 
 
@@ -274,6 +305,10 @@ def render(title: str, dates: list[str], s: Summary, straddling: int) -> str:
         lines += ["", f"| `{f}` | 성공/시도 |", "|------|-----|"]
         for v, (n, k) in sorted(s.by[f].items(), key=lambda kv: _value(kv[0])):
             lines.append(f"| {_value(v)} | {_rate(k, n)} |")
+    for f in PAIRED_FIELDS:
+        lines += ["", f"| 플레이어 `{f}` | 같은 방 호스트 `{f}` | 성공/시도 |", "|------|------|-----|"]
+        for (pv, hv), (n, k) in sorted(s.paired[f].items(), key=lambda kv: (_value(kv[0][0]), _value(kv[0][1]))):
+            lines.append(f"| {_value(pv)} | {_value(hv)} | {_rate(k, n)} |")
     if straddling:
         lines += ["", f"경고: {title} 의 시도 {straddling}개는 레코드 일부가 묶음 시간 범위 밖에 왔다. 묶음 끝을 세션 종료 뒤로 적는다."]
     return "\n".join(lines) + "\n"

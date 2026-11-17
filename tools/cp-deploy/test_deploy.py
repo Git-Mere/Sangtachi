@@ -9,6 +9,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import deploy  # noqa: E402
 
+# 텔레메트리 관련 행은 두 서버 패키지를 import 한다. 시험 순서에 기대지 않게 여기서 경로를 건다.
+sys.path.insert(0, str(deploy.REPO / "control-server"))
+sys.path.insert(0, str(deploy.REPO / "telemetry-server"))
+
 HOSTS = [
     ("100.20.98.101", True, "공인 유니캐스트"),
     ("8.8.8.8", True, "공인 유니캐스트"),
@@ -140,8 +144,6 @@ def test_tm_smoke_body_is_rejected_by_check():
     """연기 시험은 저장소에 쓰지 않아야 한다. 텔레메트리의 레코드 검사가 bad_request 로 끝내는지 본다."""
     import json
 
-    sys.path.insert(0, str(deploy.REPO / "control-server"))
-    sys.path.insert(0, str(deploy.REPO / "telemetry-server"))
     from controlplane.errors import OpError
     from telemetry.ingest import check_record
 
@@ -159,3 +161,69 @@ def test_verify_load_record_is_valid_and_out_of_metrics():
     assert (r["role"], r["kind"], r["room_id"], r["build_kind"]) == ("host", "interval", None, "test")
     r["room_known"] = None
     assert samples(r) == []
+
+
+def vns(**over):
+    base = dict(host="100.20.98.101", target="tm", tm_load=60, tm_rate=5.0, tm_sources=0)
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+VERIFY_ARGS = [
+    ({}, True, "공인 주소, 출발지 하나"),
+    ({"host": "127.0.0.1"}, False, "출발지 옵션 없이 루프백"),
+    ({"host": "127.0.0.1", "tm_sources": 12}, True, "인스턴스 안의 루프백 부하"),
+    ({"host": "127.0.0.1", "tm_sources": 250}, True, "상한"),
+    ({"host": "127.0.0.1", "tm_sources": 251}, False, "127.0.0.255 를 넘는다"),
+    ({"host": "127.0.0.1", "tm_sources": -1}, False, "음수"),
+    ({"tm_sources": 12}, False, "공인 주소에는 루프백 출발지를 쓸 수 없다"),
+    ({"host": "127.0.0.2", "tm_sources": 12}, False, "대상은 127.0.0.1 하나"),
+    ({"host": "127.0.0.1", "tm_sources": 12, "tm_load": 0}, False, "부하 없이 출발지만"),
+    ({"host": "127.0.0.1", "tm_sources": 12, "target": "cp"}, False, "제어 서버 대상"),
+    ({"tm_rate": 0.0}, False, "초당 0"),
+    ({"tm_rate": 50.0}, True, "초당 상한"),
+    ({"tm_rate": 50.5}, False, "초당 상한 초과"),
+    ({"target": "cp", "tm_load": 0, "tm_rate": 0.0}, True, "제어 서버 대상은 tm-rate 를 보지 않는다"),
+]
+
+
+@pytest.mark.parametrize("over,ok,note", VERIFY_ARGS, ids=[c[2] for c in VERIFY_ARGS])
+def test_verify_check_args(over, ok, note):
+    import verify
+
+    if ok:
+        verify.check_args(vns(**over))
+    else:
+        with pytest.raises(deploy.DeployError):
+            verify.check_args(vns(**over))
+
+
+def test_verify_tm_load_rotates_loopback_sources(monkeypatch):
+    """진짜 텔레메트리 수락 루프를 루프백에 띄우고 tm_load 를 출발지 셋으로 보낸다. 서버의 출발지 표에 그 셋이 따로 잡혀야 한다."""
+    import asyncio
+    import dataclasses
+
+    import verify
+    from telemetry import server as tms
+
+    server = tms.build_server(lambda req: {}, lambda: {}, global_rate=tms.GlobalRate(per_s=1000))
+
+    async def go():
+        stop = asyncio.Event()
+        ready = asyncio.get_running_loop().create_future()
+        task = asyncio.create_task(server.serve("127.0.0.1", 0, stop, on_ready=ready.set_result))
+        port = await ready
+        monkeypatch.setitem(verify.TARGETS, "tm", dataclasses.replace(verify.TARGETS["tm"], port=port))
+        try:
+            return await asyncio.to_thread(verify.tm_load, "127.0.0.1", 1, 9.0, 3)
+        finally:
+            stop.set()
+            await task
+
+    out = asyncio.run(go())
+    assert "sources=3" in out[0] and "'ok'" in out[0] and "rate_limited" not in out[0]
+    srcs = verify.loopback_sources(3)
+    assert srcs == ["127.0.0.2", "127.0.0.3", "127.0.0.4"]
+    spent = [tms.RATE_LIMIT_BUCKET - server.rate.peek(s) for s in srcs]
+    assert all(n >= 2 for n in spent) and max(spent) - min(spent) <= 1
+    assert server.rate.peek("127.0.0.1") is None

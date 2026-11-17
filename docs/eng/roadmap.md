@@ -1361,17 +1361,23 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - Implement and deploy the telemetry service (a separate process and port from the control server). Room matching, input caps, storage, CloudWatch metrics, systemd
   resource limits and the journald cap (`architecture.md` 3.4)
 - Widen the deploy tool. [`tools/cp-deploy`](../../tools/cp-deploy/README.md) picks a target and also deploys the telemetry service
-- **The way to apply telemetry load is decided before the load check (Verification below).** The per-source budget is 30 a minute per source, so one machine
-  cannot reach the global cap (5 per second)
+- **The telemetry load is applied inside the instance from several loopback sources.** Run `verify.py --tm-load` on the instance against
+  `127.0.0.1`, rotating the source of each request over loopback addresses starting at `127.0.0.2`. Usage is in the [`tools/cp-deploy`](../../tools/cp-deploy/README.md) README.
+  Record with the result that the load program uses the same instance's resources and does not cross the network or the security group
+
+  > **Why.** The per-source budget is 30 a minute per source, so one machine cannot reach the global cap (5 per second). The server
+  > tells sources apart by the connection's peer IP, so each loopback address is counted separately. The deployed configuration does not change and no infrastructure is added
 - **The repository owner does the AWS console work.** It is done before the service is first deployed
   - Lower the control plane table's capacity to RCU 20, WCU 20 ([`control_plane.md`](control_plane.md) 7.6)
   - Create the telemetry table. Its keys, capacity, and TTL are set by Storage in `architecture.md` 3.4 Telemetry Service
   - Add the permissions of `architecture.md` 3.4 to the instance role
   - Open inbound TCP 8001 in the security group
-  - Create the CloudWatch dashboard
+- **The repository owner creates the CloudWatch dashboard after the field measurements.** The dashboard only shows stored metrics, so data from before it was created is still visible. Per-minute graphs of a batch are taken within 15 days of measuring it
+
+  > **Why 15 days.** CloudWatch keeps 1-minute resolution data for 15 days and 5-minute resolution data for 63 days. Whenever the dashboard is created, only the coarser resolution remains after that
 - **Put the analysis script in `tools/`.** It reads the records of a UTC time range from DynamoDB and builds the tables that go into
   [`experiments.md`](experiments.md). It uses only `boto3` and the standard library
-  - Attempt count and success count, Wilson interval, count per failure code, comparison by observed mapping behavior, by same LAN or not, by build kind, host-side establishment time
+  - Attempt count and success count, Wilson interval, count per failure code, comparison by observed mapping behavior, comparison paired with the mapping behavior of the host in the same room, by same LAN or not, by build kind, host-side establishment time
   - Attempts and successes count only player `establish` records. Each result is counted as below
 
     | Result | How it is counted |

@@ -54,6 +54,7 @@ python tools/tm-analysis/tmanalysis.py --load tools/tm-analysis/local/records.js
 | Wilson 구간 | 95%, z = 1.959963984540054 |
 | 실패 코드별 개수 | 위 실패 |
 | 매핑 거동별, 동일 LAN 별, 빌드 종류별 | 위 시도를 플레이어 레코드의 `stun_same_endpoint`, `local_differs_public`, `same_lan`, `build_kind` 값(`null` 포함)으로 가른다 |
+| 호스트와 짝지은 매핑 거동별 | 위 시도를 플레이어의 `stun_same_endpoint` 값과 같은 `room_id` 의 호스트 `establish` 값의 짝으로 가른다. `local_differs_public` 도 같다. 호스트의 STUN 은 방을 만들 때 한 번이라 방으로 짝짓는다(`architecture.md` 6.3). 방이 없거나 그 방의 호스트 `establish` 가 없으면 "짝 없음", 그 방의 호스트 값이 엇갈리면 "불일치"다 |
 | 플레이어 수립 시간 | 위 성공의 `setup_ms` |
 | 호스트 수립 시간 | 호스트의 `establish`, `OK`, `room_known` 이 `true`. 기점이 달라 플레이어 값과 비교하지 않는다(`architecture.md` 9장) |
 | RTT, 지터 | 양쪽의 `interval` 과 `end`, `room_known` 이 `true`. RTT 는 표본마다, 지터는 `null` 이 아닌 레코드마다 |

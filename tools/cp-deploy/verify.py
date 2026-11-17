@@ -3,6 +3,7 @@
 
     python tools/cp-deploy/verify.py --host 203.0.113.10 [--players 4] [--concurrent]
     python tools/cp-deploy/verify.py --target tm --host 203.0.113.10 [--tm-load SECONDS] [--tm-rate R]
+    python3 verify.py --target tm --host 127.0.0.1 --tm-load SECONDS --tm-rate R --tm-sources N   (인스턴스 안)
 
 방 하나를 만들고 플레이어를 넣고 후보를 등록하고 호스트가 확인한 뒤 플레이어를 회수한다. 실제 테이블에
 항목이 생기며 방이 만료되면 TTL 이 지운다(control_plane.md 6.5). 방 코드와 토큰은 출력하지 않는다.
@@ -11,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import itertools
 import json
 import secrets
@@ -203,26 +205,40 @@ def load_record(instance_id: str, seq: int) -> dict:
             "bytes_out": 0, "bytes_in": 0}
 
 
-def tm_load(host: str, seconds: int, rate: float) -> list[str]:
+LOOPBACK_HOST = "127.0.0.1"
+MAX_SOURCES = 250
+
+
+def loopback_sources(n: int) -> list[str]:
+    """127.0.0.2 부터 n 개. 서버는 연결의 상대 IP 로 출발지를 가르므로 주소마다 예산이 따로다(3.4 입력 상한)."""
+    return [f"127.0.0.{i}" for i in range(2, n + 2)]
+
+
+def report(host: str, body: bytes, source: str | None) -> dict:
+    """report 하나. source 가 있으면 그 주소에 bind 해 보낸다. 오류 응답도 본문을 읽는다."""
+    conn = http.client.HTTPConnection(host, TARGETS["tm"].port, timeout=10,
+                                      source_address=None if source is None else (source, 0))
+    try:
+        conn.request("POST", "/v1/report", body, {"Content-Type": "application/json"})
+        return json.loads(conn.getresponse().read())
+    finally:
+        conn.close()
+
+
+def tm_load(host: str, seconds: int, rate: float, sources: int = 0) -> list[str]:
     """텔레메트리에 초당 rate 건을 seconds 동안 보낸다. 응답을 오류 코드별로 센다. 실제 테이블에 레코드가 남는다.
 
-    한 출발지의 예산은 분당 30 이다(3.4 입력 상한). 이 기기 하나로는 그 위가 rate_limited 로 끝난다."""
+    한 출발지의 예산은 분당 30 이다(3.4 입력 상한). 이 기기 하나로는 그 위가 rate_limited 로 끝난다. sources 가 있으면
+    요청마다 루프백 출발지를 돌려 쓴다. 인스턴스 안에서 전체 상한까지 거는 방법이다(roadmap.md Phase 9 작업)."""
     instance_id = secrets.token_hex(16)
+    rotation = itertools.cycle(loopback_sources(sources) if sources else [None])
     counts: dict[str, int] = {}
     start_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     stop = time.monotonic() + seconds
     seq = 0
     while time.monotonic() < stop:
         t0 = time.monotonic()
-        data = json.dumps(load_record(instance_id, seq)).encode()
-        req = urllib.request.Request(f"http://{host}:{TARGETS['tm'].port}/v1/report", data=data, method="POST",
-                                     headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                payload = resp.read()
-        except urllib.error.HTTPError as exc:
-            payload = exc.read()
-        r = json.loads(payload)
+        r = report(host, json.dumps(load_record(instance_id, seq)).encode(), next(rotation))
         key = "ok" if r.get("ok") else r.get("error", "?")
         counts[key] = counts.get(key, 0) + 1
         if r.get("ok"):
@@ -232,7 +248,23 @@ def tm_load(host: str, seconds: int, rate: float) -> list[str]:
     bad = {k: n for k, n in counts.items() if k in ("internal", "?")}
     if bad:
         raise DeployError(f"텔레메트리 부하 중 실패: {bad}")
-    return [f"tm load {seconds}s rate={rate}/s {dict(sorted(counts.items()))} window UTC {start_utc} ~ {end_utc}"]
+    return [f"tm load {seconds}s rate={rate}/s sources={sources or 1} {dict(sorted(counts.items()))} "
+            f"window UTC {start_utc} ~ {end_utc}"]
+
+
+def check_args(ns: argparse.Namespace) -> None:
+    """--host 는 공인 주소다. --tm-sources 를 쓸 때만 인스턴스 안의 127.0.0.1 이다."""
+    if ns.tm_sources:
+        if ns.target != "tm" or not ns.tm_load:
+            raise DeployError("--tm-sources 는 --target tm --tm-load 와 같이 쓴다")
+        if not 1 <= ns.tm_sources <= MAX_SOURCES:
+            raise DeployError(f"--tm-sources 는 1 이상 {MAX_SOURCES} 이하다")
+        if ns.host != LOOPBACK_HOST:
+            raise DeployError(f"--tm-sources 는 인스턴스 안에서 --host {LOOPBACK_HOST} 로 쓴다")
+    else:
+        check_host(ns.host)
+    if ns.target == "tm" and not 0 < ns.tm_rate <= 50:
+        raise DeployError("--tm-rate 는 0 보다 크고 50 이하다")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -249,14 +281,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tm-load", type=int, default=0, choices=range(0, 601), metavar="SECONDS",
                     help="텔레메트리에 부하용 레코드를 SECONDS 동안 보낸다")
     ap.add_argument("--tm-rate", type=float, default=5.0, help="--tm-load 의 초당 요청 수")
+    ap.add_argument("--tm-sources", type=int, default=0, metavar="N",
+                    help="--tm-load 를 루프백 출발지 N 개로 보낸다. 인스턴스 안에서 --host 127.0.0.1 로 쓴다")
     ns = ap.parse_args(argv)
     try:
-        check_host(ns.host)
+        check_args(ns)
         if ns.target == "tm":
-            if not 0 < ns.tm_rate <= 50:
-                raise DeployError("--tm-rate 는 0 보다 크고 50 이하다")
             print("tm smoke:", smoke_tm(ns.host))
-            for line in tm_load(ns.host, ns.tm_load, ns.tm_rate) if ns.tm_load else []:
+            for line in tm_load(ns.host, ns.tm_load, ns.tm_rate, ns.tm_sources) if ns.tm_load else []:
                 print(line)
             print("VERDICT: pass")
             return 0

@@ -17,11 +17,14 @@
 
 Phase 9 의 코드(텔레메트리 서비스, 클라이언트의 레코드와 업로드, 배포 도구의 `tm` 대상, 분석 도구 `tools/tm-analysis`)는 구현했다.
 텔레메트리 서비스는 인스턴스에 배포했고 연기 시험과 전체 상한까지의 부하 확인을 통과했다. Linux 빌드와 GUI 빌드도 확인했다.
+`roadmap.md` Phase 9 검증 가운데 상대가 필요 없는 것(두 서비스 분리, 함께 내린 10분 동안의 터널 유지, 포트 8001, 통제된 실패 둘)도 통과했다. 실측은 동일 LAN 과 가정망 대 모바일 핫스팟을 10회씩 돌렸다.
 AWS 콘솔 작업은 대시보드만 남았고, 대시보드는 실측 뒤에 만든다(`roadmap.md` Phase 9 작업). 남은 것은 아래다.
 
 | 무엇 | 누가 | 메모 |
 |------|------|------|
-| 실측 | 소유자 | 환경은 `roadmap.md` Phase 9 테스트 환경 표의 다섯이다. 상대와 일정은 소유자가 잡는다. 환경마다 10회 이상이고 묶음마다 `tools/tm-analysis/local/batches.txt` 에 적는다 |
+| 남은 실측 | 소유자 | 가정망 대 가정망, 캠퍼스망 대 가정망, 가용한 다른 NAT 거동(`roadmap.md` Phase 9 테스트 환경 표). 상대와 일정은 소유자가 잡는다. 환경마다 10회 이상이고 묶음마다 `tools/tm-analysis/local/batches.txt` 에 적는다. 그 파일에 지금 묶음 넷(통제된 실패 둘, 동일 LAN, 가정망 대 핫스팟)이 있다 |
+| 분석 도구 실행과 `room_known` 저장값 확인 | 소유자 | 이 PC 에는 AWS 자격 증명이 없고 인스턴스 역할은 텔레메트리 테이블을 읽지 못한다. 자격 증명이 있는 기기에서 `tools/tm-analysis` 를 돌린다. 제어 서버만 내린 동안 받은 레코드의 `room_known` 도 거기서 본다 |
+| 재현 시행 1회 | 미정 | `spec.md` A-4 |
 | CloudWatch 대시보드와 그래프 | 소유자, 실측 뒤 | 분 단위 그래프는 묶음마다 측정하고 15일 안에 뽑는다. 지표는 `architecture.md` 3.4 CloudWatch 지표 |
 | `experiments.md` 의 Phase 9 장 | 실측 뒤 | 장 구성은 실측 계획과 같이 정한다. 분석의 한계는 이미 5장에 있다 |
 
@@ -33,6 +36,7 @@ Linux 시험 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다([A
 - Wi-Fi 절전은 재부팅하거나 다른 망에 붙으면 다시 켜진다([이슈 0001](issue_history/0001-linux-wifi-절전으로-느린-터널-ping.md)). 켜져 있으면 무선 지연이 평균 96ms 까지 오르므로 실측 전에 `iw dev wlo1 set power_save off` 로 끈다
 - `field-kit-p8` 의 Linux 빌드는 `~/sangtachi-head/build/client/` 다. 앞서 쓰던 `~/sangtachi-b` 는 그 전 Debug 빌드다
 - Phase 9 커밋 `5d5b594` 의 Debug 시험 빌드는 `~/sangtachi-p9/build/` 다. 소스는 `git archive` 로 옮긴 `~/sangtachi-p9/src/` 다
+- Phase 9 실측의 Release 콘솔 빌드는 `~/sangtachi-p9r/build/client/` 다(커밋 `5f9f710`). 이 PC 쪽은 `C:\me\build\test\Release-p9\client\` 다. 실측 시행을 돌린 스크립트는 git 이 무시하는 `.prime/p9-field/field_run.py` 이고, 시행마다 클라이언트를 새로 띄워 30초 유지하고 60초 쉰다
 - `linux_tun` 의 어댑터 시험은 `CAP_NET_ADMIN` 이 없으면 건너뛴다. 이 기기에서는 `sudo ctest` 로 돌린다. 호스트가 떠 있으면 `Sangtachi` 장치를 쥐고 있어 `TUNSETIFF` 가 EBUSY(16)로 실패한다
 - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
 - 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다

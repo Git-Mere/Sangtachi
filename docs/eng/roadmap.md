@@ -1409,7 +1409,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 | Home network to home network | Primary use scenario |
 | Home network to mobile hotspot | Difficult NAT conditions such as CGNAT |
 | Campus network to home network | Institutional firewall conditions |
-| Other available NAT behaviors | Comparison by mapping behavior |
+| Other available NAT behaviors | Comparison by mapping behavior. A destination-dependent mapping is also measured as an emulated controlled condition ([ADR 0040](decisions/0040-emulated-destination-dependent-mapping.md)) |
 
 ### Statistical Design
 

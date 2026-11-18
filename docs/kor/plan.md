@@ -18,9 +18,9 @@
 | 무엇 | 누가 | 메모 |
 |------|------|------|
 | 남은 실측 | 소유자 | 가용한 다른 NAT 거동의 실제 망(`roadmap.md` Phase 9 테스트 환경 표). 환경마다 10회 이상이고 묶음마다 `tools/tm-analysis/local/batches.txt` 에 적는다. 그 파일에 지금 묶음 일곱(통제된 실패 둘, 동일 LAN, 가정망 대 핫스팟, 캠퍼스망 대 가정망, 가정망 대 가정망, 에뮬레이션한 목적지 의존 매핑)이 있다. 실제 환경 묶음 넷에서 STUN 결과를 본 기기는 모두 두 서버에서 같은 공인 포트를 받았다. 목적지에 따라 포트가 바뀌는 실제 망은 아직 없다. 에뮬레이션([ADR 0040](decisions/0040-목적지-의존-매핑-에뮬레이션.md))은 10/10 `HOLE_PUNCH_TIMEOUT` 이었다. 다시 돌릴 때의 스크립트는 git 이 무시하는 `.prime/p9-field/` 의 `symnat-up.sh`, `symnat-down.sh`, `stun2.py`, `field_sym.py` 다 |
-| 분석 도구 실행 | 소유자 | 이 PC 와 인스턴스 역할은 텔레메트리 테이블을 읽지 못한다. 묶음을 더할 때마다 AWS CloudShell 에서 `tmanalysis.py --save` 로 돌려 `report.md` 와 `records.json` 을 `tools/tm-analysis/local/` 에 받는다. 그 뒤는 `--load` 로 이 PC 에서 다시 낸다. 제어 서버만 내린 동안 받은 시험 레코드 셋(2026-11-17 21:57 UTC)의 `room_known` 은 묶음 밖이라 아직 보지 않았다 |
+| 분석 도구 실행 | 소유자 | 이 PC 와 인스턴스 역할은 텔레메트리 테이블을 읽지 못한다. 묶음을 더할 때마다 AWS CloudShell 에서 `tmanalysis.py --save` 로 돌려 `report.md` 와 `records.json` 을 `tools/tm-analysis/local/` 에 받는다. 그 뒤는 `--load` 로 이 PC 에서 다시 낸다. 지금 받은 것은 묶음 일곱을 모두 담는다. 2026-11-17 에 제어 서버만 내린 동안 받은 시험 레코드 셋의 `room_known` 은 묶음 밖이라 아직 보지 않았다 |
 | 재현 시행 1회 | 미정 | `spec.md` A-4 |
-| CloudWatch 그래프 | 소유자, 실측 뒤 | 대시보드는 만들었다. 정의는 git 이 무시하는 `tools/tm-analysis/local/dashboard.json` 이다. 2026-11-17 묶음의 1분 해상도 값은 인스턴스 역할의 `GetMetricStatistics` 로 받아 `tools/tm-analysis/local/cw-2026-11-17-1min.json` 에 두었다. 다음 묶음도 측정하고 15일 안에 같은 식으로 받는다. 분석 도구와의 백분위수 대조는 끝났다 |
+| CloudWatch 그래프 | 소유자, 실측 뒤 | 대시보드는 만들었다. 정의는 git 이 무시하는 `tools/tm-analysis/local/dashboard.json` 이다. 묶음의 1분 해상도 값은 인스턴스 역할의 `GetMetricStatistics` 로 받아 `tools/tm-analysis/local/` 의 `cw-2026-11-17-1min.json`, `cw-2026-11-18-1min.json` 에 두었다. 다음 묶음도 측정하고 15일 안에 같은 식으로 받는다. 분석 도구와의 백분위수 대조는 끝났다 |
 | `experiments.md` 의 Phase 9 장 | 실측 뒤 | 장 구성은 실측 계획과 같이 정한다. 분석의 한계는 이미 5장에 있다 |
 
 ## 시험 기기 `mere-galaxy`
@@ -34,7 +34,8 @@ Linux 시험 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다([A
 - Phase 9 실측의 Release 콘솔 빌드는 `~/sangtachi-p9r/build/client/` 다(커밋 `5f9f710`). 이 PC 쪽은 `C:\me\build\test\Release-p9\client\` 다. 실측 시행을 돌린 스크립트는 git 이 무시하는 `.prime/p9-field/field_run.py` 이고, 시행마다 클라이언트를 새로 띄워 30초 유지하고 60초 쉰다
 - `linux_tun` 의 어댑터 시험은 `CAP_NET_ADMIN` 이 없으면 건너뛴다. 이 기기에서는 `sudo ctest` 로 돌린다. 호스트가 떠 있으면 `Sangtachi` 장치를 쥐고 있어 `TUNSETIFF` 가 EBUSY(16)로 실패한다
 - `.prime/linux-port/` 는 git 이 무시하는 작업 폴더다. 작업자 보고와 `mere-galaxy` 에서 띄우던 스크립트가 있다. 호스트는 `r-host.sh` 로 띄우고 `r-host-stop.sh` 로 끝낸다
-- 학교 유선 LAN 에서는 Tailscale 제어 서버에 닿지 않아 `ssh mere@mere-galaxy` 가 끊긴다. 그때는 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
+- 학교 유선 LAN 에서 Tailscale 이 막힌 적이 있다(2026-11-02). 2026-11-18 에는 학교 유선 LAN 만으로 `ssh mere@mere-galaxy` 가 됐다. 막히면 같은 핫스팟 Wi-Fi 에 붙어 로컬 주소로 들어가거나, 방에 들어간 동안 터널의 가상 IP 로 들어간다
+- 학교 유선 LAN 에서 인스턴스로 바로 SSH 하면 다른 호스트 키가 온다([이슈 0008](issue_history/0008-학교-유선-lan-에서-ssh-호스트-키가-달랐다.md)). `ssh -J mere@mere-galaxy` 로 거친다
 
 ## 대기 중인 것
 

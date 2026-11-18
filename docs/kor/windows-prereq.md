@@ -499,15 +499,15 @@ FR-15 가 정하고, 런타임이 빠지면 그 동작을 띄울 수 없다.
 | 넣지 않는 것 | 창에 쓰지 않는 Qt 구성요소. 번역, 소프트웨어 OpenGL, D3D 와 DXC 컴파일러, 네트워크, SVG, 그림 형식, 아이콘 엔진, 터치 입력 플러그인이다 |
 | VC++ 런타임 | 설치 파일을 넣지 않고 DLL 을 실행 파일 옆에 넣는다. 배포물 안의 실행 파일과 DLL 이 실제로 가져오는 것만 넣는다 |
 
-**만드는 법.** [`scripts/package-gui.ps1`](../../scripts/package-gui.ps1) 이 배포 빌드(서버 주소와 관리자 권한 매니페스트를 넣는다)와
+**만드는 법.** [`scripts/package-gui.ps1`](../../scripts/package-gui.ps1) 이 배포 빌드(서버 주소, 텔레메트리 서비스 주소, 관리자 권한 매니페스트를 넣는다)와
 배포물 모으기를 한 번에 한다. 마지막에 닫힘 검사를 돈다. 배포물 안의 실행 파일과 DLL 이 가져오는 DLL 이 모두 배포물에 있거나
 Windows 에 있어야 하고, VC++ 런타임과 Qt 는 Windows 에 있다고 보지 않는다. 하나라도 없으면 실패한다.
 
 ```powershell
-pwsh -File scripts/package-gui.ps1 -Server <이름 또는 IPv4> -QtDir <Qt 키트 루트>
+pwsh -File scripts/package-gui.ps1 -Server <이름 또는 IPv4> -QtDir <Qt 키트 루트> [-Telemetry <이름 또는 IPv4>]
 ```
 
-`-QtDir` 는 MSVC 64비트 키트의 루트다(`bin\windeployqt.exe` 가 있는 곳의 부모).
+`-QtDir` 는 MSVC 64비트 키트의 루트다(`bin\windeployqt.exe` 가 있는 곳의 부모). `-Telemetry` 를 주지 않으면 텔레메트리 서비스 주소의 기본값이 없는 빌드다([`architecture.md`](architecture.md) 3.5 기동 입력).
 
 **배포물.** 이 기기에서 만든 것이다. 16개 파일, 30,155,983바이트다.
 

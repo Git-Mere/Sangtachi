@@ -544,15 +544,15 @@ GUI does, and without the runtime none of it can come up.
 | Not included | Qt components the window does not use: translations, software OpenGL, the D3D and DXC compilers, network, SVG, image formats, icon engines, and touch input plugins |
 | VC++ runtime | The installer is not included; the DLLs are placed next to the executable. Only what the executables and DLLs in the distribution actually import is included |
 
-**How to build it.** [`scripts/package-gui.ps1`](../../scripts/package-gui.ps1) does the release build (which embeds the server address and the administrator manifest) and
+**How to build it.** [`scripts/package-gui.ps1`](../../scripts/package-gui.ps1) does the release build (which embeds the server address, the telemetry service address, and the administrator manifest) and
 gathers the distribution in one go. At the end it runs a closure check. Every DLL imported by the executables and DLLs in the distribution must be in the distribution or
 in Windows, and the VC++ runtime and Qt are not assumed to be in Windows. If even one is missing, it fails.
 
 ```powershell
-pwsh -File scripts/package-gui.ps1 -Server <name or IPv4> -QtDir <Qt kit root>
+pwsh -File scripts/package-gui.ps1 -Server <name or IPv4> -QtDir <Qt kit root> [-Telemetry <name or IPv4>]
 ```
 
-`-QtDir` is the root of the MSVC 64-bit kit (the parent of the folder that holds `bin\windeployqt.exe`).
+`-QtDir` is the root of the MSVC 64-bit kit (the parent of the folder that holds `bin\windeployqt.exe`). Without `-Telemetry` the build has no default telemetry service address ([`architecture.md`](architecture.md) 3.5 Startup Inputs).
 
 **The distribution.** This is the one built on this machine. 16 files, 30,155,983 bytes.
 

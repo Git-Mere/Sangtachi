@@ -4,7 +4,9 @@
 # Qt 설치 위치도 기계마다 달라 -QtDir 로 받는다. MSVC 64비트 키트의 루트다(bin\windeployqt.exe 가 있는 곳의 부모).
 # 이 스크립트가 출력하는 문자열은 ASCII 로만 적는다. 주석은 한국어로 적어도 된다.
 #
-#   pwsh -File scripts/package-gui.ps1 -Server <이름 또는 IPv4> -QtDir C:\Qt\6.12.0\msvc2022_64
+#   pwsh -File scripts/package-gui.ps1 -Server <이름 또는 IPv4> -QtDir C:\Qt\6.12.0\msvc2022_64 [-Telemetry <이름 또는 IPv4>]
+#
+# -Telemetry 는 텔레메트리 서비스 주소의 기본값이다(architecture.md 3.5). 주지 않으면 텔레메트리가 꺼진 빌드다.
 #
 # 산출물은 빌드 루트(buildpath.ps1) 아래 gui-dist 다. 빌드 디렉터리는 그 옆 Release-gui 다.
 
@@ -13,7 +15,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Server,
     [Parameter(Mandatory = $true)]
-    [string]$QtDir
+    [string]$QtDir,
+    [string]$Telemetry = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +46,7 @@ $configure = @(
     '-DSANGTACHI_BUILD_GUI=ON',
     '-DSANGTACHI_REQUIRE_ADMIN=ON',
     "-DSANGTACHI_DEFAULT_SERVER=$Server",
+    "-DSANGTACHI_DEFAULT_TELEMETRY=$Telemetry",
     "-DCMAKE_PREFIX_PATH=$QtDir"
 )
 & cmake @configure

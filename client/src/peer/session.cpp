@@ -370,10 +370,11 @@ void Session::enter_connected(Millis now) {
     hello_due_.reset();
     punch_deadline_.reset();
     // KEEPALIVE 는 진입 즉시 1회 보낸 뒤 15초 간격, 유휴 타임아웃은 진입에 시작, PING 은 첫
-    // 송신이 진입 5초 뒤다. 4.5 손실 집계는 전이시킨 패킷을 처리한 직후의 위치를 baseline 으로 잡는다.
-    // 그 패킷은 이미 8.3 을 지났다.
-    loss_baseline_ = window_.position();
-    loss_accepted_ = 0;
+    // 송신이 진입 5초 뒤다. 4.5 손실 집계는 상대의 연결 신호를 이미 받았으면 여기서 시작한다.
+    // 전이시킨 패킷은 이미 8.3 을 지났다.
+    if (peer_signal_) {
+        start_loss_segment();
+    }
     // 텔레메트리 구간은 처음 CONNECTED 에 들어간 때부터 센다. 재협상 뒤의 진입에서는 아무것도 하지 않는다
     // (architecture.md 9장 텔레메트리 업로드).
     const LossStats loss_now = loss();
@@ -381,6 +382,11 @@ void Session::enter_connected(Millis now) {
     arm(idle_deadline_, idle_since_, now, protocol::kIdleTimeoutMs);
     arm(ping_due_, ping_since_, now, protocol::kPingIntervalMs);
     send_keepalive(now);
+}
+
+void Session::start_loss_segment() noexcept {
+    loss_baseline_ = window_.position();
+    loss_accepted_ = 0;
 }
 
 void Session::notify(SessionState from, SessionState to) {
@@ -480,6 +486,7 @@ void Session::renegotiate(const RxPacket& packet, const tunnel::Nonce& nonce, Mi
         loss_baseline_.reset();
         loss_accepted_ = 0;
     }
+    peer_signal_ = false;
     window_.reset();
     pending_pings_.clear();
     // 4. 새 epoch 고정. 5. 우리 epoch 와 nonce 는 그대로다 (config_ 를 건드리지 않는다)
@@ -579,6 +586,16 @@ RxResult Session::receive(const RxPacket& packet, Millis now) {
     // 4.5 손실 집계. baseline 이하의 재정렬 패킷은 세지 않는다.
     if (loss_baseline_ && decision.pkt_pos > *loss_baseline_) {
         ++loss_accepted_;
+    }
+    // 연결 신호의 네 타입은 상대가 CONNECTED 일 때만 보낸다. 재협상 전의 옛 신호를 빼려고 got_ack 뒤에
+    // highest 를 전진시킨 것만 쓴다 (4.5). 우리도 CONNECTED 면 이 패킷 뒤의 위치부터 센다.
+    if (!peer_signal_ && got_ack_ && decision.verdict == tunnel::ReplayVerdict::kAdvance &&
+        (type == PacketType::kKeepalive || type == PacketType::kData ||
+                          type == PacketType::kPing || type == PacketType::kRoster)) {
+        peer_signal_ = true;
+        if (state() == SessionState::kConnected) {
+            start_loss_segment();
+        }
     }
 
     // ---- 타입별 검사 (ADR 0021). 여기서 버려도 창에는 기록됐다 (8.3) ----

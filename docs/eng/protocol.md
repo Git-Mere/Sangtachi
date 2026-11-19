@@ -288,14 +288,35 @@ The literals `64` and `63` in the branches above are `REPLAY_WINDOW` and `REPLAY
 `uint64_t`, **the window size and the bitmap width move together.** To change the window, change both;
 changing only the constant while leaving the bitmap makes the shift undefined behavior.
 
-**Loss accounting is initialized on entering `CONNECTED`.** During the punch phase, the `HELLO`s
-sent to several candidates each consume a number, but only one path actually delivers, so counting
-the gaps of that phase as loss pollutes the measurement.
+**Loss accounting starts when both conditions first hold.**
 
-Take the baseline **immediately after** processing the packet that transitioned to `CONNECTED`.
+- Our session is `CONNECTED`
+- We have received the peer's connected signal. A connected signal is a `KEEPALIVE`, `DATA`, `PING`, or `ROSTER` that advanced `highest` in 8.3 duplicate suppression after our `got_ack` was set. It is a signal even if a later type-specific check drops it
+
+Take the baseline **immediately after** processing the packet that set the later of the two conditions. If our
+`CONNECTED` came later, that is the transitioning packet; if the connected signal came later, it is that signal
+packet. 9.5 Renegotiation step 3 clears the mark that the connected signal was received, together with the loss
+accounting.
+
+> **Why.** During the punch phase, the `HELLO`s sent to several candidates each consume a number, but
+> only one path actually delivers. Counting the gaps of that phase as loss pollutes the measurement.
+> That phase ends at the `CONNECTED` of the **sender**, not ours. Even when we are `CONNECTED` first,
+> the peer may still be sending `HELLO` to all candidates. The four connected-signal types are sent only
+> while the sender is `CONNECTED` (chapter 11 Timers, 5.7 `ROSTER`, 8.5 Transmit-Side Validation check 7).
+> The sender stops `HELLO` retransmission as it enters `CONNECTED`, so no punch `HELLO` has a number after
+> a connected signal. Advancing after `got_ack` is required because of 9.5 Renegotiation. The renegotiating
+> side keeps its `sequence` and sends `HELLO` to all candidates again, so a signal sent before the
+> renegotiation that arrives late has a smaller number than the punch `HELLO`s after it. A `HELLO_ACK`
+> echoing our nonce comes only after the renegotiation and has a smaller number than the peer's signals,
+> so a signal that advances after it is from after the renegotiation. The rationale and rejected alternatives are in
+> [ADR 0041](decisions/0041-loss-accounting-starts-at-peer-connected-signal.md).
+
+**If the connected signal is lost or arrives reordered, the start of accounting is delayed until the next signal.** Loss in
+between is not counted. If a 10.4 (c) validation `HELLO` goes to an unreachable address after `CONNECTED`,
+that number stays as loss. v1 accepts this limit.
 
 ```text
-baseline = position          // value after processing the transitioning packet
+baseline = position          // value after processing the packet that met the start condition
 accepted = 0                 // number of unique packets accepted after baseline
 
 on each acceptance afterwards: if that packet's pkt_pos is greater than baseline, accepted += 1
@@ -324,10 +345,10 @@ Reordered packets at or below `baseline` are excluded exactly.
 The acceptance window has no time-based expiry. Loss is not confirmed by expiry; it comes out of the
 `expected - accepted` above. Packets dropped with `drop_too_old` are already confirmed as loss and are not reverted.
 
-**An accounting segment starts on entering `CONNECTED` and ends at 9.5 Renegotiation step 3 or at the end
+**An accounting segment starts at the start condition above and ends at 9.5 Renegotiation step 3 or at the end
 of the session.** The session totals start at 0. If inside a segment, renegotiation step 3 adds that segment's
 `expected` and `accepted` to the session totals and then resets the accounting. Outside a segment (before the
-first `CONNECTED`, or after a renegotiation until the next `CONNECTED`) the current segment's values are 0. When the
+first segment starts, or after a renegotiation until the next segment starts) the current segment's values are 0. When the
 session ends, the last segment's values stay as they are and do not change again. The session's values are those
 totals plus the current segment's values.
 When and in what form these values are logged is owned by
@@ -976,7 +997,7 @@ CONNECTED  <=>  got_ack && sent_ack
 
 Only one of the two set is `HANDSHAKING`. **Which one rises first is not defined.** Assuming an order either misjudges a one-way-open path as connected, or makes both sides time out in a normal order.
 
-On entering `CONNECTED`, initialize the loss accounting state (4.5).
+`CONNECTED` is one of the start conditions of the loss accounting (4.5).
 
 ### 9.3 Epoch Rules
 
@@ -1127,7 +1148,8 @@ Once both caps pass, increment the renegotiation count by 1 and atomically perfo
 1. Register **the peer's** previous epoch on the retired list for 2 minutes
 2. Reset `got_ack` and `sent_ack` to false
 3. Reset the duplicate suppression state, `pending_pings`, and the loss accounting. The loss accounting
-   adds that segment's values to the session totals before the reset (4.5)
+   adds that segment's values to the session totals before the reset. Also clear the mark that the
+   connected signal was received (4.5)
 4. Pin the peer epoch to the new value
 5. **Keep our own `session_epoch` and nonce unchanged**
 6. Send a `HELLO_ACK` for the received `HELLO` directly to the source of that datagram. Do not change
@@ -1942,6 +1964,6 @@ this list gathers the rules that are easy to miss or get wrong. When what is imp
 - The 8.5 routing table. Fixed array of 6 slots, two-step lookup, every row of the case table
 - `ROSTER` send/receive of 5.7. Direction, structure, `generation`, reserved-bit, and name checks with the four dedicated counters
 - The three `ROSTER` send triggers of 5.7 (immediately on change, twice at 5 seconds, 15-second period)
-- 4.5 loss accounting. Not counting reordering as loss through `baseline` and `pkt_pos`, and the session totals across renegotiation segments
+- 4.5 loss accounting. Starting at the peer's connected signal, not counting reordering as loss through `baseline` and `pkt_pos`, and the session totals across renegotiation segments
   - The 64-slot acceptance window of the 4.5 duplicate suppression item above and this accounting are different things
 - Fuzz defense. No crash and no memory error on any damaged or truncated datagram

@@ -1,6 +1,6 @@
 # 0009. A HELLO sent to an unreachable candidate was counted as loss
 
-- Status: Unresolved
+- Status: Resolved
 - Found: 2026-11-18
 - Related: [`../protocol.md`](../protocol.md) 4.5 Duplicate suppression and loss accounting, [`../commit_history/2026-11-18/04-phase-9-오늘-세-묶음-분석.md`](../commit_history/2026-11-18/04-phase-9-오늘-세-묶음-분석.md)
 
@@ -36,8 +36,8 @@ The host's `expected=18` is the value when accounting starts at 3 and ends at 21
 
 ## Handling
 
-Not fixed yet. How to fix it and how to report it in `experiments.md` belong to [`plan.md`](../../kor/plan.md) (Korean only). The captures are in `field-test/2026-11-18/lossdbg/`, ignored by git.
+Loss accounting was changed to count from the peer's connected signal ([ADR 0041](../decisions/0041-loss-accounting-starts-at-peer-connected-signal.md), [`../protocol.md`](../protocol.md) 4.5). The record is [`../commit_history/2026-11-19/01-손실-집계를-상대의-연결-신호부터.md`](../commit_history/2026-11-19/01-손실-집계를-상대의-연결-신호부터.md). The captures are in `field-test/2026-11-18/lossdbg/`, ignored by git.
 
 ## Result
 
-None.
+The order of the reproduced session (we are `CONNECTED` first, then the peer sends `HELLO` to an unreachable candidate) was turned into a unit test. With the fixed accounting that number does not stay as loss, and reverting to the old accounting makes the test fail. The real-environment batches are measured again. That schedule belongs to [`plan.md`](../../kor/plan.md) (Korean only).

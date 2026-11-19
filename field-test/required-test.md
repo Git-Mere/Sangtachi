@@ -15,6 +15,20 @@
 
 ## 다음에 할 것
 
+**Phase 9 묶음을 손실 집계를 고친 빌드로 다시 잰다**([ADR 0041](../docs/kor/decisions/0041-손실-집계는-상대의-연결-신호부터-센다.md)). 2026-11-17, 18 의 묶음은
+옛 집계로 낸 손실이다([이슈 0009](../docs/kor/issue_history/0009-닿지-않는-후보로-보낸-hello-가-손실로-세졌다.md)).
+
+| 묶음 | 구성 |
+|------|------|
+| 동일 LAN | 기준선 |
+| 가정망 대 핫스팟 | |
+| 캠퍼스망 대 가정망 | 학교 유선 LAN 에서 인스턴스로 SSH 할 때는 `ssh -J mere@mere-galaxy` 로 거친다 |
+| 가정망 대 가정망 | |
+| 목적지 의존 매핑 에뮬레이션 | 통제 조건([ADR 0040](../docs/kor/decisions/0040-목적지-의존-매핑-에뮬레이션.md)) |
+
+- 빌드는 이 고침을 담은 커밋의 Release 콘솔이다. 이 PC 와 `mere-galaxy` 둘 다 다시 빌드한다
+- 시행 방법, 횟수, 기동 인자는 지난 묶음과 같다. 묶음의 UTC 범위는 `tools/tm-analysis/local/batches.txt` 에 새로 적는다
+
 남은 Phase 8 실측은 없다. 시연 망은 [ADR 0038](../docs/kor/decisions/0038-시연-호스트를-집-wi-fi-에-둔다.md) 이 정하고 그 리허설과 T-7 은
 2026-11-02 에 끝났다([`experiments.md`](../docs/kor/experiments.md) 3.4, 4장). 시연 망의 매핑 수명은 재지 않는다([ADR 0037](../docs/kor/decisions/0037-시연-전-확인을-리허설-한-번으로.md)).
 

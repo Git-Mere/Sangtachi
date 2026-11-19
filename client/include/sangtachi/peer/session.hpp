@@ -334,6 +334,7 @@ private:
     void notify(SessionState from, SessionState to);
     RxResult drop(Counter counter);
     void expire_pings(Millis now);
+    void start_loss_segment() noexcept;
 
     SessionConfig config_;
     SessionIo io_;
@@ -351,6 +352,7 @@ private:
     tunnel::ReplayWindow window_;              // 고정한 epoch 의 창 (4.5, 8.3)
     // 4.5 손실 집계. baseline 이 있으면 집계 구간 안이다. 구간 밖이면 지금 구간의 값이 0 이다.
     std::optional<std::uint64_t> loss_baseline_;
+    bool peer_signal_ = false;                 // 상대의 연결 신호를 받았다. 집계 시작 조건 하나다
     std::uint64_t loss_accepted_ = 0;          // 지금 구간에서 baseline 뒤로 수용한 고유 패킷 수
     LossStats loss_totals_;                    // 재협상으로 끝난 구간의 합계
     std::uint32_t next_seq_ = 0;               // 4.4. 그 시도의 첫 송신이 0 이다

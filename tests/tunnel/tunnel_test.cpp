@@ -634,10 +634,11 @@ TEST_CASE("tunnel: session.loss through the receive entry point", "[tunnel][loop
     s->start_punch(f.now);
     const auto inject = [&loop](const Rx& rx) { loop.receive_datagram(rx.from, rx.wire()); };
 
-    // 첫 구간. 32비트 경계 앞에서 시작한다. baseline 은 0xFFFFFFF6 을 처리한 뒤의 위치다.
-    inject(hello(kPeerEpoch, 0xFFFFFFF5u));
-    inject(hello_ack(kPeerEpoch, 0xFFFFFFF6u, kCandA, kPeerVip, s->attempt_nonce()));
+    // 첫 구간. 32비트 경계 앞에서 시작한다. baseline 은 연결 신호 0xFFFFFFF6 을 처리한 뒤의 위치다.
+    inject(hello(kPeerEpoch, 0xFFFFFFF4u));
+    inject(hello_ack(kPeerEpoch, 0xFFFFFFF5u, kCandA, kPeerVip, s->attempt_nonce()));
     REQUIRE(s->state() == SessionState::kConnected);
+    inject(keepalive(kPeerEpoch, 0xFFFFFFF6u));
     inject(keepalive(kPeerEpoch, 0xFFFFFFF3u));  // 첫 패킷보다 앞선 번호. 세지 않는다
     inject(keepalive(kPeerEpoch, 0xFFFFFFF8u));  // F7 이 빠졌다
     inject(keepalive(kPeerEpoch, 0xFFFFFFFAu));
@@ -645,13 +646,14 @@ TEST_CASE("tunnel: session.loss through the receive entry point", "[tunnel][loop
     inject(keepalive(kPeerEpoch, 0x00000001u));  // 경계를 넘는다. FB~FF, 0 이 빠졌다
     REQUIRE(s->loss() == peer::LossStats{11, 4});
 
-    // 재협상 뒤 둘째 구간. baseline 은 seq 1 을 처리한 뒤다.
+    // 재협상 뒤 둘째 구간. baseline 은 연결 신호 seq 2 를 처리한 뒤다.
     f.now += 2000;
     inject(hello(kPeerEpoch2, 0));
     REQUIRE(s->renegotiations() == 1);
     inject(hello_ack(kPeerEpoch2, 1, kCandA, kPeerVip, s->attempt_nonce()));
     REQUIRE(s->state() == SessionState::kConnected);
-    inject(keepalive(kPeerEpoch2, 3));  // 2 가 빠졌다
+    inject(keepalive(kPeerEpoch2, 2));
+    inject(keepalive(kPeerEpoch2, 4));  // 3 이 빠졌다
 
     sangtachi::testing::LogCapture logs;
     f.tunnel.emit_session_counters();
@@ -1075,7 +1077,8 @@ TEST_CASE("tunnel: session.loss goes out with each session table", "[tunnel][cou
     // architecture.md 9장: session.loss 는 세션 표와 같은 때에 그 세션마다 한 줄이다.
     TunnelFixture f;
     peer::Session* s = f.connect();
-    f.feed(keepalive(kPeerEpoch, 4));  // 2, 3 이 빠졌다
+    f.feed(keepalive(kPeerEpoch, 2));  // 연결 신호
+    f.feed(keepalive(kPeerEpoch, 5));  // 3, 4 가 빠졌다
     f.connect(0x60000001u, 0xCAFE0002u);
     {
         sangtachi::testing::LogCapture logs;

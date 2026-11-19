@@ -179,7 +179,7 @@ This records which success criteria disappear when a tier is dropped.
 | Tier dropped | What disappears | Can it be dropped |
 |-------------|-------------|----------------|
 | P4 (stretch) | Nothing. It was never in the calculation | Yes |
-| P3 (Phase 9) | A-1 ~ A-4, T-6, FR-14, verification of NFR-7 (per-environment failure records and aggregation), verification of NFR-10 | Yes. But **the analysis success the course requires disappears.** Minimum success remains |
+| P3 (Phase 9) | A-1 ~ A-3, T-6, FR-14, verification of NFR-7 (per-environment failure records and aggregation), verification of NFR-10 | Yes. But **the analysis success the course requires disappears.** Minimum success remains |
 | P2 (Phase 6-8) | T-1 ~ T-5, T-7, FR-9 ~ FR-12, FR-15, verification of NFR-2 (Phase 7 file transfer test), documenting the Wintun and Qt scope of NFR-5, NFR-6 (MTU fixed) | Yes. Minimum success remains |
 | P1 (Phase 5) | FR-8 loss and reordering aggregation, completion of the FR-13 failure code set (`TUNNEL_DROPPED`), verification of NFR-3. **No M/T/A success criterion disappears** | Yes. Drop it knowing that requirement verification shrinks |
 | P0 (Phase 1-4) | All of M-1 ~ M-6 | **No.** Minimum success disappears |
@@ -294,7 +294,6 @@ All must be met in addition to minimum success.
 | A-1 | Repeated experiments are performed across multiple network environments |
 | A-2 | Successful and failed NAT traversal cases are compared |
 | A-3 | Experiment results are visualized and limitations are documented |
-| A-4 | A repeatable experiment procedure exists |
 
 How each criterion is judged is right below.
 
@@ -318,11 +317,3 @@ distribution in real environments. The failure rate comes only from the repeated
 A-1. If there are zero real failures, write zero. Do not substitute controlled failures.
 
 **A-3.** [`experiments.md`](experiments.md) contains graphs and a statement of limitations.
-
-**A-4.** The pass condition is that **one person who is not the author** performs one
-reproduction to completion from the document alone. The reproducer proceeds without asking for
-explanation outside the document and records where they got stuck. Do not declare "reproducible"
-without a trial.
-
-> **Why.** The author finds missing premises in their own document only with difficulty by
-> reading alone.

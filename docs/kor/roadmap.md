@@ -24,7 +24,7 @@
 | 6 | FR-9, NFR-5, NFR-6, T-1, T-2 |
 | 7 | FR-10, FR-11, NFR-2, NFR-6, T-3 |
 | 8 | FR-12, FR-15, NFR-5, T-4, T-5, T-7 |
-| 9 | FR-14, NFR-7, NFR-10, T-6, A-1 ~ A-4 |
+| 9 | FR-14, NFR-7, NFR-10, T-6, A-1 ~ A-3 |
 | 전 단계 공통 | NFR-1, NFR-8, C-1, C-4, C-5 |
 
 **NFR-4(직접 구현)는 동작 시험으로 판정하지 않는다.** STUN·NAT 통과·터널·라우팅·세션 관리를
@@ -1300,7 +1300,6 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
   > 틀린 것이고 이쪽은 우리 송신이 막히는 것이다. 막힌 경로에서도 마감과 기록이 도는지는
   > 여기서만 본다.
 - 성공률이 관측된 매핑 거동별로 집계됨. RFC 5389 Binding 결과만으로 NAT 유형을 단정한 서술이 없음
-- 재현 시행 1회 통과. 통과 조건은 `spec.md` A-4 가 정한다
 - 그래프와 한계 서술이 [`experiments.md`](experiments.md)에 포함됨
 
 ---

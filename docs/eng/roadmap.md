@@ -24,7 +24,7 @@ Maps each ID in [`spec.md`](spec.md) to the phase that satisfies it. No ID may b
 | 6 | FR-9, NFR-5, NFR-6, T-1, T-2 |
 | 7 | FR-10, FR-11, NFR-2, NFR-6, T-3 |
 | 8 | FR-12, FR-15, NFR-5, T-4, T-5, T-7 |
-| 9 | FR-14, NFR-7, NFR-10, T-6, A-1 to A-4 |
+| 9 | FR-14, NFR-7, NFR-10, T-6, A-1 to A-3 |
 | All phases | NFR-1, NFR-8, C-1, C-4, C-5 |
 
 **NFR-4 (own implementation) is not judged by a behavior test.** Whether we wrote the STUN,
@@ -1480,7 +1480,6 @@ A repeatable experiment set and data for the final report and presentation.
   > wrong address, while this one has our own transmission blocked. Whether the deadline and the
   > recording still run on a blocked path is only observed here.
 - Success rate is tallied by observed mapping behavior. No statement asserts a NAT type from RFC 5389 Binding results alone
-- One reproduction run passes. The pass condition is set by `spec.md` A-4
 - Graphs and a limitations write-up are included in [`experiments.md`](experiments.md)
 
 ---

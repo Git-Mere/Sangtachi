@@ -31,6 +31,8 @@ python tools/tm-analysis/tmanalysis.py --table <텔레메트리 테이블> --reg
 python tools/tm-analysis/tmanalysis.py --load tools/tm-analysis/local/records.json
 ```
 
+이 PC 와 인스턴스 역할은 텔레메트리 테이블을 읽지 못한다. 테이블을 읽는 `--save` 는 소유자가 AWS CloudShell 에서 돈다. `tmanalysis.py` 를 `~/tm/` 에, 묶음 파일을 `~/tm/local/batches.txt` 에 올리고, `python3 tmanalysis.py --table <텔레메트리 테이블> --region <리전> --save local/records.json > local/report.md` 로 돌린 뒤 두 파일을 받아 이 레포의 `tools/tm-analysis/local/` 에 둔다. 그 뒤는 `--load` 로 이 PC 에서 다시 낸다.
+
 | 옵션 | 기본값 | 뜻 |
 |------|--------|-----|
 | `--batches` | `local/batches.txt` | 위 묶음 파일 |

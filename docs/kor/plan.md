@@ -10,7 +10,7 @@
 | 구현 | [`roadmap.md`](roadmap.md) | Phase 1~9 는 끝났다. 남은 것은 스트레치 목표다 |
 | 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 없음 |
 | 대기 | 이 파일 "대기 중인 것" | 없음 |
-| 문서 부채 | 이 파일 "문서 부채" 절 | 루트 `README.md` 자리 표시 문구 |
+| 문서 부채 | 이 파일 "문서 부채" 절 | 루트 README 의 GUI 스크린샷과 배포물 링크 |
 
 ## 다음에 할 일
 
@@ -38,7 +38,7 @@ Linux 시험 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다([A
 
 | 자리 | 무엇 |
 |------|------|
-| 루트 `README.md` | 개요("프로젝트가 무엇을 하는지 … 작성")와 스크린샷("추후 추가")이 자리 표시 문구다. 소유자가 다음 작업으로 정했다 |
+| 루트 `README.md`, `README.ko.md` | GUI 스크린샷과 배포물 내려받기 링크가 없다. 배포물을 올리면 두 파일의 맨 위 링크 줄에, GUI 화면을 찍으면 두 파일의 Results(실측 결과) 절 앞에 더한다 |
 
 ## 세션을 시작할 때
 

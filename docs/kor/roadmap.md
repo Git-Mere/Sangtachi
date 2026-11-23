@@ -1202,7 +1202,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
   - 텔레메트리 테이블을 만든다. 키, 용량, TTL 은 `architecture.md` 3.4 텔레메트리 서비스의 저장이 정한다
   - 인스턴스 역할에 `architecture.md` 3.4 의 권한을 더한다
   - 보안 그룹에 인바운드 TCP 8001 을 연다
-- **CloudWatch 대시보드는 저장소 소유자가 실측 뒤에 만든다.** 대시보드는 쌓인 지표를 보여 줄 뿐이라 늦게 만들어도 그 전 데이터가 보인다. 분 단위 그래프는 그 묶음을 측정하고 15일 안에 뽑는다
+- **CloudWatch 대시보드는 저장소 소유자가 실측 뒤에 만든다.** 대시보드는 쌓인 지표를 보여 줄 뿐이라 늦게 만들어도 그 전 데이터가 보인다. 그래프에 쓸 1분 해상도 값은 그 묶음을 측정하고 15일 안에 받는다
 
   > **왜 15일인가.** CloudWatch 는 1분 해상도 데이터를 15일, 5분 해상도를 63일 남긴다. 대시보드를 언제 만들든 그 뒤에는 거친 해상도만 남는다
 - **분석 스크립트를 `tools/` 에 둔다.** DynamoDB 에서 UTC 시간 범위의 레코드를 읽어 [`experiments.md`](experiments.md) 에 실을
@@ -1227,7 +1227,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - 실측 묶음마다 UTC 시간 범위와 환경을 `.gitignore` 로 막은 로컬 파일(`tools/tm-analysis/local/`)에 적는다. 텔레메트리는 환경을 싣지 않으므로 분석 스크립트가 이것으로 가른다. `experiments.md` 에는 날짜와 환경만 싣는다. 시각을 날짜까지만 공개하는 것은 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 따라야 할 조치 2번이다
 - 복수 네트워크 환경 테스트
 - 성공한 NAT 통과 사례와 실패 사례 비교 (NAT 유형이 아니라 관측된 매핑 거동 기준)
-- 실험 결과 시각화. 그래프는 CloudWatch 대시보드에서 뽑는다. `experiments.md` 에 싣는 그래프는 시간축에 시각이 보이지 않게 경과 시간이나 날짜로 바꾼다(ADR 0001 따라야 할 조치 2번)
+- 실험 결과 시각화. 그래프는 [`tools/tm-plot`](../../tools/tm-plot/README.md) 이 그린다([ADR 0042](decisions/0042-실측-그래프는-분석-도구가-그린다.md)). `experiments.md` 에 싣는 그래프는 시간축에 시각이 보이지 않게 경과 시간이나 날짜로 바꾼다(ADR 0001 따라야 할 조치 2번)
 - 한계 문서화
 - [`experiments.md`](experiments.md) 에 Phase 9 측정과 분석을 싣는다
 

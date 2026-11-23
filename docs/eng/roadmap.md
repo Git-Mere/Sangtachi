@@ -1372,7 +1372,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
   - Create the telemetry table. Its keys, capacity, and TTL are set by Storage in `architecture.md` 3.4 Telemetry Service
   - Add the permissions of `architecture.md` 3.4 to the instance role
   - Open inbound TCP 8001 in the security group
-- **The repository owner creates the CloudWatch dashboard after the field measurements.** The dashboard only shows stored metrics, so data from before it was created is still visible. Per-minute graphs of a batch are taken within 15 days of measuring it
+- **The repository owner creates the CloudWatch dashboard after the field measurements.** The dashboard only shows stored metrics, so data from before it was created is still visible. The 1-minute resolution values a batch's graphs use are fetched within 15 days of measuring it
 
   > **Why 15 days.** CloudWatch keeps 1-minute resolution data for 15 days and 5-minute resolution data for 63 days. Whenever the dashboard is created, only the coarser resolution remains after that
 - **Put the analysis script in `tools/`.** It reads the records of a UTC time range from DynamoDB and builds the tables that go into
@@ -1397,7 +1397,7 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
 - For each measurement batch, write the UTC time range and the environment in a local file blocked by `.gitignore` (`tools/tm-analysis/local/`). Telemetry does not carry the environment, so the analysis script splits by this. `experiments.md` carries only the date and the environment. Publishing times only down to the date is required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
 - Test across multiple network environments
 - Compare successful and failed NAT traversal cases (by observed mapping behavior, not NAT type)
-- Visualize experimental results. The graphs are taken from the CloudWatch dashboard. Graphs put in `experiments.md` must not show clock times on the time axis; convert it to elapsed time or dates (ADR 0001 required follow-up 2)
+- Visualize experimental results. The graphs are drawn by [`tools/tm-plot`](../../tools/tm-plot/README.md) ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)). Graphs put in `experiments.md` must not show clock times on the time axis; convert it to elapsed time or dates (ADR 0001 required follow-up 2)
 - Document limitations
 - Put the Phase 9 measurements and analysis in [`experiments.md`](experiments.md)
 

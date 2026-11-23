@@ -17,7 +17,7 @@
 
 | 무엇 | 누가 | 메모 |
 |------|------|------|
-| `experiments.md` 의 Phase 9 장 | 에이전트 | 손실 집계를 고친 빌드로 다시 잰 묶음으로 쓴다([ADR 0041](decisions/0041-손실-집계는-상대의-연결-신호부터-센다.md)). 분석 결과는 git 이 무시하는 `tools/tm-analysis/local/report.md` 다. CloudWatch 1분 해상도 값은 같은 폴더의 `cw-*.json` 인데 옛 묶음의 날짜뿐이다. 그래프에 쓰려면 다시 잰 날짜의 값을 소유자가 CloudShell 에서 받는다. 에뮬레이션은 통제된 실패와 따로 적는다([ADR 0040](decisions/0040-목적지-의존-매핑-에뮬레이션.md)) |
+| Phase 9 닫기 | 에이전트 | `roadmap.md` Phase 9 검증 항목을 하나씩 대조하고 `scripts/test.ps1 -Slow` 를 돈다. 그래프를 다시 그리는 법은 `tools/tm-plot` README 다. 입력인 레코드와 CloudWatch 1분 해상도 값은 git 이 무시하는 `tools/tm-analysis/local/` 에 있다 |
 
 ## 시험 기기 `mere-galaxy`
 

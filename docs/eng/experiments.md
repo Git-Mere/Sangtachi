@@ -8,8 +8,9 @@ are not published.
 
 - Networks are written as pseudonyms. Public addresses and ports are not included. Times are written only to the date. The rationale is [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
 - Machines are written as `A`, `B`, `C`, `F`, and `G`. `A` is the repository owner's Windows machine, `G` the owner's Linux machine (`linux-prereq.md`), `C` the demo player's Windows machine, and `F` the Windows machine of the owner's friend
-- Tunnel RTT is the `session.rtt` line of the client log ([`architecture.md`](architecture.md) chapter 9 Log Output). It is the `PING`/`PONG` round trip
-- Loss is the `session.loss` line of the log. It is the value counted by the receiving side
+- In chapters 3 and 4, tunnel RTT is the `session.rtt` line of the client log ([`architecture.md`](architecture.md) chapter 9 Log Output). It is the `PING`/`PONG` round trip
+- In chapters 3 and 4, loss is the `session.loss` line of the log. It is the value counted by the receiving side
+- The values of 6.2~6.4 were produced by the analysis script from telemetry records, and figure 1 is a CloudWatch metric. 6.5 is from the client logs of the two machines. What is counted from which record belongs to [`tools/tm-analysis`](../../tools/tm-analysis/README.md)
 - Medians and quartiles are computed by sorting the samples and interpolating linearly
 
 ## 2. Adapter MTU
@@ -208,7 +209,7 @@ The record of running the pass conditions of `spec.md` T-7 in one flow with two 
 ## 5. Limits of the Telemetry Tables
 
 These are the limits for reading the tables produced by the analysis script of `roadmap.md` Phase 9 ([`tools/tm-analysis`](../../tools/tm-analysis/README.md)). What is
-counted and how belongs to the `roadmap.md` Phase 9 tasks. There are no results yet.
+counted and how belongs to the `roadmap.md` Phase 9 tasks. The results are in chapter 6.
 
 **The `room_known` filter.**
 
@@ -225,3 +226,88 @@ counted and how belongs to the `roadmap.md` Phase 9 tasks. There are no results 
 
 **Jitter.** A record's `jitter_us` is one smoothed jitter value at the end of the interval (`architecture.md` chapter 9 Telemetry Upload). The jitter median in the tables is
 "the median of end-of-interval smoothed jitters". It is not the median of differences of consecutive RTT samples. It is not compared with RFC 3550 jitter.
+
+## 6. Connection Setup and Session Quality
+
+These are the `roadmap.md` Phase 9 field measurements. The numbers in the tables are the values the analysis script ([`tools/tm-analysis`](../../tools/tm-analysis/README.md)) produced from the telemetry table. How to read them and their limits are in chapter 5. The graphs were drawn by [`tools/tm-plot`](../../tools/tm-plot/README.md) ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)).
+
+### 6.1 Setup
+
+| Item | Value |
+|------|-----|
+| Dates | 2026-11-19, 2026-11-23. The two controlled failures are 2026-11-17 |
+| Build | Release console of commit `6e6f5e4`. The two controlled failures used commit `5f9f710`. Both ran without the virtual adapter (`--no-adapter`) |
+| Trial | Start the player fresh and watch until `CONNECTED` or a failure code. When connected, hold 30 seconds, end, and rest 60 seconds. The statistical design belongs to `roadmap.md` Phase 9 |
+| Loss | Only batches measured with the build that fixed the loss accounting are listed ([ADR 0041](decisions/0041-loss-accounting-starts-at-peer-connected-signal.md)). Batches measured before it were removed from the tables |
+
+| Environment | Host | Player | Batches |
+|------|--------|----------|------|
+| Same LAN | G, network H | A, network H | 10 trials |
+| Home network vs home network | F, network W | A, network H | 10 trials. The host was started once and kept for all 10 |
+| Campus network vs home network | G, network H | A, network S | Two batches of 10 |
+| Home network vs hotspot | G, network P | A, network H | 10 trials |
+| Emulated destination-dependent mapping | A, network P | A network namespace on G, over network H ([ADR 0040](decisions/0040-emulated-destination-dependent-mapping.md)) | 10 trials |
+
+### 6.2 Real Environments
+
+| Environment | Successes/attempts | Player setup time median (interquartile range) | Host setup time median | RTT median (interquartile range) | Jitter median | Loss |
+|------|-----------|------------------------------------------|-------------------------|--------------------------|-------------|------|
+| Same LAN | 10/10, Wilson 95% 72.2~100.0% | 10641.0ms (10512.2~10730.5) | 6015.5ms | 18.7ms (10.5~40.6), n=120 | 9.6ms | 0/330 |
+| Home network vs home network | 10/10, Wilson 95% 72.2~100.0% | 10945.5ms (10820.8~11059.0) | 6188.0ms | 25.3ms (18.7~57.4), n=120 | 7.7ms | 0/330 |
+| Campus network vs home network | 19/20, Wilson 95% 76.4~99.1% | 10797.0ms (10718.5~10906.0) | 6170.0ms | 23.5ms (19.0~33.2), n=225 | 3.1ms | 1/623 (0.16%) |
+| Home network vs hotspot | 10/10, Wilson 95% 72.2~100.0% | 10110.0ms (10070.0~10168.0) | 6259.0ms, n=9 | 79.7ms (65.9~106.4), n=113 | 8.6ms | 0/314 |
+| Combined | 49/50, Wilson 95% 89.5~99.6% | 10750.0ms (10422.0~10875.0) | 6188.0ms | 27.7ms (18.9~65.8), n=578 | 6.6ms | 1/1597 (0.06%) |
+
+- All 49 successes ended with `CLOSED`. The session duration median is 30.2 seconds
+- Player and host setup times have different starting points and are not compared with each other ([`architecture.md`](architecture.md) chapter 9)
+- The one gap seen as an empty seq is in home network vs hotspot. That trial's host `establish` did not arrive, so the host setup time has n=9
+
+![Per-minute RTT by environment](../assets/phase9/rtt-per-minute.png)
+
+Figure 1. Per-minute tunnel RTT by environment. The line is the per-minute median of the CloudWatch 1-minute resolution `Rtt` metric and the band is the interquartile range. It holds the samples of both devices. The horizontal axis is elapsed time in the batch, and the two campus batches are joined. The vertical axis is logarithmic.
+
+![Player setup time by environment](../assets/phase9/player-setup-time.png)
+
+Figure 2. Player setup time by environment. The box is the interquartile range, the middle line the median, and the whiskers the minimum and maximum. One dot is one successful attempt. Failed attempts have no setup time and are not included.
+
+![Success rate by environment](../assets/phase9/success-rate.png)
+
+Figure 3. Player success rate by environment with the Wilson 95% interval.
+
+### 6.3 Comparison by Mapping Behavior
+
+Attempts are split by observed mapping behavior, not by NAT type. `stun_same_endpoint` is whether the two STUN servers saw the same public endpoint. The host value is paired from the host `establish` of the same room.
+
+| Batch kind | Player `stun_same_endpoint` | Host `stun_same_endpoint` | Successes/attempts |
+|-----------|-------------------------------|-----------------------------|-----------|
+| Real | true | true | 48/48 |
+| Real | true | no pair | 1/1 |
+| Real | false | true | 0/1 |
+| Emulation | false | true | 0/10 |
+
+- The one real failure is in campus network vs home network and is `HOLE_PUNCH_TIMEOUT`. In that attempt A got different public ports from the two STUN servers. Network S may have given a different mapping per destination, or changed the mapping between the two requests. These records cannot tell which. In the other 19 trials on the same network both servers gave the same port
+- In the failed attempt, neither device confirmed any candidate address of the peer
+- In all 50 real attempts the player's local address differed from its public address (`local_differs_public`). Same LAN (`same_lan`) is `true` only for the 10 same LAN trials
+- The emulation is a controlled condition and is not counted in the real success rate (ADR 0040). In all 10 trials the player's two STUN ports differed, and neither side received a datagram from the peer
+
+### 6.4 Controlled Failures
+
+These are evidence of the failure handling path, not a failure rate ([`spec.md`](spec.md) A-2).
+
+| Scenario | Result |
+|----------|------|
+| On G, block that user's outbound UDP except DNS, then join as the player | `STUN_DISCOVERY_FAILED`. Upload failures 0 |
+| Create a fake host through the control-plane API, register one unresponsive documentation address as its candidate, then join from A | `HOLE_PUNCH_TIMEOUT`. Upload failures 0 |
+
+### 6.5 Control Plane Outage
+
+On 2026-11-17, with the commit `5f9f710` build, the control server and the telemetry service were stopped together for about 10 minutes (613 seconds) while a same LAN tunnel was up (NFR-3). The tunnel did not drop. On both sides the only state transition after `CONNECTED` is the final close by `quit`. Over about 630 connected seconds the RTT samples were A 122 and G 123, matching the about 126 expected from the 5-second period.
+
+### 6.6 Limits
+
+- There are four networks: H, W, S, and P. Ten trials run back to back on the same network on the same day are repeated measurements, not independent trials (`roadmap.md` Phase 9 statistical design). The results are not generalized to other NAT environments
+- No real network that looked like destination-dependent mapping was found. That condition was measured only by emulation
+- Home network vs home network kept the host running. Its setup time is under a different condition from the other batches, which started the host fresh each trial
+- One other batch on the same network pair as home network vs hotspot was removed. During it, the phone providing the hotspot was used to watch video. Its RTT median was about 200ms. It was not confirmed that the video was the cause
+- In home network vs home network, A had Tailscale on
+- With only one real failure, no failure rate per mapping behavior can be stated

@@ -263,7 +263,7 @@ only path is `/v1/report`. Responses and errors use 4.1 Common Envelope of the s
 #### CloudWatch Metrics
 
 **The service builds ten custom metrics from received records and puts them into CloudWatch.** There are no dimensions. The namespace is `Sangtachi`.
-The repository owner builds the graphs in a CloudWatch dashboard. Ratios are computed with dashboard math expressions.
+The repository owner builds the dashboard. Ratios are computed with dashboard math expressions. The graphs of `experiments.md` are drawn by `tools/tm-plot`, not the dashboard ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)).
 
 | Metric | Unit | Value put | Records used |
 |------|------|---------|-------------|
@@ -1636,6 +1636,7 @@ The two language trees hold the same files. When editing a document, modify both
 | pytest | Test execution and failure reporting for the control server. The deployed server process does not import it | **Approved.** Test only ([ADR 0014](decisions/0014-control-server-tests-pytest-and-docker.md)) |
 | DynamoDB local | Store for local tests of the control server. Run as a Docker container | **Approved.** Test only (ADR 0014) |
 | Qt | Window, widgets, and event loop of the minimum GUI. `spec.md` FR-15 owns the scope | **Approved.** It is a product dependency, so the instructor approves |
+| matplotlib | Drawing the `experiments.md` graphs. Only `tools/tm-plot` uses it, and the deployed processes do not import it | **Approved.** Analysis only ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)) |
 | Amazon DynamoDB | Persistent storage of room/peer state and metrics | External managed service |
 | Amazon CloudWatch | Aggregation and dashboards for telemetry metrics (3.4 Telemetry Service) | External managed service |
 

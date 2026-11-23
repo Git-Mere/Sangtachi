@@ -82,7 +82,7 @@ Started only if the direct connection work finishes early. Not pursued at the ex
 | FR-11 | The receiver decapsulates `DATA` packets and injects the original IP packet into the virtual adapter. Before injection it validates inner IPv4 validity, that the inner source IP matches the sending peer's virtual IP, and that the inner destination IP is its own virtual IP. |
 | FR-12 | When a player enters `10.100.0.1:25565` in the Minecraft server address field, the client connects to the server on the remote host. |
 | FR-13 | Every connection attempt records success or failure and, on failure, a per-stage code (`STUN_DISCOVERY_FAILED`, `CONTROL_PLANE_EXCHANGE_FAILED`, `HOLE_PUNCH_TIMEOUT`, `PEER_HANDSHAKE_FAILED`, `TUNNEL_DROPPED`). |
-| FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. The telemetry service stores what it receives and emits metrics for aggregation to Amazon CloudWatch. A CloudWatch dashboard draws the graphs. |
+| FR-14 | The client collects connection establishment time, RTT, packet loss, jitter, transfer volume, and session duration and reports them to the **telemetry service**. It does not report them to the control plane. The telemetry service stores what it receives and emits metrics for aggregation to Amazon CloudWatch. The metrics are viewed in a CloudWatch dashboard. The graphs of the field measurement report are drawn by an analysis tool ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)). |
 | FR-15 | The client provides five actions through a GUI: create a room under a chosen name and show the room code, join by entering a name and a room code, a member list with each member's name and connection status, display of the FR-13 per-stage code on failure, and quit by closing the window. Any other screen is out of scope. |
 | FR-16 | A peer that creates or joins a room chooses a display name. The name is unique within the room. Places a person sees (the failure line, the member list) refer to a member by this name. The name is used only for display, not for peer identification or packet validation. [`control_plane.md`](control_plane.md) 2.7 `name` owns the format ([ADR 0015](decisions/0015-refer-to-members-by-display-name.md)). |
 
@@ -113,7 +113,7 @@ decision formula is set by `protocol.md` 9.2 `CONNECTED` Condition.
 | NFR-2 | The tunnel layer contains no Minecraft-specific logic. Replacing Minecraft with another IP-based application does not change the tunnel code. |
 | NFR-3 | A control plane failure does not tear down an already established P2P tunnel. Telemetry transmission failures are ignored. **Failed records are not resent.** The next period sends that period's new metrics. The basis for verdicts is the local record file, not the upload ([`architecture.md`](architecture.md) chapter 9). |
 | NFR-4 | STUN, NAT traversal, hole punching, the tunnel protocol, routing, and session management are implemented directly. Wintun provides virtual interface access only. |
-| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Six are approved: Wintun, `boto3`, Catch2, pytest, DynamoDB local, and Qt. |
+| NFR-5 | Non-basic third-party dependencies receive approval **before** integration, and the scope each library provides is documented. The kind of dependency decides who approves it, and that split is below. Seven are approved: Wintun, `boto3`, Catch2, pytest, DynamoDB local, Qt, and matplotlib. |
 | NFR-6 | The virtual adapter MTU is set with the tunnel header overhead in mind, and no IP fragmentation occurs for normal game traffic. |
 | NFR-7 | Failures are not hidden. NAT environments that cannot be traversed are explicitly marked as out of support scope and recorded. |
 | NFR-8 | Source control and weekly development records are maintained. Where AI tools contributed to code or documents, the contribution is verified and attributed according to course policy. |
@@ -129,17 +129,17 @@ tunnel topology FR-4 fixes, and the test that judges this requirement is designe
 | Kind | What it is | Who approves | Today |
 |------|------------|--------------|-------|
 | Product dependency | The product needs it to run, client or server | The instructor | Wintun, `boto3`, and Qt are approved |
-| Test-only dependency | Only running the tests needs it | The repository owner | Catch2, pytest, and DynamoDB local are approved |
+| Test- and analysis-only dependency | Only running the tests or analyzing field data needs it | The repository owner | Catch2, pytest, DynamoDB local, and matplotlib are approved |
 
 The reason for the split is what this requirement blocks: replacing the list NFR-4 requires us to
-implement ourselves with an outside library. A test runner is not on that list.
+implement ourselves with an outside library. Test runners and analysis tools are not on that list.
 
 **The judgement is whether the shipped artifact runs without it.** On the C++ side the library
 must be absent from the link list of the product targets. On the Python side the deployed process
 must not import it.
 
-**The professor accepted this split.** [ADR 0005](decisions/0005-test-framework-catch2.md) owns the
-reasoning and its cost.
+**The professor accepted the split between product and test-only dependencies.** [ADR 0005](decisions/0005-test-framework-catch2.md) owns the
+reasoning and its cost. Putting analysis tools in the same kind is the repository owner's judgment ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)).
 
 **What NFR-10 does not cover.** Resource isolation is not part of this requirement. While the
 two services share one instance, shared resource exhaustion **remains a risk.** The isolation mechanisms only lower the bound on

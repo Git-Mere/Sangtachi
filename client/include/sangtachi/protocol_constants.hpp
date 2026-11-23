@@ -1,6 +1,6 @@
 #pragma once
 
-// 터널 프로토콜 상수 (protocol.md 3장 상수, 11장 타이머).
+// 터널 프로토콜 상수 (protocol.md 3장 상수, 11장 타이머, 12장 크기 제한과 조각화).
 //
 // protocol.md 가 이 값들의 단일 출처다. 여기는 그 블록을 옮겨 적은 것이고, 그 문서가
 // 바뀌면 여기를 따라 고친다. 코드에서 새 값을 만들지 않는다.
@@ -17,7 +17,6 @@ inline constexpr std::uint8_t kTunnelVersion = 0x01;
 inline constexpr std::size_t kHeaderSize = 20;
 inline constexpr std::size_t kMaxInner = 1452;
 inline constexpr std::size_t kMaxDatagram = kHeaderSize + kMaxInner;  // 1472
-inline constexpr std::uint32_t kAdapterMtu = 1400;  // 가상 어댑터 MTU 기본값 (12장). 실측으로 확정한다
 inline constexpr std::uint32_t kStunCookie = 0x2112A442;  // RFC 5389
 inline constexpr std::size_t kMaxCandidates = 8;
 inline constexpr std::size_t kMaxPeers = 5;  // 한 방의 인원. 5.7 ROSTER 의 상한이기도 하다
@@ -32,6 +31,12 @@ inline constexpr std::size_t kUnverifiedTxBucket = 10;
 inline constexpr std::size_t kUnverifiedTxRefill = 5;
 
 static_assert(kMaxDatagram == 1472, "protocol.md 3장 MAX_DATAGRAM");
+
+// --- 12장 크기 제한과 조각화 ---
+//
+// 12장은 이 값에 이름을 붙이지 않았다. 이름은 이 코드가 붙였다.
+
+inline constexpr std::uint32_t kAdapterMtu = 1400;  // 가상 어댑터 MTU 기본값. 실측으로 확정한 고정값이다
 
 // --- 11장 타이머 ---
 //

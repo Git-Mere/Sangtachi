@@ -302,7 +302,7 @@ accounting.
 > only one path actually delivers. Counting the gaps of that phase as loss pollutes the measurement.
 > That phase ends at the `CONNECTED` of the **sender**, not ours. Even when we are `CONNECTED` first,
 > the peer may still be sending `HELLO` to all candidates. The four connected-signal types are sent only
-> while the sender is `CONNECTED` (chapter 11 Timers, 5.7 `ROSTER`, 8.5 Transmit-Side Validation check 7).
+> while the sender is `CONNECTED` (chapter 11 Timers, 5.7 `ROSTER`, the `tx_drop_not_connected` check of 8.5).
 > The sender stops `HELLO` retransmission as it enters `CONNECTED`, so no punch `HELLO` has a number after
 > a connected signal. Advancing after `got_ack` is required because of 9.5 Renegotiation. The renegotiating
 > side keeps its `sequence` and sends `HELLO` to all candidates again, so a signal sent before the
@@ -1727,7 +1727,7 @@ validation.
 | STUN deadline | 5s. **Per server**. A response that arrives late, after the deadline has passed, is not used | First request sent to that server | None | Response from that server |
 | `get_peers` polling | 500ms interval. **Player only** | **Successful `register_candidate` response** | Each response | Ready response for that pair |
 | `get_peers` deadline | 60s. Player only. **Counted per pair** | The moment that peer first appears in a response. For the first peer, the successful `register_candidate` response | None | Ready response for that pair |
-| `host_report` period | 5s while a slot is free, 30s when full. **Host only** | Successful `create_room` response | Each send. When a session ends, it sends immediately without waiting for the period (`control_plane.md` 4.6) | Leaving the room, the first row of the 4.6 error table (the room has ended on the server) |
+| `host_report` period | 5s while a slot is free, 30s when full. **Host only**. The values come from `HOST_REPORT_OPEN_S` and `HOST_REPORT_FULL_S` in `control_plane.md` 2.6 | Successful `create_room` response | Each send. When a session ends, it sends immediately without waiting for the period (`control_plane.md` 4.6) | Leaving the room, the first row of the 4.6 error table (the room has ended on the server) |
 | Punch delay | Value computed in 10.2 Rendezvous | Ready response for that pair | None | Punch starts on expiry |
 | `HELLO` retransmission | 200ms interval | Punch start, **9.5 renegotiation (step 10)**. For renegotiation before the punch start, at the punch start (9.5) | Each send | `CONNECTED` reached, 9.6 failure transition |
 | Punch deadline | 10s | **Actual local punch start** | 9.5 renegotiation. Not reset by renegotiation before the punch start (9.5) | `CONNECTED` reached |

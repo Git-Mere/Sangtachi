@@ -6,7 +6,7 @@
 ## 1. 표기
 
 - 망은 가명으로 적는다. 공인 주소와 포트를 싣지 않는다. 시각은 날짜까지만 적는다. 근거는 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 이다
-- 기기는 `A`, `B`, `C`, `F`, `G` 로 적는다. `A` 는 저장소 소유자의 Windows 기기, `G` 는 소유자의 Linux 기기(`linux-prereq.md`), `C` 는 시연 플레이어의 Windows 기기, `F` 는 소유자의 친구의 Windows 기기다
+- 기기는 `A`, `B`, `C`, `F`, `G` 로 적는다. `A` 는 저장소 소유자의 Windows 기기, `B` 는 2장과 3.1 에서 소유자와 함께 잰 친구의 Windows 기기(`F` 와 같은 기기인지는 기록하지 않았다), `G` 는 소유자의 Linux 기기(`linux-prereq.md`), `C` 는 시연 플레이어의 Windows 기기, `F` 는 소유자의 친구의 Windows 기기다
 - 3장과 4장의 터널 RTT 는 클라이언트 로그의 `session.rtt` 줄이다([`architecture.md`](architecture.md) 9장 로그 출력). `PING`/`PONG` 의 왕복이다
 - 3장과 4장의 손실은 로그의 `session.loss` 줄이다. 받는 쪽이 센 값이다
 - 6.2~6.4 의 값은 분석 스크립트가 텔레메트리 레코드에서 낸 것이고 그림 1 은 CloudWatch 지표다. 6.5 는 두 기기의 클라이언트 로그다. 무엇을 어느 레코드에서 세는지는 [`tools/tm-analysis`](../../tools/tm-analysis/README.md) 가 갖는다
@@ -208,7 +208,7 @@
 ## 5. 텔레메트리 표의 한계
 
 `roadmap.md` Phase 9 의 분석 스크립트([`tools/tm-analysis`](../../tools/tm-analysis/README.md))가 내는 표를 읽을 때의 한계다. 무엇을
-어떻게 세는지는 `roadmap.md` Phase 9 작업이 갖는다. 결과는 6장이다.
+어떻게 세는지는 그 README 가 갖는다. 결과는 6장이다.
 
 **`room_known` 거르기.**
 

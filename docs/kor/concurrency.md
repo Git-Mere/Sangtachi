@@ -1,7 +1,7 @@
 # Concurrency Model
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
-**대상 플랫폼:** Windows 10 / 11 x64 (클라이언트)
+**대상 플랫폼:** Windows 10 / 11 x64 와 Ubuntu 24.04 이상 x64 콘솔 (클라이언트, [`spec.md`](spec.md) C-1)
 **요구사항:** [`spec.md`](spec.md) NFR-1, NFR-2, NFR-3
 **설계:** [`architecture.md`](architecture.md) 3.1 클라이언트 / **프로토콜:** [`protocol.md`](protocol.md) 11장 타이머
 **일정:** [`roadmap.md`](roadmap.md) Phase 1
@@ -404,7 +404,7 @@ Wintun 문서는 부하가 높을 때 `ERROR_NO_MORE_ITEMS`에서 잠시 스핀�
   - 텔레메트리 구간(`TELEMETRY_INTERVAL_S`)은 `protocol.md` 11장 표 밖의 세션 타이머 하나다. 와이어에 아무것도
     보내지 않는다. 값과 시작 시점은 [`architecture.md`](architecture.md) 9장 텔레메트리 업로드가 갖는다
   - 그 타이머는 세션 객체가 아니라 시도 실행기가 이 타이머 집합에 세션마다 하나 걸고 지운다. 이름은
-    `telemetry.interval.<peer_id>` 다. 만료를 처리할 때 다음 60초를 다시 건다
+    `telemetry.interval.<peer_id>` 다. 만료를 처리할 때 다음 `TELEMETRY_INTERVAL_S` 를 다시 건다
 - `protocol.md` 11장 타이머는 마감 비교를 `deadline <= now`로 정의하고, 우선순위를 꺼낸 시각
   기준으로 정의한다. 같은 바퀴에 꺼낸 수신 이벤트가 그 바퀴의 타이머보다 먼저 처리된다.
   **수신을 먼저 비우고 타이머를 나중에 도는 이 루프 순서가 그 규칙의 구현이다.**
@@ -682,8 +682,8 @@ Linux 에서는 핸들러가 반환해도 프로세스가 끝나지 않는다. 3
 제어 평면 TCP 호출과 DNS 해석은 `[loop]`에서 하지 않는다. `getaddrinfo`도 동기 호출이라 같은
 자리다.
 
-> **왜.** 제어 서버가 죽어 있으면 TCP `connect`가 SYN 재시도로 수십 초를 소모한다. Phase 4
-> 검증이 일부러 만드는 상황이다. 그 시간이 `[loop]`에서 흐르면 `HELLO` 재전송(200ms)과
+> **왜.** 제어 서버가 죽어 있으면 TCP `connect`가 SYN 재시도로 수십 초를 소모한다. `roadmap.md`
+> Phase 3 검증의 "제어 서버가 죽어 있을 때" 항목이 일부러 만드는 상황이다. 그 시간이 `[loop]`에서 흐르면 `HELLO` 재전송(200ms)과
 > keepalive(15s)와 종료 이벤트 응답이 전부 멈춘다. 6장 텔레메트리 격리가 4스레드 안을
 > 폐기한 사유가 다른 문으로 돌아오는 것이고 [`spec.md`](spec.md) NFR-3 위반이다.
 
@@ -743,7 +743,7 @@ Linux 에서는 핸들러가 반환해도 프로세스가 끝나지 않는다. 3
 아니다. **다만 받은 후보의 위생은 `[loop]` 가 한다.** 자기 서브넷 행이 `[loop]` 의 자기 서브넷
 집합을 쓰기 때문이다(5장 상태 소유).
 
-**`[telemetry]`와 합치지 않는다.** 텔레메트리 업로드는 유실을 허용하고 실패를 보고하지 않는다.
+**`[telemetry]`와 합치지 않는다.** 텔레메트리 업로드는 유실을 허용하고 실패를 시도 결과로 돌려주지 않는다. 카운터와 로그만 남긴다(`architecture.md` 6.3).
 제어 요청은 응답이 필요하고 실패가 곧 `CONTROL_PLANE_EXCHANGE_FAILED`다. 한 스레드에서 두
 성질을 섞으면 텔레메트리 서비스 장애가 제어 요청을 지연시켜 `get_peers` 마감(60s)을 잡아먹는다.
 두 서비스를 분리한 이유(`architecture.md` 3.4 텔레메트리 서비스)를 클라이언트 안에서 다시

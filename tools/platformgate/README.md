@@ -27,7 +27,7 @@ python tools/platformgate/platformgate.py --root .   # 루트 지정
 | `client/` 의 나머지 | 위반 |
 
 출력은 위반마다 한 줄로 `파일:줄:헤더` 다. 그 앞에 `SUMMARY:` 한 줄, 맨 끝에 `VERDICT:`
-한 줄이 붙는다.
+한 줄이 붙는다. 아래는 형태의 예이고 수는 레포의 파일에 따라 다르다.
 
 ```
 SUMMARY: files=24 os_includes=7 allowed=7 violations=0 public_header_violations=0
@@ -108,7 +108,7 @@ Windows 의 파일 시스템은 대소문자를 가리지 않으므로 소문자
 cd tools/platformgate && python -m unittest test_platformgate
 ```
 
-73건이다. 케이스 표는 `test_platformgate.py` 첫머리에 있고 **판정을 고치기 전에 케이스를
+74건이다. 케이스 표는 `test_platformgate.py` 첫머리에 있고 **판정을 고치기 전에 케이스를
 먼저 쓴다.** 일부러 판정하지 않는 것도 같은 이름의 케이스로 고정해 두었다.
 
 케이스가 무엇을 지키는지는 변이로 확인했다. 주석 건너뛰기, 문자열과 원시 문자열 건너뛰기,

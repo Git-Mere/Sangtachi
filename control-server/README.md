@@ -6,7 +6,7 @@ Sangtachi 제어 서버. 설계의 출처는 [`docs/kor/control_plane.md`](../do
 ## 지금 있는 것
 
 `controlplane/` 에 서버 전체가 있다. 수락 루프(`server.py`), 연산(`ops.py`), 저장소 계층
-(`store.py`), 진입점(`__main__.py`)이다. 배포 절차는 아직 없다(`control_plane.md` 7.6).
+(`store.py`), 진입점(`__main__.py`)이다. 배포는 [`tools/cp-deploy`](../tools/cp-deploy/README.md) 가 한다(`control_plane.md` 7.6).
 
 | 파일 | 무엇 |
 |------|------|
@@ -14,7 +14,7 @@ Sangtachi 제어 서버. 설계의 출처는 [`docs/kor/control_plane.md`](../do
 | `tests/test_*.py` | 케이스 표와 그 시험. 표는 파일 머리의 목록이다 |
 | `tests/mutants/<표>.py` | 그 표의 변이 목록 |
 | `tests/mutate.py` | 변이 실행기. 판정 규칙은 그 파일 첫머리에 있다 |
-| `tests/harness/` | 클라이언트 시험용 하네스. 진짜 서버를 DynamoDB local 의 새 테이블 위에 루프백으로 띄우고, 관리 포트로 지연·오류·시계·속도 제한을 주입한다. 터널 프로토콜을 조금 말하는 가짜 피어도 관리 명령으로 띄운다(모드는 파일 머리). `scripts/lobby-check.ps1` 이 쓴다. 배포물이 아니다 |
+| `tests/harness/` | 클라이언트 시험용 하네스. 진짜 서버를 DynamoDB local 의 새 테이블 위에 루프백으로 띄우고, 관리 포트로 지연·오류·시계·속도 제한을 주입한다. 터널 프로토콜을 조금 말하는 가짜 피어도 관리 명령으로 띄운다(모드는 파일 머리). `scripts/harness-lib.ps1` 의 `Start-Harness` 가 띄우고, 그 파일을 읽는 `scripts/*-check.ps1` 이 쓴다. 배포물이 아니다 |
 | `requirements.txt` | 제품 의존성. 배포하는 프로세스가 쓰는 것만 |
 | `requirements-dev.txt` | 시험 전용 의존성 ([ADR 0014](../docs/kor/decisions/0014-제어-서버-시험-pytest와-docker.md)) |
 
@@ -68,6 +68,8 @@ docker stop sangtachi-ddb
   `sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab` 였다
 - 호스트 쪽 포트는 `127.0.0.1:8001` 이다. 8000 은 제어 서버의 포트(`CONTROL_PORT`)라 피했고,
   루프백에만 묶어 같은 망의 다른 기기가 닿지 않게 한다
+- 8001 은 텔레메트리 서비스의 기본 포트(`SANGTACHI_TM_PORT`, `docs/kor/architecture.md` 3.4)와 같다.
+  이 기기에서 텔레메트리 서비스를 띄울 때는 그 포트를 바꾼다([`telemetry-server/README.md`](../telemetry-server/README.md))
 - `-inMemory` 라 컨테이너를 멈추면 테이블이 사라진다. `--rm` 이라 컨테이너도 사라진다
 - `-sharedDb` 는 자격 증명과 리전이 달라도 같은 데이터베이스를 쓰게 한다
 - `boto3` 는 자격 증명이 없으면 요청을 보내지 않는다. 실제 키가 아닌 값을 넣는 이유는

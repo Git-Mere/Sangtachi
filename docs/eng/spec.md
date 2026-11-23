@@ -43,8 +43,6 @@ One-sentence definition:
 - Full replacement of a commercial VPN product
 - Large-scale public deployment
 - Development of our own cryptographic algorithms
-- Mobile support
-- macOS support
 - Advanced GUI
 - Full ICE implementation
 - Guaranteed connectivity across all NAT configurations
@@ -52,14 +50,17 @@ One-sentence definition:
 
 ### Stretch goals
 
-Started only if the direct connection work finishes early. Not pursued at the expense of the core P2P goals.
+When to start is held by [`roadmap.md`](roadmap.md) Stretch Goals. Not pursued at the expense of the core P2P goals.
 
 - Relay fallback for peers whose direct connection fails
 - Encrypted and authenticated peer sessions
+- TLS and caller authentication for control plane calls
 - Windows installer
 - Automatic reconnection
 - Six or more parties in one virtual network
 - Validation with a UDP-based game
+- macOS client
+- Mobile client
 
 ---
 
@@ -150,7 +151,7 @@ that risk. They do not remove it. The boundary contract and the isolation mechan
 
 | ID | Constraint |
 |----|------|
-| C-1 | The client targets are Windows 10 / 11 x64 and Ubuntu 24.04 or later x64. Ubuntu is the console executable only. The demonstration is done on Windows. |
+| C-1 | The client targets are Windows 10 / 11 x64 and Ubuntu 24.04 or later x64. Ubuntu is the console executable only. In the demonstration, players join with the Windows GUI. The host may be a Linux console ([ADR 0038](decisions/0038-put-the-demo-host-on-home-wi-fi.md)). |
 | C-2 | The client language is C++20, built with CMake. Each OS's native APIs are used instead of a high-level networking framework (Windows API, POSIX and Linux API). |
 | C-3 | The control server and telemetry service are written in Python. The deployment target is **two processes on a single AWS EC2 instance** (separate ports), Amazon DynamoDB, and Amazon CloudWatch. Beyond the standard library, the AWS SDK (`boto3`) is used. `boto3` was approved under NFR-5. |
 | C-4 | Must be completable within one semester. **Phases are not pinned to specific weeks.** Progress speed decides, so fixing a week allocation in the document soon diverges from fact. |
@@ -271,7 +272,7 @@ from the other side) and RTT to a local record file. The path, the line format, 
 - An empty RTT is normal when there is no sample. `PING` starts after `CONNECTED`, so the
   establishment line usually has no sample. An empty RTT is not judged a failure
 
-Control plane upload and per-environment aggregation are FR-14 and Phase 9.
+Upload to the telemetry service and per-environment aggregation are FR-14 and Phase 9.
 
 ### Target success (Target)
 

@@ -195,7 +195,7 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   - 저장소를 SQLite에서 바꾼 결정과 그 대가는
     [ADR 0004](decisions/0004-상태-저장소-dynamodb.md)에 있다
 - 로컬 시험은 DynamoDB local 로 돌린다. Docker 컨테이너로 띄운다 ([ADR 0014](decisions/0014-제어-서버-시험-pytest와-docker.md)). **다만 일관성 경로는 여기서 판정하지 않는다.** 로컬은 읽기가 대개 최신 값처럼 보여서 `ConsistentRead` 누락이 드러나지 않는다 (ADR 0004)
-- **`control_plane.md` 의 케이스 표(2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4)는
+- **`control_plane.md` 의 케이스 표(자리는 그 문서 9장 검증)는
   `control-server/tests/` 에 두고 문서는 그 파일을 가리킨다.** 표 한 벌이 두 곳에 있으면 한쪽만
   고쳐져 어긋난다. 표마다 변이 시험을 붙인다(`control-server/tests/mutants/`)
   - 저장소가 있어야 도는 행(`needs="store"`)은 store 계층을 만들 때 풀고, 그때 store 쪽 변이를
@@ -320,9 +320,9 @@ bind 한 엔드포인트는 `0.0.0.0:<포트>` 다([`protocol.md`](protocol.md) 
   (`control_plane.md` 7.6 설정과 배포)에서 `ConditionCheckItem` 이 빠지면 여기서 걸린다
 - 방 하나를 만들고 플레이어를 넷까지 넣었다 빼는 동안 CloudWatch 의 테이블 지표를 1분 단위로
   본다. `ConsumedReadCapacityUnits` 와 `ConsumedWriteCapacityUnits` 는 1분 `Sum` 을 60 으로 나눈
-  값이 25 이하이고, 같은 기간 `ThrottledRequests` 의 `Sum` 이 0 이다. 7.6 의 용량 계산이 재지
+  값이 테이블의 프로비저닝 용량(`control_plane.md` 7.6 설정과 배포) 이하이고, 같은 기간 `ThrottledRequests` 의 `Sum` 이 0 이다. 7.6 의 용량 계산이 재지
   않은 최악값이기 때문이다
-  - 지표의 원시 값은 기간 합이라 초당 용량 25 와 바로 비교하지 않는다
+  - 지표의 원시 값은 기간 합이라 초당 용량과 바로 비교하지 않는다
 
 **시계와 로그.**
 
@@ -1207,22 +1207,10 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
   > **왜 15일인가.** CloudWatch 는 1분 해상도 데이터를 15일, 5분 해상도를 63일 남긴다. 대시보드를 언제 만들든 그 뒤에는 거친 해상도만 남는다
 - **분석 스크립트를 `tools/` 에 둔다.** DynamoDB 에서 UTC 시간 범위의 레코드를 읽어 [`experiments.md`](experiments.md) 에 실을
   표를 만든다. `boto3` 와 표준 라이브러리만 쓴다
-  - 시도 수와 성공 수, Wilson 구간, 실패 코드별 개수, 관측된 매핑 거동별 비교, 같은 방 호스트의 매핑 거동과 짝지은 비교, 동일 LAN 여부별, 빌드 종류별, 호스트 쪽 수립 시간
-  - 시도와 성공은 플레이어의 `establish` 만 센다. 결과마다 아래처럼 센다
-
-    | 결과 | 어떻게 세나 |
-    |------|-------------|
-    | `OK`, `room_known` 이 `true` | 성공. 분모와 분자에 든다 |
-    | `OK`, `room_known` 이 `true` 가 아님 | 분모와 분자에서 뺀다. "제외한 OK" 로 개수만 적는다 |
-    | `ABORTED` | 분모에서 뺀다. 개수만 적는다 |
-    | 그 밖(`PEER_FAILED` 포함) | `room_known` 과 무관하게 실패. 수립 전 실패는 대조할 방이 없기 때문이다 |
-
-  - 성공률의 구간은 95% Wilson 점수 구간이다
-  - 세션 값(호스트 쪽 수립 시간, RTT, 지터, 손실, 세션 지속 시간)은 `room_known` 이 `true` 인 레코드만 쓴다. 이 거르기의 한계를
-    `experiments.md` 에 적는다
-  - 전송 순번의 빈 번호로 보이는 누락 수를 함께 낸다. 시도의 마지막 레코드나 시도 전체를 잃은 것은 이 수에 들지 않는다
-  - 도구는 [`tools/tm-analysis`](../../tools/tm-analysis/README.md) 다. 무엇을 어느 레코드에서 세는지의 표와 실측 묶음 파일의 형식은
-    그 README 가 갖는다
+  - 시도 수와 성공 수, 95% Wilson 구간, 실패 코드별 개수, 관측된 매핑 거동별 비교, 같은 방 호스트의 매핑 거동과 짝지은 비교, 동일 LAN 여부별, 빌드 종류별, 호스트 쪽 수립 시간, 세션 값(RTT, 지터, 손실, 세션 지속 시간), 전송 순번의 빈 번호로 보이는 누락 수
+  - 도구는 [`tools/tm-analysis`](../../tools/tm-analysis/README.md) 다. 무엇을 어느 레코드에서 세는지(결과별 분모와 분자, `room_known` 거르기, 누락 수)와
+    실측 묶음 파일의 형식은 그 README 가 갖는다
+  - `room_known` 거르기의 한계를 `experiments.md` 에 적는다
 - README 와 배포물 안내에 수집 항목을 적는다. 주소, 후보, 표시 이름을 올리지 않는다는 것도 적는다
 - 실측 묶음마다 UTC 시간 범위와 환경을 `.gitignore` 로 막은 로컬 파일(`tools/tm-analysis/local/`)에 적는다. 텔레메트리는 환경을 싣지 않으므로 분석 스크립트가 이것으로 가른다. `experiments.md` 에는 날짜와 환경만 싣는다. 시각을 날짜까지만 공개하는 것은 [ADR 0001](decisions/0001-직접-연결-대비책-미도입.md) 따라야 할 조치 2번이다
 - 복수 네트워크 환경 테스트
@@ -1312,10 +1300,13 @@ Phase 1-9가 여유 있게 끝난 경우에만 착수한다. 핵심 P2P 목표�
 |------|------|
 | 릴레이 폴백 | 직접 연결 불가 피어 대상. Phase 4에서 미지원으로 분류된 환경을 구제 |
 | 암호화 및 피어 인증 | 자체 암호 알고리즘은 개발하지 않음 |
+| 제어 평면 TLS 와 호출자 인증 | v1 이 받아들인 한계는 [`control_plane.md`](control_plane.md) 1.2 신뢰 가정 |
 | Windows 설치 프로그램 | |
 | 자동 재연결 | |
 | 6자 이상 가상 네트워크 | 한 방 상한은 5다 ([ADR 0006](decisions/0006-무중계-스타-토폴로지.md)). 그 위는 라우터 구조 확장이 필요하다 |
 | UDP 기반 게임 검증 | 터널의 게임 비종속성 추가 입증 |
+| macOS 클라이언트 | 지금 대상 OS 밖이다. 착수할 때 [`spec.md`](spec.md) C-1 을 고친다. `platform/posix` 가 macOS 와 같이 쓸 자리다 ([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)) |
+| 모바일 클라이언트 | 지금 대상 OS 밖이다. 착수할 때 [`spec.md`](spec.md) C-1 을 고친다 |
 
 ---
 

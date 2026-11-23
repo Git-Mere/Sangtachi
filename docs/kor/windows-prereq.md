@@ -23,7 +23,7 @@
 | **부분 실측** | 명령은 돌렸으나 **통과 조건이 아직 판정되지 않는다.** 무엇이 빠졌는지 적는다 |
 | **미검증** | 돌려 보지 않았다. 사유와 무엇이 있으면 검증되는지 적는다 |
 
-현재 실측 8절, 부분 실측 3절, 미검증 1절, 사람 확인 1절(10절)이다.
+현재 실측 8절, 부분 실측 2절, 미검증 1절, 사람 확인 2절(10절, 13절)이다.
 
 **본문에 측정 날짜를 적지 않는다.** 실측의 원본 기록은 `commit_history/` 와
 `field-test/` 에 있다. 이 문서는 현재 사양과 판정 기준만 담는다.
@@ -45,7 +45,7 @@
 **한 대에서 나온 출력은 그 한 대의 사실이다.** 어댑터 이름, 메트릭, 대역은 기기마다 다르다.
 비교할 것은 값 자체가 아니라 **판정 기준**이다. 기준을 각 절에 적었다.
 
-초기화된 PC에서의 종단 검증은 Phase 8 시연 준비 시점이며 이 문서의 완료 조건이 아니다.
+초기화된 PC에서의 종단 검증은 이 문서의 완료 조건이 아니다.
 클라이언트가 하는 자동 처리 가운데 1·2·3·4·7·8·9절의 것은 구현됐다. 4절의 Qt 와 VC++ 런타임
 동봉은 `scripts/package-gui.ps1` 이 한다.
 
@@ -122,7 +122,7 @@ Windows 방화벽은 **인바운드 기본 차단**이다. 새로 만든 가상 
 ### 기본 정책 확인
 
 판정은 [`tools/winprereq/Test-FirewallPolicy.ps1`](../../tools/winprereq/Test-FirewallPolicy.ps1)
-에 있다. 케이스 225건은 스크립트 안에 있고 `-SelfTest` 로 돈다.
+에 있다. 케이스는 스크립트 안에 있고 `-SelfTest` 로 돈다. 건수는 [`tools/winprereq/README.md`](../../tools/winprereq/README.md) 가 적는다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Test-FirewallPolicy.ps1
@@ -302,7 +302,8 @@ Remove-NetFirewallRule -Group 'Sangtachi'
 어댑터를 지우지 않고 끝나는 드라이버도 있다. 위의 OpenVPN TAP 어댑터가 그렇게 남은 것이다. 남은
 것을 같은 이름으로 또 만들면 중복 생성 오류가 난다.
 
-**분류: 클라이언트.** 시작할 때 자기 GUID 의 잔존물을 지운다. 순서는
+**분류: 클라이언트.** 기동 때 어댑터를 만든 직후 자기 GUID 에 남은 IPv4 주소를 지운다. 같은 GUID 의
+어댑터가 이미 있으면 지우지 않고 기동 실패다(아래 표). 순서는
 [`architecture.md`](architecture.md) 7장 어댑터 수명이 갖는다.
 
 ```powershell
@@ -429,7 +430,7 @@ Get-FileHash .\wintun.dll -Algorithm SHA256 | Select-Object -ExpandProperty Hash
 값과 비교하면 판정 3번은 절대 맞지 않는다. 그래서 DLL 해시의 기대값은 공개 해시가 맞는 zip 에서
 꺼낸 `bin/amd64/wintun.dll` 로 계산해 적는다. 버전을 올릴 때도 이 순서를 밟는다.
 
-**인증서 유효 기간은 판정하지 않는다.** 0.14.1 의 서명 인증서는 이미 만료됐지만 서명에
+**인증서 유효 기간은 판정하지 않는다.** 관측 당시 버전 0.14.1 의 서명 인증서는 이미 만료됐지만 서명에
 타임스탬프가 있어 `Status` 가 `Valid` 다. 만료를 실패로 보면 정상 배포물이 걸린다.
 
 형태 확인이다. 이 기기의 `kernel32.dll` 로 돌려 `Status: Valid`,
@@ -437,7 +438,7 @@ Get-FileHash .\wintun.dll -Algorithm SHA256 | Select-Object -ExpandProperty Hash
 `CN=WireGuard LLC` 로 두면 `False` 가 나오는 것까지 봤다. **`Status` 만 보면 이 검사가
 통과한다는 뜻이다.**
 
-0.14.1 배포 zip 을 받아 세 판정을 돌렸고 모두 기대값과 맞았다. `Subject` 문자열은 PowerShell 7
+관측 당시 버전 0.14.1 의 배포 zip 을 받아 세 판정을 돌렸고 모두 기대값과 맞았다. `Subject` 문자열은 PowerShell 7
 의 `Get-AuthenticodeSignature` 와 Windows PowerShell 5.1 의
 `X509Certificate.CreateFromSignedFile` 이 같은 값을 냈다.
 
@@ -647,7 +648,7 @@ Test-NetConnection -ComputerName <EC2 공인 주소> -Port 8000
 ## 7. 서브넷 충돌
 
 **검증: 실측.** 판정은 [`tools/winprereq/Test-SubnetOverlap.ps1`](../../tools/winprereq/Test-SubnetOverlap.ps1)
-에 있고 이 기기에서 돌렸다. 케이스 85건은 스크립트 안에 있고 `-SelfTest` 로 돈다. 살아 있는 우리
+에 있고 이 기기에서 돌렸다. 케이스는 스크립트 안에 있고 `-SelfTest` 로 돈다(건수는 `tools/winprereq/README.md`). 살아 있는 우리
 어댑터에 주소와 경로가 선 상태에서 `scripts/adapter-check.ps1` 이 이 스크립트를 두 번 돌렸다. GUID 를
 주면 우리 어댑터를 빼고 `proceed`, 주지 않으면 우리 `/24` 경로 때문에 `pick another range` 였다.
 
@@ -834,7 +835,7 @@ Tailscale       100.102.127.59  Preferred
 **고정 대기로 기다리지 않는다.** `Start-Sleep 2` 는 느린 기기에서 깨지고 빠른 기기에서
 낭비다. 상태를 폴링한다.
 
-**끝나는 조건이 셋이다. `Preferred` 하나만 기다리면 영원히 멈춘다.**
+**끝나는 조건이 넷이다. `Preferred` 하나만 기다리면 영원히 멈춘다.**
 
 | 관측 | 조치 |
 |------|------|
@@ -911,7 +912,7 @@ aws ec2 describe-addresses \
 
 ## 11. Minecraft LAN 탐색은 안 된다
 
-**검증: 미검증 (문헌 근거).** 실제로 시도해 보지 않았다. Phase 8 에서 확인한다.
+**검증: 미검증 (문헌 근거).** 상대 서버가 "LAN 게임" 목록에 뜨는지 본 기록이 없다.
 
 Minecraft Java Edition 의 "LAN 에 공개" 는 멀티캐스트로 광고한다. 널리 인용되는 값은
 `224.0.2.60:4445` 이지만 **직접 확인하지 않았고 에디션과 판에 따라 다를 수 있다.**
@@ -972,16 +973,17 @@ True  C:\users\...\java-runtime-epsilon\windows-x64\java-runtime-epsilon\bin\jav
 
 ## 13. SmartScreen 과 Defender
 
-**검증: 부분 실측.** 정책 값만 확인했다. **통과 조건(시연 PC 에서 경고 없이 실행)은
-판정되지 않았다.** `client.exe` 가 아직 없다. Phase 8 시연 준비에서 확인한다.
+**검증: 사람 확인 (소유자 보고).** 정책 값은 이 기기에서 봤다. 통과 조건(시연 PC 에서 경고 없이
+실행)은 소유자가 확인했다. 친구 PC 와 시연 PC 에서 GUI 배포물의 `sangtachi_gui.exe` 를 실행했을 때
+SmartScreen 경고가 뜨지 않았다. 아래 판정 명령의 출력은 남기지 않았다.
 
 SmartScreen 은 **평판 기반**이다. 서명이 없다고 무조건 막는 것이 아니라, 평판이 없는
 실행 파일에 대해 "Windows 가 PC 를 보호했습니다" 를 띄운다. 인터넷에서 받은 파일에는
 Mark of the Web 이 붙어 더 엄격해진다.
 
-**우리 빌드 산출물이 여기에 걸릴 위험이 있다.** 관측한 것이 아니라 예상이다. `client.exe`
-가 아직 없다. 로컬에서 빌드한 파일에는 보통 MOTW 가 붙지 않으므로, 실제로 경고가 뜨는지는 그
-바이너리를 시연 PC 에 올린 방법에 달려 있다. Phase 8 에서 그 파일로 확인한다.
+**우리 빌드 산출물이 여기에 걸릴 위험이 있다.** 서명이 없다. 평판이 쌓였는지는 확인하지 않았다. 위 PC 들에서
+경고가 뜨지 않은 것은 그 PC 와 그 전달 방법의 사실이다. 로컬에서 빌드한 파일에는 보통 MOTW 가 붙지
+않으므로, 실제로 경고가 뜨는지는 그 바이너리를 시연 PC 에 올린 방법에 달려 있다.
 
 **분류: 사람.**
 
@@ -1000,7 +1002,7 @@ Mark of the Web 이 붙어 더 엄격해진다.
 보호를 끄는 것이다.** 출처를 확인하지 않고 끄면 SmartScreen 이 막으려던 바로 그 상황이 된다.
 
 ```powershell
-Get-FileHash .\client.exe -Algorithm SHA256
+Get-FileHash .\sangtachi_gui.exe -Algorithm SHA256
 ```
 
 **통과 조건.** 이 값이 **내가 빌드한 산출물의 해시와 같아야 한다.** 빌드 기기에서 같은
@@ -1010,8 +1012,8 @@ Get-FileHash .\client.exe -Algorithm SHA256
 **확인한 뒤에 우회한다. 방법은 둘이다. 첫째, 받은 파일의 Mark of the Web 을 제거한다.**
 
 ```powershell
-Unblock-File -LiteralPath .\client.exe
-Get-Item -LiteralPath .\client.exe -Stream Zone.Identifier -ErrorAction SilentlyContinue
+Unblock-File -LiteralPath .\sangtachi_gui.exe
+Get-Item -LiteralPath .\sangtachi_gui.exe -Stream Zone.Identifier -ErrorAction SilentlyContinue
 ```
 
 두 번째 명령이 아무것도 내지 않으면 **그 파일에** MOTW 가 없는 것이다. 대체 데이터 스트림은
@@ -1046,7 +1048,7 @@ NTFS 기능이므로 FAT32·exFAT 매체 위의 파일에는 애초에 없다. �
 |---|------|------|------|
 | 1 | 관리자 권한. 배포 빌드는 매니페스트가 UAC 동의를 묻는다 | 사람 | 실행할 때마다 |
 | 2 | 방화벽 규칙(만들기와 검증은 클라이언트, 지우기는 사람) | 클라이언트 + 사람 | 어댑터 생성 직후 |
-| 3 | 잔존물 정리 | 클라이언트 | 시작할 때. GUI 는 창을 띄운 뒤 |
+| 3 | 잔존 주소 정리 | 클라이언트 | 기동 때 어댑터를 만든 직후. GUI 는 창을 띄운 뒤 |
 | 4 | Wintun, Qt, VC++ 런타임 동봉. Wintun 서명 확인 | 빌드 + 클라이언트(실행 시 확인) | 배포물을 만들 때와 실행할 때 |
 | 5 | `server.properties` | 사람 | 서버를 처음 세울 때 |
 | 6 | EC2 보안 그룹과 바인드 주소 | 사람 | 인스턴스를 세울 때 |

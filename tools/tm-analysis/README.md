@@ -1,8 +1,9 @@
 # tm-analysis
 
 텔레메트리 테이블에서 실측 묶음의 레코드를 읽어 [`experiments.md`](../../docs/kor/experiments.md) 에 실을 표를 낸다. `boto3` 와
-표준 라이브러리만 쓴다. 출처는 [`docs/kor/roadmap.md`](../../docs/kor/roadmap.md) Phase 9 의 분석 스크립트 항목과 통계 설계
-표, [`architecture.md`](../../docs/kor/architecture.md) 3.4 저장과 CloudWatch 지표, 6.3 레코드 필드다.
+표준 라이브러리만 쓴다. 무엇을 내야 하는지는 [`docs/kor/roadmap.md`](../../docs/kor/roadmap.md) Phase 9 의 분석 스크립트 항목과
+통계 설계 표가 갖는다. 레코드의 저장과 필드는 [`architecture.md`](../../docs/kor/architecture.md) 3.4 저장과 CloudWatch 지표, 6.3
+레코드 필드가 갖는다. **무엇을 어느 레코드에서 세는지는 이 README 의 "무엇을 세는가" 가 갖는다.**
 
 ## 실측 묶음 파일
 

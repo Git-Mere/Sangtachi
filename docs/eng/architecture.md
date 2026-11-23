@@ -1,7 +1,7 @@
 # Architecture
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
-**Target platform:** Windows 10 / 11 x64 (client), Linux/AWS EC2 (control server)
+**Target platform:** Windows 10 / 11 x64 and Ubuntu 24.04 or later x64 console (client, [`spec.md`](spec.md) C-1), Linux/AWS EC2 (control server)
 
 > Korean version: [`../kor/architecture.md`](../kor/architecture.md)
 
@@ -75,9 +75,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 |------|------|-----------|
 | `network/udp_socket` | Winsock2 init/teardown, UDP socket creation, non-blocking send/receive, exposing the event handle ([`concurrency.md`](concurrency.md)) | Winsock2 |
 | `network/endpoint` | `IP:Port` value type, parsing, comparison, serialization | None |
-| `peer/peer` | Peer identifier, virtual IP, candidate endpoint list | None |
-| `peer/hole_punch` | Simultaneous bidirectional send, retry, success decision, failure reason classification | None |
-| `peer/session` | Handshake, keepalive, connection state machine, RTT measurement | None |
+| `peer/session` | One attempt with one peer. Takes the peer's identifier, virtual IP and candidate endpoints and does hole punching (simultaneous bidirectional send, retry), handshake, keepalive, the connection state machine, success decision and failure reason classification, and RTT measurement | None |
 | `peer/candidates` | Local candidate decision, default route, registration list, own-subnet set (`protocol.md` 10.1). Interface enumeration and route lookup are injected and default to `platform/interfaces` | None |
 | `peer/epoch` | `session_epoch` generation, attempt nonces, retired lists (`protocol.md` 4.3, 5.1). The random source is injected and defaults to `platform/random`. Used by `peer/session` | None |
 | `tunnel/packet` | Tunnel header serialization/deserialization, corrupt packet validation | None |
@@ -85,11 +83,12 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `tunnel/tunnel` | Dispatch by packet type, encapsulation/decapsulation, sequence management | None |
 | `tunnel/router` | Virtual IP -> peer session mapping, destination decision | None |
 | `tunnel/roster_publisher` | The host's `ROSTER` roster, `generation`, and the three send times ([`protocol.md`](protocol.md) 5.7, Chapter 11) | None |
-| `tunnel/data_sender` | The console `send`, synthetic inner packets, sending split across rounds ([`roadmap.md`](roadmap.md) Phase 4 console commands) | None |
+| `tunnel/data_sender` | The console `send`, synthetic inner packets, sending split across rounds ([`roadmap.md`](roadmap.md) Phase 4 Test Harness) | None |
 | `testbuild/instrument` | Test-build instrumentation. `data.tx`, `data.rx`, echo responder, the adapter ICMP responder (`roadmap.md` Phase 6 verification). The executable compiles it only in the test build ([ADR 0023](decisions/0023-decisions-before-round-3-h-and-i.md)) | None |
 | `adapter` | The adapter's name, GUID and subnet constants and the face the loop sees (read event, read, inject, session restart). A single header | None |
 | `platform/tun` | Virtual adapter create/open and packet read/inject (Wintun), virtual IP address and route setup (IP Helper), administrator check, running the subnet conflict and firewall rule scripts. Chapter 7 Adapter lifetime | **Wintun (approved)**, IP Helper |
-| `telemetry/telemetry` | Metric collection, local buffering, transmission to the telemetry service | None |
+| `telemetry/telemetry` | Metric collection and the values and body of the telemetry record (6.3) | None |
+| `telemetry/uploader` | The `[telemetry]` thread, the telemetry queue, transmission to the telemetry service (`concurrency.md` chapter 6 Telemetry Isolation) | None |
 | `ui/main_window` | Window and widgets of the minimum GUI. [`spec.md`](spec.md) FR-15 owns the five actions | Qt |
 | `ui/gui_ui` | The `ClientUi` of the GUI build. On the worker thread it puts entries into the screen queue, collects the `ERROR` lines during startup, and signals the cleanup-complete event. It does not use Qt | None |
 | `platform/session_end` | Tells whether a window message is a logoff or system shutdown (`WM_ENDSESSION`) (`concurrency.md` chapter 7 Shutdown in the GUI Build) | Win32 |
@@ -98,7 +97,7 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `timer` | The periodic timer set and the next wait timeout calculation (`concurrency.md` chapter 4) | None |
 | `console` | The line queue of the `[console]` thread and its lifetime (`concurrency.md` chapter 6 Telemetry Isolation also owns that queue policy). Present only in the console build | None |
 | `log` | Line format and field encoding of the chapter 9 log output | None |
-| `counters` | The table of the chapter 9 `counter` event. The names come from [`protocol.md`](protocol.md) and `concurrency.md` | None |
+| `counters` | The table of the chapter 9 `counter` event. The names come from [`protocol.md`](protocol.md), `concurrency.md`, and this document's 6.3 (`telemetry_upload_failed`) and chapter 9 (`record_write_failed`) | None |
 | `record` | Line format, file name, attempt numbers, and stopping after a write failure of the chapter 9 local record file. The write and the wall clock are injected and default to `platform/record_file` | None |
 | `args` | Startup argument parsing (3.5) | None |
 | `hash` | SHA-256. Used by the `wintun.dll` hash check (chapter 7) and by `data.tx` and `data.rx` in the test build (chapter 9) | Windows CNG |
@@ -110,7 +109,15 @@ instance, but there is no dependency in either direction. The boundary contract 
 | `platform/resolve` | Name to IPv4 endpoint. Called once at startup (3.5) | Win32 |
 | `platform/console_ctrl` | Receives console control signals, signals the shutdown event and waits for cleanup to finish (`concurrency.md` chapter 7) | Win32 |
 | `platform/record_file` | Creates the `records` folder and the record file under the executable folder, and writes one line with one write call. UTC wall clock and PID (chapter 9 Local Record File) | Win32 |
-| `control/control_client` | Control plane HTTP/JSON calls and DNS resolution. Owned by the `[control]` thread (`concurrency.md` chapter 8 The `[control]` Thread). Operations and encoding are in [`control_plane.md`](control_plane.md) | Winsock2 |
+| `control/channel` | The `[control]` thread, the request and response queues, and the DNS resolution done once when the thread starts (`concurrency.md` chapter 8 The `[control]` Thread) | None |
+| `control/exchange` | Sends and receives one request over a new TCP connection. It blocks, so only the `[control]` and `[telemetry]` threads call it | None |
+| `control/http` | Request bytes and response checks of the HTTP subset. Pure code ([`control_plane.md`](control_plane.md) 3.3, 3.5) | None |
+| `control/json` | The minimal JSON of control plane bodies. Pure code | None |
+| `control/ops` | Request bodies and result classification of the five operations (`control_plane.md` chapter 4, 8.3). Pure code | None |
+| `control/lobby` | The state machine of the lobby and attempts. Pure code that takes events and returns a list of actions | None |
+| `control/runner` | Carries out on `[loop]` the actions that `control/lobby` returned | None |
+| `platform/tcp` | One TCP connection for the control plane and telemetry upload. Timeouts on connect, send and receive, and the abort event check (`control_plane.md` 8.2) | Winsock2 |
+| `platform/stdout` | One line of standard output. Writes the `ROOM` and `FAIL` lines of 3.5 | Win32 |
 
 **The external dependency column is for the Windows implementation.** The Linux console client differs only in the sources under `platform/`, and their dependencies are POSIX and Linux kernel APIs. The placement is in chapter 10 Target Structure, and the decision is in [ADR 0035](decisions/0035-linux-console-client.md).
 
@@ -143,12 +150,12 @@ Socket Ownership and chapter 7 Receive Classification.
 
 ### 3.2 Concurrency Model
 
-**All code that touches tunnel state runs on one thread only.** There are four threads,
-`[loop]`, `[telemetry]`, `[console]` and `[control]`, and `[loop]` is the process main thread.
-The other three exist only in the phases that need them.
+**All code that touches tunnel state runs on one thread only (`[loop]`).** The other threads
+exist only in the phases that need them. Which threads each build has and which one is the
+process main thread are held by [`concurrency.md`](concurrency.md) chapter 1 Threads.
 
 The thread set, the wait set, the order inside one loop iteration, timers, state ownership, the
-shutdown order and the `[control]` thread are held by [`concurrency.md`](concurrency.md).
+shutdown order and the `[control]` thread are held by `concurrency.md`.
 
 ### 3.3 Control Plane (Python)
 
@@ -211,8 +218,8 @@ the one in [`control_plane.md`](control_plane.md) 6.3 Items. Strongly consistent
 | The read failed | `null` |
 
 **A record is stored even if the check fails.** A failure that ended before a room was set up has no room to check. Rejecting it
-would drop failures and inflate the success rate. What is filtered is set by the CloudWatch metrics table below and the analysis in
-`roadmap.md` Phase 9.
+would drop failures and inflate the success rate. What is filtered is set by the CloudWatch metrics table below and "What is counted" in
+the `tools/tm-analysis` README.
 
 > **Why check on receipt.** Records usually arrive while the room is alive or within a day after it expires. A control plane item is
 > deleted only a day after expiry (`control_plane.md` 6.5 TTL). At analysis time the item is already gone.
@@ -281,7 +288,8 @@ The repository owner builds the dashboard. Ratios are computed with dashboard ma
 - The success count is the sample count of `SetupTime`, and the count of finished sessions is the sample count of `SessionDuration`
 - The success rate is the sample count of `SetupTime` divided by the sum of `Attempts`. Other failures are `Attempts` minus the successes and the two failures above
 - **These other failures include `OK` records whose `room_known` is not `true`.** The analysis script removes those `OK` records from the
-  denominator (`roadmap.md` Phase 9). So the dashboard's success rate and the analysis script's success rate can differ by that count
+  denominator ("What is counted" in the `tools/tm-analysis`
+  README). So the dashboard's success rate and the analysis script's success rate can differ by that count
 - The server does not check whether `setup_ms` of an `OK` is `null`. When such a player `establish` has `room_known` `true`, it has no `SetupTime` sample, so the dashboard shows it
   as another failure, while the analysis script drops it only from the setup time distribution and counts it as a success
 - Thanks to the weights, the average of `LossRate` is total lost divided by total expected. Per-session ratios are not simply averaged
@@ -1045,7 +1053,7 @@ is not accepted as a record.
 
 | Code | Stage | Decision basis |
 |------|------|-----------|
-| `STUN_DISCOVERY_FAILED` | Public endpoint discovery | No STUN response or parse failure |
+| `STUN_DISCOVERY_FAILED` | Public endpoint discovery | Responses from two different servers not obtained after using up the list. The conditions are owned by "Server selection" in 3.5 Startup Inputs |
 | `CONTROL_PLANE_EXCHANGE_FAILED` | Candidate exchange | `get_peers` polling deadline exceeded, control plane error, or `peer_id` collision. The list of conditions is owned by [`protocol.md`](protocol.md) 9.6 Failure Transitions |
 | `HOLE_PUNCH_TIMEOUT` | Hole punching | `got_ack` and `sent_ack` **both unset** at the punch deadline |
 | `PEER_HANDSHAKE_FAILED` | Handshake | **Only one of the two set** at the punch deadline |
@@ -1553,6 +1561,8 @@ file does not exist yet in those Phases, which is why the keys and field names a
 
 ### Target Structure
 
+Under `client/src/` every source is listed, including the `.hpp` files used only inside a directory. Other directories list only the main items.
+
 ```text
 Sangtachi/
 +-- client/
@@ -1568,11 +1578,11 @@ Sangtachi/
 |   |   +-- counters.cpp counter table (chapter 9)
 |   |   +-- record.cpp   local record file lines and writes (chapter 9)
 |   |   +-- platform/    source files including OS headers go only here (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, session_end, hash, random, resolve, interfaces, record_file, tun
-|   |   |   +-- posix/   What Linux and macOS can share. wait, udp_socket, tcp, wsa (empty implementation), console_ctrl, session_end, hash, random, resolve, stdout, record_file
-|   |   |   +-- linux/   clock, exe_path, interfaces, tun (ADR 0035)
+|   |   |   +-- win32/   wsa, udp_socket, tcp, wait, console_ctrl, session_end, hash, random, resolve, interfaces, stdout, record_file, tun
+|   |   |   +-- posix/   What Linux and macOS can share. wait, udp_socket, tcp, wsa (empty implementation), console_ctrl, session_end, hash, random, resolve, stdout, record_file, exe_dir, fd_handle
+|   |   |   +-- linux/   clock, exe_path, interfaces, netlink, subnet_check, tun (ADR 0035)
 |   |   +-- network/     endpoint, stun, stun_client
-|   |   +-- peer/        peer, hole_punch, session, epoch, candidates
+|   |   +-- peer/        session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (test build only)
 |   |   +-- telemetry/   telemetry (records and session values), uploader ([telemetry] thread) (chapter 9 Telemetry Upload)
@@ -1581,24 +1591,39 @@ Sangtachi/
 |   +-- CMakeLists.txt
 +-- control-server/
 |   +-- controlplane/    module responsibilities are in control_plane.md 7.1
+|   |   +-- __main__.py
 |   |   +-- server.py
 |   |   +-- ops.py
 |   |   +-- ids.py
 |   |   +-- candidates.py
 |   |   +-- clock.py
+|   |   +-- constants.py
+|   |   +-- errors.py
+|   |   +-- log.py
 |   |   +-- store.py
 |   +-- tests/
 +-- telemetry-server/
 |   +-- telemetry/       module responsibilities are in 3.4. Imports controlplane
+|   |   +-- __main__.py
 |   |   +-- server.py
 |   |   +-- ingest.py
 |   |   +-- metrics.py
 |   +-- tests/
 +-- tests/
 +-- scripts/
++-- cmake/               expected values and download of the Wintun distribution, compiler warning settings
++-- field-test/          field test procedures and field test status (required-test.md)
 +-- tools/
 |   +-- cp-deploy/       deployment and checks for the control server and the telemetry service
+|   +-- docgate/         document gate
+|   +-- nat-lifetime/    measures the UDP mapping lifetime of a NAT
+|   +-- nat-probe/       measures NAT mapping behavior and UDP hole punching
+|   +-- phase4-capture/  packet capture verdict procedure of roadmap.md Phase 4
+|   +-- platformgate/    decides whether OS headers sit outside platform/ (ADR 0010)
 |   +-- tm-analysis/     builds the experiments.md tables from the telemetry table (roadmap.md Phase 9)
+|   +-- tm-plot/         draws the graphs of experiments.md chapter 6
+|   +-- transfer/        file transfer check between virtual IPs
+|   +-- winprereq/       verdict scripts of windows-prereq.md
 +-- docs/
 |   +-- kor/                 Korean documents
 |   |   +-- architecture.md      this document
@@ -1609,14 +1634,18 @@ Sangtachi/
 |   |   +-- control_plane.md     confirmed control plane
 |   |   +-- concurrency.md       confirmed concurrency model
 |   |   +-- experiments.md       measured results and their limits
+|   |   +-- windows-prereq.md    Windows execution prerequisites
+|   |   +-- linux-prereq.md      execution prerequisites of the Linux console client
 |   |   +-- audit-history/       archive of full design audit records
 |   |   +-- decisions/           design decision records. ADRs and first_design.md
 |   |   +-- commit_history/      per-commit change records
+|   |   +-- issue_history/       records of defects and environment problems that needed investigation
 |   +-- eng/                 English documents, same structure (this tree)
+|   +-- assets/              figures used by the documents
 +-- README.md
 ```
 
-The two language trees hold the same files. When editing a document, modify both sides in the same commit.
+The two language trees hold the same files. When editing a document, modify both sides in the same commit. **The one exception is `plan.md`.** It is the handover document for the next session, so a translation would leave a stale state in two places. The document gate fixes that exception as a case.
 
 ---
 
@@ -1653,10 +1682,10 @@ The following are deliberately left out of the initial architecture. When they b
 
 - **Encryption and peer authentication**: tunnel payload is plaintext. Stretch goal.
 - **Relay fallback (TURN-like)**: no alternative path when direct connection fails. Stretch goal.
-- **Full ICE**: initially only the minimum connection establishment procedure. Phase 9 does only a comparative analysis against ICE concepts.
+- **Full ICE**: only the minimum connection establishment procedure.
 - **6 or more members and a player-to-player mesh**: a room holds at most 5 members and tunnels
   are established only between the host and each player ([`spec.md`](spec.md) FR-4). 6 or more
   is a stretch goal.
-- **macOS / mobile**: not supported. Linux supports the console client only ([ADR 0035](decisions/0035-linux-console-client.md)).
+- **macOS / mobile**: not supported. They are stretch goals ([`roadmap.md`](roadmap.md) Stretch Goals). Linux supports the console client only ([ADR 0035](decisions/0035-linux-console-client.md)).
   **The places rewritten when porting are fixed as five seams**
   ([ADR 0010](decisions/0010-platform-porting-seams.md)).

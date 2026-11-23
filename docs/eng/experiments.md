@@ -7,7 +7,7 @@ are not published.
 ## 1. Notation
 
 - Networks are written as pseudonyms. Public addresses and ports are not included. Times are written only to the date. The rationale is [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
-- Machines are written as `A`, `B`, `C`, `F`, and `G`. `A` is the repository owner's Windows machine, `G` the owner's Linux machine (`linux-prereq.md`), `C` the demo player's Windows machine, and `F` the Windows machine of the owner's friend
+- Machines are written as `A`, `B`, `C`, `F`, and `G`. `A` is the repository owner's Windows machine, `B` the Windows machine of the friend who measured with the owner in chapter 2 and 3.1 (whether it is the same machine as `F` was not recorded), `G` the owner's Linux machine (`linux-prereq.md`), `C` the demo player's Windows machine, and `F` the Windows machine of the owner's friend
 - In chapters 3 and 4, tunnel RTT is the `session.rtt` line of the client log ([`architecture.md`](architecture.md) chapter 9 Log Output). It is the `PING`/`PONG` round trip
 - In chapters 3 and 4, loss is the `session.loss` line of the log. It is the value counted by the receiving side
 - The values of 6.2~6.4 were produced by the analysis script from telemetry records, and figure 1 is a CloudWatch metric. 6.5 is from the client logs of the two machines. What is counted from which record belongs to [`tools/tm-analysis`](../../tools/tm-analysis/README.md)
@@ -209,7 +209,7 @@ The record of running the pass conditions of `spec.md` T-7 in one flow with two 
 ## 5. Limits of the Telemetry Tables
 
 These are the limits for reading the tables produced by the analysis script of `roadmap.md` Phase 9 ([`tools/tm-analysis`](../../tools/tm-analysis/README.md)). What is
-counted and how belongs to the `roadmap.md` Phase 9 tasks. The results are in chapter 6.
+counted and how belongs to that README. The results are in chapter 6.
 
 **The `room_known` filter.**
 

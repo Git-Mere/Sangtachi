@@ -12,8 +12,7 @@ if(MSVC)
         /utf-8           # 원본과 실행 문자 집합을 UTF-8 로 고정한다
     )
 else()
-    # spec.md C-1 / C-2 가 대상을 Windows x64 / MSVC 로 못박았다. 다른 컴파일러는
-    # 지원 대상이 아니며, 그 위에서 무엇이 통과하는지를 검증 근거로 쓰지 않는다.
+    # Linux 콘솔 클라이언트의 g++ (spec.md C-1, linux-prereq.md 1절: g++ 13 이상, 경고는 오류).
     target_compile_options(sangtachi_warnings INTERFACE
         -Wall -Wextra -Wpedantic -Werror
     )

@@ -8,7 +8,7 @@ The Windows counterpart of this document is [`windows-prereq.md`](windows-prereq
 ## 1. Target and build
 
 **Status: partially measured.** Built without warnings and ran the tests on Ubuntu 24.04 (WSL, g++ 13) and Ubuntu 26.04 (g++ 15). It was a Debug build.
-The Release configuration above was built on Ubuntu 26.04 (g++ 15) without a default server. It was not run on Ubuntu 24.04.
+The Release configuration below was built on Ubuntu 26.04 (g++ 15) without a default server. It was not run on Ubuntu 24.04.
 
 | Item | Value |
 |------|-----|

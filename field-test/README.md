@@ -41,9 +41,9 @@ field-test/
 
 **키트.** 친구에게 폴더 하나를 준다. 실행 파일은 C 런타임을 정적으로 넣은 Release 빌드라 Visual Studio 없이 돈다.
 
-키트는 태그 `field-kit-p7b`(Phase 7 끝과 [ADR 0030](../docs/kor/decisions/0030-기동-입력과-콘솔-화면.md))로 만든다. 남은 Phase 4~5 실측(시험 1, 5)과
-Phase 7 실측(시험 6)을 이 키트 하나로 같은 날 돈다. 친구 PC 의 준비가 한 번으로 끝난다. 시험 1, 2, 5 는 `--no-adapter` 를 붙여 Phase 5 까지와
-같은 경로로 돈다(`docs/kor/architecture.md` 3.5 기동 입력). 키트를 바꿀 때는 [`required-test.md`](required-test.md) 의 "키트" 를 먼저 고친다.
+지금 쓰는 키트는 [`required-test.md`](required-test.md) 의 "키트" 가 정한다. 아래 절차는 콘솔 키트를 만드는 예로 태그
+`field-kit-p7b`(Phase 7 끝과 [ADR 0030](../docs/kor/decisions/0030-기동-입력과-콘솔-화면.md))를 쓴다. 시험 1, 2, 5 는 `--no-adapter` 를 붙여 Phase 5 까지와
+같은 경로로 돈다(`docs/kor/architecture.md` 3.5 기동 입력). 키트를 바꿀 때는 `required-test.md` 의 "키트" 를 먼저 고친다.
 
 배포 빌드와 같은 설정이다. 제어 서버 주소를 실행 파일에 넣고 관리자 권한 매니페스트를 넣는다. `<서버>` 는 `deploy/aws.local.md` 의
 Elastic IP 다(레포에 적지 않는다). PowerShell 은 따옴표 없는 `-D...=<IPv4>` 를 첫 `.` 에서 자르므로 그 인자를 따옴표로 감싼다.
@@ -191,7 +191,7 @@ Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True | ForEach-Obj
 - 포트가 `Any` 이거나 25565 를 포함한다. 범위(`25000-26000`)와 쉼표 목록도 본다
 - 프로그램이 `Any` 이거나 `powershell.exe` 다. 6-3 에서 파일을 받는 것이 Windows PowerShell 이다
 
-`java` 를 가리키는 줄은 이 시험과 무관하고 Phase 8 에서 본다.
+`java` 를 가리키는 줄은 이 시험과 무관하다. Java 경로 예외는 `docs/kor/windows-prereq.md` 12절이 다룬다.
 
 **6-1. 기동과 캡처.** A 는 캡처를 먼저 켜고 클라이언트를 띄운다. 6-4 의 판정이 이 캡처를 쓴다.
 

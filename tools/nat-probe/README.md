@@ -147,7 +147,7 @@ PING 이 왔다는 것만** 뜻한다. 상대 NAT 이 다른 매핑을 쓴 것�
 |------|------|
 | 결과 JSON | `results/`. **`.gitignore` 로 막혀 있다.** 실측이 끝나면 [`field-test/`](../../field-test/README.md) 의 그 날짜 폴더로 옮긴다 |
 | 보고서 | `field-test/` 의 그 날짜 폴더. 양식은 `field-test/TEMPLATE.md` |
-| 판정 근거 | `docs/kor/audit-history/design-audit.md` 후속 5번, [ADR 0001](../../docs/kor/decisions/0001-직접-연결-대비책-미도입.md) |
+| 판정 근거 | [ADR 0001](../../docs/kor/decisions/0001-직접-연결-대비책-미도입.md) |
 
 **공인 IP 가 들어가는 원본은 커밋하지 않는다.** `results/` 와 `field-test/` 의 날짜 폴더 모두 `.gitignore` 에 있다. 이유와 보관 방법은 `field-test/README.md` 가 갖는다.
 

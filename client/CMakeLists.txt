@@ -1,4 +1,4 @@
-# 클라이언트 (spec.md C-1, C-2: Windows 10/11 x64, C++20, MSVC)
+# 클라이언트 (spec.md C-1, C-2: Windows 10/11 x64 와 Ubuntu 24.04 이상 x64 콘솔, C++20. MSVC 와 g++)
 #
 # sangtachi_core  main() 을 뺀 전부. 시험 실행 파일이 이것을 링크한다.
 # sangtachi_client  main() 과 프로세스 본체(src/client_process.cpp)를 얹은 실행 파일.

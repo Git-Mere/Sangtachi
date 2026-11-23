@@ -222,7 +222,7 @@ is Phase 4.
   - The decision to switch the store from SQLite and its cost are in
     [ADR 0004](decisions/0004-state-store-dynamodb.md)
 - Local tests run on DynamoDB local. It runs as a Docker container ([ADR 0014](decisions/0014-control-server-tests-pytest-and-docker.md)). **The consistency path is not judged there, though.** Local reads usually look up to date, so a missing `ConsistentRead` does not show (ADR 0004)
-- **The case tables of `control_plane.md` (2.1, 3.3, 4.4, 4.5, 4.6, 5.1, 6.4, 7.4) live in
+- **The case tables of `control_plane.md` (their places are listed in its chapter 9 Verification) live in
   `control-server/tests/` and the document points at those files.** A table kept in two places gets
   fixed in one and drifts. Attach a mutation test to each table (`control-server/tests/mutants/`)
   - Rows that need the store to run (`needs="store"`) are unblocked when the store layer is built,
@@ -371,11 +371,11 @@ table. The tables themselves are in the `control-server/tests/` files those sect
   (`control_plane.md` 7.6 Configuration and Deployment), it is caught here
 - While one room is created and players are added up to four and removed again, watch the table
   metrics in CloudWatch at 1-minute granularity. For `ConsumedReadCapacityUnits` and
-  `ConsumedWriteCapacityUnits`, the 1-minute `Sum` divided by 60 is 25 or less, and the `Sum` of
+  `ConsumedWriteCapacityUnits`, the 1-minute `Sum` divided by 60 is at most the table's provisioned capacity (`control_plane.md` 7.6 Configuration and Deployment), and the `Sum` of
   `ThrottledRequests` over the same period is 0. This is because the capacity calculation of 7.6 is
   an unmeasured worst case
   - The raw metric values are sums over the period, so they are not compared directly with the
-    per-second capacity of 25
+    per-second capacity
 
 **Clock and logs.**
 
@@ -1377,22 +1377,10 @@ Minecraft Client -> 10.100.0.1:25565 -> Project Virtual Network -> Minecraft Ser
   > **Why 15 days.** CloudWatch keeps 1-minute resolution data for 15 days and 5-minute resolution data for 63 days. Whenever the dashboard is created, only the coarser resolution remains after that
 - **Put the analysis script in `tools/`.** It reads the records of a UTC time range from DynamoDB and builds the tables that go into
   [`experiments.md`](experiments.md). It uses only `boto3` and the standard library
-  - Attempt count and success count, Wilson interval, count per failure code, comparison by observed mapping behavior, comparison paired with the mapping behavior of the host in the same room, by same LAN or not, by build kind, host-side establishment time
-  - Attempts and successes count only player `establish` records. Each result is counted as below
-
-    | Result | How it is counted |
-    |------|-------------|
-    | `OK`, `room_known` is `true` | Success. In the denominator and numerator |
-    | `OK`, `room_known` is not `true` | Removed from the denominator and numerator. Only the count is written, as "excluded OK" |
-    | `ABORTED` | Removed from the denominator. Only the count is written |
-    | Anything else (including `PEER_FAILED`) | Failure regardless of `room_known`. Failures before establishment have no room to match |
-
-  - The interval for the success rate is the 95% Wilson score interval
-  - Session values (host-side establishment time, RTT, jitter, loss, session duration) use only records whose `room_known` is `true`. The limits of this filter are
-    written in `experiments.md`
-  - Also report the number of losses visible as gaps in the send sequence number. Losing the last record of an attempt or a whole attempt is not counted in this number
-  - The tool is [`tools/tm-analysis`](../../tools/tm-analysis/README.md). The table of what is counted from which records and the format of the measurement batch file
+  - Attempt count and success count, 95% Wilson interval, count per failure code, comparison by observed mapping behavior, comparison paired with the mapping behavior of the host in the same room, by same LAN or not, by build kind, host-side establishment time, session values (RTT, jitter, loss, session duration), the number of losses visible as gaps in the send sequence number
+  - The tool is [`tools/tm-analysis`](../../tools/tm-analysis/README.md). What is counted from which records (denominator and numerator per result, the `room_known` filter, the loss count) and the format of the measurement batch file
     belong to that README
+  - The limits of the `room_known` filter are written in `experiments.md`
 - State the collected items in the README and the package guide. Also state that addresses, candidates, and display names are not uploaded
 - For each measurement batch, write the UTC time range and the environment in a local file blocked by `.gitignore` (`tools/tm-analysis/local/`). Telemetry does not carry the environment, so the analysis script splits by this. `experiments.md` carries only the date and the environment. Publishing times only down to the date is required follow-up 2 of [ADR 0001](decisions/0001-no-direct-connection-fallback.md)
 - Test across multiple network environments
@@ -1492,10 +1480,13 @@ Start only if Phases 1-9 finish with time to spare. Do not proceed at the expens
 |------|------|
 | Relay fallback | For peers that cannot connect directly. Rescues environments classified as unsupported in Phase 4 |
 | Encryption and peer authentication | No in-house cryptographic algorithms |
+| Control plane TLS and caller authentication | The limits v1 accepts are in [`control_plane.md`](control_plane.md) 1.2 Trust Assumptions |
 | Windows installer | |
 | Automatic reconnection | |
 | Virtual network with 6 or more parties | One room caps at 5 ([ADR 0006](decisions/0006-star-topology-no-relay.md)). Above that, the router structure has to be extended |
 | UDP-based game validation | Further proof that the tunnel is game-agnostic |
+| macOS client | Outside the current target OS list. Amend [`spec.md`](spec.md) C-1 when starting. `platform/posix` is the place macOS would share ([ADR 0035](decisions/0035-linux-console-client.md)) |
+| Mobile client | Outside the current target OS list. Amend [`spec.md`](spec.md) C-1 when starting |
 
 ---
 

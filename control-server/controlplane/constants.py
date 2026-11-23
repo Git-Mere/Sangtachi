@@ -1,6 +1,6 @@
 """상수. 출처는 control_plane.md 2.6 상수다. 값을 바꾸려면 그 절을 먼저 고친다.
 
-MAX_CANDIDATES, PUNCH_DELAY_MS, MAX_NAME_LEN 은 protocol.md 가 소유하는 값의 복사다 (2.6).
+MAX_PEERS, MAX_CANDIDATES, PUNCH_DELAY_MS, MAX_NAME_LEN 은 protocol.md 가 소유하는 값의 복사다 (2.6).
 """
 
 CONTROL_PORT = 8000

@@ -186,7 +186,7 @@ CSPRNG 가 값을 내지 못하면 요청을 보내지 않고 그 시도를 `CON
 
 ```python
 CONTROL_PORT              = 8000        # TCP. windows-prereq.md 6절이 이 값을 참조한다
-MAX_PEERS                 = 5           # protocol.md 1장. 한 방에 5 피어
+MAX_PEERS                 = 5           # protocol.md 3장과 같은 값. 한 방에 5 피어
 ROOM_LEASE_S              = 120         # host_report 1회가 미는 만료 시각 (4.6, 5.1)
 HOST_REPORT_OPEN_S        = 5           # 빈 자리가 있을 때 호스트의 host_report 간격 (4.6)
 HOST_REPORT_FULL_S        = 30          # 정원이 찼을 때의 간격 (4.6)
@@ -215,10 +215,10 @@ DDB_READ_TIMEOUT_S        = 1           # 같은 호출의 read 시간 제한 (7
 DDB_MAX_ATTEMPTS          = 1           # SDK 가 보내는 횟수. 재시도는 클라이언트가 한다 (7.6, 8.3)
 ```
 
-`MAX_CANDIDATES`, `PUNCH_DELAY_MS`, `MAX_NAME_LEN` 은 [`protocol.md`](protocol.md) 가 소유하는 값의
+`MAX_PEERS`, `MAX_CANDIDATES`, `PUNCH_DELAY_MS`, `MAX_NAME_LEN` 은 [`protocol.md`](protocol.md) 가 소유하는 값의
 복사다. **그 문서가 바뀌면 여기를 따라 고친다.**
 
-> **왜.** 세 값만 예외로 복사하는 이유는 서버 코드가 그 값을 가져야 하고, 서버 코드는
+> **왜.** 네 값만 예외로 복사하는 이유는 서버 코드가 그 값을 가져야 하고, 서버 코드는
 > C++ 헤더를 읽지 않기 때문이다.
 
 ### 2.7 name
@@ -619,7 +619,7 @@ Connection: close\r\n
 - 중복은 위생 거부가 아니므로 `rejected` 에 세지 않는다. 그래서 `accepted + rejected` 가 보낸
   개수보다 작을 수 있다
 
-**`inet_aton` 류의 관대한 파서를 쓰지 않는다.** 이 레포의 Windows Python 3.11 버전에서
+**`inet_aton` 류의 관대한 파서를 쓰지 않는다.** Windows 의 Python 3.11 과 3.14 에서
 `socket.inet_aton` 은 `10.0.5` 를 `10.0.0.5` 로, `010.0.0.5` 를 `8.0.0.5`(8진수) 로 받았다.
 
 **거부 정책. 결과는 둘뿐이고 케이스 표 `CANDIDATE_CASES` 의 `result` 필드가 행마다 어느 쪽인지 적는다.**
@@ -781,7 +781,8 @@ Connection: close\r\n
 > 알므로 이 규칙이 줄이지 못한다.
 
 **두 간격은 `ROOM_LEASE_S` 보다 작아야 한다.** 그래야 정상 호스트의 방이 임대 만료로 죽지
-않는다. 지금 값은 5·30 대 120 이고 **연속 실패를 네 번까지 견딘다.** 값을 바꿀 때 이 여유를
+않는다. 지금 값은 5·30 대 120 이다. 정원이 찬 방은 마지막 성공 뒤 연속 실패를 세 번까지 견딘다.
+네 번째 호출은 만료 시각에 닿고, 그 경계는 만료 쪽이다(5.1 방의 만료 판정). 값을 바꿀 때 이 여유를
 같이 본다.
 
 **요청.**
@@ -1363,7 +1364,7 @@ Connection: close\r\n
 
 **`ipaddress` 모듈로 후보를 판정하지 않는다.**
 
-- 이 레포의 Python 3.11 버전에서 확인한 값으로 `ip_address('127.0.0.1').is_private` 와
+- Python 3.11 과 3.14 에서 확인한 값으로 `ip_address('127.0.0.1').is_private` 와
   `ip_address('192.0.2.1').is_private` 가 참이고 `ip_address('224.0.0.1').is_global` 도
   참이다. 버전에 따라 다를 수 있으므로 어느 버전에서도 그 술어에 판정을 맡기지 않는다
 - 4.4 위생의 판정은 옥텟 4개를 직접 파싱해 앞 옥텟과 범위로 가른다. 파싱은
@@ -1484,15 +1485,15 @@ on_connection(reader, writer):
 |--------|------|------|
 | `ready_at_mono_ns` | `time.monotonic_ns()`. **전제는 배포 환경(Linux)에서 이것이 시스템 전체 시계(`CLOCK_MONOTONIC`)여서 프로세스 재시작에 기준이 바뀌지 않는다는 것이다.** 아래 참조 | 같은 부팅 안의 경과 계산 |
 | `ready_boot_id` | `/proc/sys/kernel/random/boot_id` 내용. **전제는 이 값이 부팅마다 바뀐다는 것이다** | 위 값이 같은 기준인지 판정 |
-| `ready_at_wall_ms` | `time.time()` 밀리초 | 부팅이 바뀌었을 때의 대체, 그리고 5.1 방의 준비 완료 존재 판정 |
+| `ready_at_wall_ms` | `time.time()` 밀리초 | 부팅이 바뀌었을 때의 대체 |
 
 ```text
-elapsed_since_ready_ms(room):
-    if room.ready_boot_id == current_boot_id:
-        d = (monotonic_ns() - room.ready_at_mono_ns) // 1_000_000
+elapsed_since_ready_ms(pair):
+    if pair.ready_boot_id == current_boot_id:
+        d = (monotonic_ns() - pair.ready_at_mono_ns) // 1_000_000
         source = "mono"
     else:
-        d = wall_ms() - room.ready_at_wall_ms                # 인스턴스가 재부팅됐다
+        d = wall_ms() - pair.ready_at_wall_ms                # 인스턴스가 재부팅됐다
         source = "wall"
         counters.elapsed_wall_fallback += 1
     return max(0, d)
@@ -1600,9 +1601,9 @@ elapsed_since_ready_ms(room):
 | 보안 그룹 인바운드 | TCP 8000 전체 허용 | 콘솔 |
 | 공인 주소 | Elastic IP. 클라이언트에는 IPv4 리터럴을 준다. DNS 이름은 쓰지 않는다 | 콘솔. [`windows-prereq.md`](windows-prereq.md) 10절 |
 | 테이블 | 6.2 의 키 둘(`pk`, `sk`), TTL 속성 `ttl`, 인덱스 없음 | 콘솔 |
-| 용량 | provisioned, RCU 25, WCU 25. 텔레메트리 테이블과 나누면 RCU 20, WCU 20 이다 | 콘솔. 아래 "용량" |
+| 용량 | provisioned, RCU 20, WCU 20. Always Free 한도를 텔레메트리 테이블과 나눈 값이다 | 인스턴스에서 `aws dynamodb describe-table`. 아래 "용량" |
 
-**IAM 역할에 필요한 동작은 여섯이다.** 리소스는 그 테이블 하나로 좁힌다. 텔레메트리 서비스를 배포할 때 같은 역할에 그 서비스의 권한을 더한다. 그 목록은 `architecture.md` 3.4 텔레메트리 서비스가 갖는다.
+**서버가 쓰는 IAM 동작은 여섯이다.** 리소스는 그 테이블이다. 텔레메트리 서비스를 배포할 때 같은 역할에 그 서비스의 권한을 더한다. 그 목록은 `architecture.md` 3.4 텔레메트리 서비스가 갖는다.
 
 | 동작 | 쓰는 자리 |
 |------|-----------|
@@ -1615,19 +1616,26 @@ elapsed_since_ready_ms(room):
 > 단일 동작 권한으로 허용되지만 ConditionCheck 는 이 권한이 따로 필요하다(AWS DynamoDB 개발자
 > 가이드의 트랜잭션 IAM 절). 빠지면 참가와 쌍 확인이 권한 오류로 끝난다.
 
-**운영 확인용으로 `cloudwatch:GetMetricStatistics` 하나를 더 둔다.** 서버는 쓰지 않는다. 인스턴스에서
-테이블의 용량 지표를 읽어 아래 "용량" 을 확인하는 데 쓴다. 리소스는 `*` 다. 서버 프로세스도 같은
-역할을 쓰므로 계정의 지표를 읽을 수 있게 되는 것이 대가다. 지표를 바꾸거나 데이터에 닿는 권한은
-아니다. 저장소 소유자가 정했다.
+**운영 확인용 권한을 더 둔다.** 서버는 쓰지 않는다. 저장소 소유자가 정했다.
+
+| 권한 | 리소스 | 쓰는 자리 |
+|------|--------|-----------|
+| `cloudwatch:GetMetricStatistics` | `*` | 인스턴스에서 테이블의 용량 지표를 읽어 아래 "용량" 을 확인한다 |
+| `dynamodb:DescribeTable` | 이 테이블 | 인스턴스에서 위 표의 테이블 설정과 용량을 확인한다 |
+
+정책의 리소스에는 이 테이블의 `index/*` 도 있다. 테이블에 인덱스가 없으므로(위 표) 그 리소스로
+더 허용되는 것은 없다.
+
+서버 프로세스도 같은 역할을 쓰므로 계정의 지표와 테이블 설정을 읽을 수 있게 되는 것이 대가다.
+지표나 설정을 바꾸거나 항목 데이터에 닿는 권한은 아니다.
 
 **용량.** RCU 25, WCU 25 는 DynamoDB 의 Always Free 한도다. 이 한도는 리전과 결제 계정 단위이고
 테이블 클래스가 Standard 일 때 적용된다. 계정의 Free Tier 화면에서 "Always Free monthly
 allowance" 로 표시되는 것을 확인했다.
 
-**그 한도를 텔레메트리 테이블과 나눈다.** 나눈 뒤 이 테이블이 RCU 20, WCU 20 이고 텔레메트리 테이블이 RCU 5, WCU 5 다
+**그 한도를 텔레메트리 테이블과 나눈다.** 이 테이블이 RCU 20, WCU 20 이고 텔레메트리 테이블이 RCU 5, WCU 5 다
 ([`architecture.md`](architecture.md) 3.4 텔레메트리 서비스). 텔레메트리 서비스는 이 테이블의 `ROOM` 항목을 받은 레코드마다
 한 번 읽는다. 강한 일관성이 아닌 4KB 이하 읽기라 한 번에 0.5 RCU 이고, 그 서비스의 전체 상한이 초당 5건이라 많아야 2.5 RCU/s 다.
-콘솔에서 25 를 20 으로 줄이는 때는 [`roadmap.md`](roadmap.md) Phase 9 가 갖는다.
 
 부하는 항목 하나가 1KB 이하라는 가정의 최악값이다. 쓰기는 항목마다 1 WCU 이고, 강한 일관성
 `Query` 는 읽은 바이트 합을 4KB 단위로 올림한 만큼 RCU 를 쓴다(AWS DynamoDB 개발자 가이드의

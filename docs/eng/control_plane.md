@@ -216,7 +216,7 @@ stretch goal.
 
 ```python
 CONTROL_PORT              = 8000        # TCP. windows-prereq.md section 6 references this value
-MAX_PEERS                 = 5           # protocol.md section 1. Five peers per room
+MAX_PEERS                 = 5           # Same value as protocol.md section 3. Five peers per room
 ROOM_LEASE_S              = 120         # How far one host_report pushes the expiry time (4.6, 5.1)
 HOST_REPORT_OPEN_S        = 5           # host_report interval while a slot is open (4.6)
 HOST_REPORT_FULL_S        = 30          # Interval once the room is full (4.6)
@@ -245,10 +245,10 @@ DDB_READ_TIMEOUT_S        = 1           # Read timeout of the same calls (7.6)
 DDB_MAX_ATTEMPTS          = 1           # Number of times the SDK sends. The client does the retries (7.6, 8.3)
 ```
 
-`MAX_CANDIDATES`, `PUNCH_DELAY_MS`, and `MAX_NAME_LEN` are copies of values owned by
+`MAX_PEERS`, `MAX_CANDIDATES`, `PUNCH_DELAY_MS`, and `MAX_NAME_LEN` are copies of values owned by
 [`protocol.md`](protocol.md). **When that document changes, fix them here to follow.**
 
-> **Why.** These three are the only copies allowed because the server code has to have the values,
+> **Why.** These four are the only copies allowed because the server code has to have the values,
 > and the server code does not read C++ headers.
 
 ### 2.7 name
@@ -710,8 +710,8 @@ Three of the case table's results have to be read as rules.
 - A duplicate is not a hygiene rejection, so it is not counted in `rejected`. Therefore
   `accepted + rejected` can be smaller than the number sent
 
-**Do not use a lenient parser of the `inet_aton` kind.** On this repo's Windows Python 3.11
-version, `socket.inet_aton` accepted `10.0.5` as `10.0.0.5` and `010.0.0.5` as `8.0.0.5` (octal).
+**Do not use a lenient parser of the `inet_aton` kind.** On Windows Python 3.11 and 3.14,
+`socket.inet_aton` accepted `10.0.5` as `10.0.0.5` and `010.0.0.5` as `8.0.0.5` (octal).
 
 **Rejection policy. There are only two results, and the `result` field of the case table
 `CANDIDATE_CASES` states which one each row takes.**
@@ -888,8 +888,9 @@ call.
 > this rule does not shrink that case.
 
 **Both intervals have to be smaller than `ROOM_LEASE_S`.** Otherwise a healthy host's room dies of
-lease expiry. The current values are 5 and 30 against 120, which **tolerates four consecutive
-failures.** Keep that margin in view when changing the values.
+lease expiry. The current values are 5 and 30 against 120. A full room tolerates up to three
+consecutive failures after the last success. The fourth call reaches the expiry time, and that
+boundary counts as expired (the expiry decision of 5.1 Room). Keep that margin in view when changing the values.
 
 **Request.**
 
@@ -1538,7 +1539,7 @@ The modules are under the `control-server/controlplane/` package.
 
 **Candidates are not judged with the `ipaddress` module.**
 
-- On this repo's Python 3.11 version, the observed values are that
+- On Python 3.11 and 3.14, the observed values are that
   `ip_address('127.0.0.1').is_private`
   and `ip_address('192.0.2.1').is_private` are true, and `ip_address('224.0.0.1').is_global` is
   also true. This can differ by version, so no version is allowed to delegate the decision to those
@@ -1673,15 +1674,15 @@ section 14 contract 4). So three values are stored together.
 |--------|------|------|
 | `ready_at_mono_ns` | `time.monotonic_ns()`. **The premise is that in the deployment environment (Linux) this is the system-wide clock (`CLOCK_MONOTONIC`), so its base does not change across process restarts.** See below | Elapsed computation within the same boot |
 | `ready_boot_id` | Content of `/proc/sys/kernel/random/boot_id`. **The premise is that this value changes on every boot** | Deciding whether the value above has the same base |
-| `ready_at_wall_ms` | `time.time()` in milliseconds | Fallback when the boot changed, and the ready-existence decision of 5.1 Room |
+| `ready_at_wall_ms` | `time.time()` in milliseconds | Fallback when the boot changed |
 
 ```text
-elapsed_since_ready_ms(room):
-    if room.ready_boot_id == current_boot_id:
-        d = (monotonic_ns() - room.ready_at_mono_ns) // 1_000_000
+elapsed_since_ready_ms(pair):
+    if pair.ready_boot_id == current_boot_id:
+        d = (monotonic_ns() - pair.ready_at_mono_ns) // 1_000_000
         source = "mono"
     else:
-        d = wall_ms() - room.ready_at_wall_ms                # the instance rebooted
+        d = wall_ms() - pair.ready_at_wall_ms                # the instance rebooted
         source = "wall"
         counters.elapsed_wall_fallback += 1
     return max(0, d)
@@ -1805,9 +1806,9 @@ public repo. They are kept in `deploy/aws.local.md` inside the repo, and `.gitig
 | Security group inbound | TCP 8000 allowed from anywhere | Console |
 | Public address | Elastic IP. The client is given an IPv4 literal. No DNS name is used | Console. [`windows-prereq.md`](windows-prereq.md) section 10 |
 | Table | The two keys of 6.2 (`pk`, `sk`), TTL attribute `ttl`, no index | Console |
-| Capacity | provisioned, RCU 25, WCU 25. When split with the telemetry table, it becomes RCU 20, WCU 20 | Console. "Capacity" below |
+| Capacity | provisioned, RCU 20, WCU 20. This is the Always Free limit split with the telemetry table | `aws dynamodb describe-table` on the instance. "Capacity" below |
 
-**The IAM role needs six actions.** The resource is narrowed to that one table. When the telemetry service is deployed, its permissions are added to the same role. That list is in `architecture.md` 3.4 Telemetry Service.
+**The server uses six IAM actions.** The resource is that table. When the telemetry service is deployed, its permissions are added to the same role. That list is in `architecture.md` 3.4 Telemetry Service.
 
 | Action | Where it is used |
 |------|-----------|
@@ -1821,20 +1822,28 @@ public repo. They are kept in `deploy/aws.local.md` inside the repo, and `.gitig
 > permission separately (the transactions IAM section of the AWS DynamoDB Developer Guide). Without
 > it, joins and pair confirmations end in a permission error.
 
-**One more action, `cloudwatch:GetMetricStatistics`, is added for operational checks.** The server
-does not use it. It is used on the instance to read the table's capacity metrics and check
-"Capacity" below. The resource is `*`. The server process uses the same role, so the price is that it
-can read the account's metrics. It is not a permission that changes metrics or touches data. The
+**More permissions are added for operational checks.** The server does not use them. The
 repository owner decided this.
+
+| Permission | Resource | Where it is used |
+|------|--------|-----------|
+| `cloudwatch:GetMetricStatistics` | `*` | On the instance, read the table's capacity metrics and check "Capacity" below |
+| `dynamodb:DescribeTable` | This table | On the instance, check the table settings and capacity in the table above |
+
+The policy's resources also include this table's `index/*`. The table has no index (the table above),
+so that resource allows nothing more.
+
+The server process uses the same role, so the price is that it can read the account's metrics and
+the table settings. It is not a permission that changes metrics or settings or touches item data.
 
 **Capacity.** RCU 25 and WCU 25 are the DynamoDB Always Free limit. This limit is per region and per
 payer account, and applies when the table class is Standard. It was confirmed that the account's
 Free Tier page shows it as "Always Free monthly allowance".
 
-**That limit is shared with the telemetry table.** After the split, this table is RCU 20, WCU 20 and the telemetry table is RCU 5, WCU 5
+**That limit is shared with the telemetry table.** This table is RCU 20, WCU 20 and the telemetry table is RCU 5, WCU 5
 ([`architecture.md`](architecture.md) 3.4 Telemetry Service). The telemetry service reads this table's `ROOM` item once per
 received record. It is a read of 4KB or less that is not strongly consistent, so it costs 0.5 RCU each time, and the service's
-global cap is 5 per second, so it is at most 2.5 RCU/s. When the console change from 25 to 20 happens is owned by [`roadmap.md`](roadmap.md) Phase 9.
+global cap is 5 per second, so it is at most 2.5 RCU/s.
 
 The load is the worst case under the assumption that each item is 1KB or less. A write uses 1 WCU
 per item, and a strongly consistent `Query` uses RCU equal to the total bytes read rounded up in

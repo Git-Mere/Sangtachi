@@ -1,7 +1,7 @@
 # Architecture
 
 **프로젝트:** Direct-First P2P Virtual Network for Multiplayer Games
-**대상 플랫폼:** Windows 10 / 11 x64 (클라이언트), Linux/AWS EC2 (제어 서버)
+**대상 플랫폼:** Windows 10 / 11 x64 와 Ubuntu 24.04 이상 x64 콘솔 (클라이언트, [`spec.md`](spec.md) C-1), Linux/AWS EC2 (제어 서버)
 
 > English version: [`../eng/architecture.md`](../eng/architecture.md)
 
@@ -73,9 +73,7 @@
 |------|------|-----------|
 | `network/udp_socket` | Winsock2 초기화/해제, UDP 소켓 생성, 논블로킹 송수신, 이벤트 핸들 노출 ([`concurrency.md`](concurrency.md)) | Winsock2 |
 | `network/endpoint` | `IP:Port` 값 타입, 파싱, 비교, 직렬화 | 없음 |
-| `peer/peer` | 피어 식별자, 가상 IP, 후보 엔드포인트 목록 | 없음 |
-| `peer/hole_punch` | 양방향 동시 송신, 재시도, 성공 판정, 실패 사유 분류 | 없음 |
-| `peer/session` | 핸드셰이크, keepalive, 연결 상태 머신, RTT 측정 | 없음 |
+| `peer/session` | 상대 하나와의 시도. 상대의 식별자, 가상 IP, 후보 엔드포인트를 받아 홀펀칭(양방향 동시 송신, 재시도), 핸드셰이크, keepalive, 연결 상태 머신, 성공 판정과 실패 사유 분류, RTT 측정을 한다 | 없음 |
 | `peer/candidates` | 로컬 후보 판정, 기본 경로, 등록 목록, 자기 서브넷 집합 (`protocol.md` 10.1). 인터페이스 열거와 경로 조회는 주입받고 기본은 `platform/interfaces` 다 | 없음 |
 | `peer/epoch` | `session_epoch` 생성, 시도 nonce, 폐기 목록 (`protocol.md` 4.3, 5.1). 난수원은 주입받고 기본은 `platform/random` 이다. `peer/session` 이 쓴다 | 없음 |
 | `tunnel/packet` | 터널 헤더 직렬화/역직렬화, 손상 패킷 검증 | 없음 |
@@ -83,11 +81,12 @@
 | `tunnel/tunnel` | 패킷 타입별 디스패치, 캡슐화/역캡슐화, 시퀀스 관리 | 없음 |
 | `tunnel/router` | 가상 IP -> 피어 세션 매핑, 목적지 결정 | 없음 |
 | `tunnel/roster_publisher` | 호스트의 `ROSTER` 명부, `generation`, 세 송신 시점 ([`protocol.md`](protocol.md) 5.7, 11장) | 없음 |
-| `tunnel/data_sender` | 콘솔 `send` 와 합성 내부 패킷, 바퀴마다 나눠 보내기 ([`roadmap.md`](roadmap.md) Phase 4 콘솔 명령) | 없음 |
+| `tunnel/data_sender` | 콘솔 `send` 와 합성 내부 패킷, 바퀴마다 나눠 보내기 ([`roadmap.md`](roadmap.md) Phase 4 시험 장치) | 없음 |
 | `testbuild/instrument` | 시험 빌드 장치. `data.tx`, `data.rx`, 에코 응답기, 어댑터의 ICMP 응답기(`roadmap.md` Phase 6 검증). 실행 파일은 시험 빌드에서만 컴파일한다 ([ADR 0023](decisions/0023-3차-h-i-착수-전-결정.md)) | 없음 |
 | `adapter` | 어댑터의 이름, GUID, 대역 상수와 루프가 보는 면(읽기 이벤트, read, inject, 세션 재시작). 헤더 하나다 | 없음 |
 | `platform/tun` | 가상 어댑터 생성/개방과 패킷 read/inject (Wintun), 가상 IP 주소 및 라우트 설정 (IP Helper), 관리자 권한 확인, 서브넷 충돌과 방화벽 규칙 스크립트 실행. 7장 어댑터 수명 | **Wintun (승인 완료)**, IP Helper |
-| `telemetry/telemetry` | 지표 수집, 로컬 버퍼링, 텔레메트리 서비스 전송 | 없음 |
+| `telemetry/telemetry` | 지표 수집과 텔레메트리 레코드(6.3)의 값과 본문 | 없음 |
+| `telemetry/uploader` | `[telemetry]` 스레드, 텔레메트리 큐, 텔레메트리 서비스 전송 (`concurrency.md` 6장 텔레메트리 격리) | 없음 |
 | `ui/main_window` | 최소 GUI의 창과 위젯. 다섯 동작은 [`spec.md`](spec.md) FR-15 가 갖는다 | Qt |
 | `ui/gui_ui` | GUI 빌드의 `ClientUi`. 작업 스레드에서 화면 큐에 넣고, 기동 중의 `ERROR` 줄을 모으고, 정리 완료 이벤트를 신호한다. Qt 를 쓰지 않는다 | 없음 |
 | `platform/session_end` | 창 메시지가 로그오프나 시스템 종료(`WM_ENDSESSION`)인지 가린다 (`concurrency.md` 7장 GUI 빌드의 종료) | Win32 |
@@ -96,7 +95,7 @@
 | `timer` | 주기 타이머 집합과 다음 대기 타임아웃 계산 (`concurrency.md` 4장) | 없음 |
 | `console` | `[console]` 스레드의 줄 큐와 그 수명 (`concurrency.md` 6장 텔레메트리 격리가 그 큐 정책을 함께 갖는다). 콘솔 빌드에만 있다 | 없음 |
 | `log` | 9장 로그 출력의 줄 형식과 필드 인코딩 | 없음 |
-| `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md)와 `concurrency.md` 다 | 없음 |
+| `counters` | 9장 `counter` 이벤트의 표. 이름의 출처는 [`protocol.md`](protocol.md), `concurrency.md`, 그리고 이 문서의 6.3(`telemetry_upload_failed`)과 9장(`record_write_failed`)이다 | 없음 |
 | `record` | 9장 로컬 기록 파일의 줄 형식, 파일 이름, 시도 번호, 쓰기 실패 뒤 정지. 쓰기와 벽시계는 주입받고 기본은 `platform/record_file` 이다 | 없음 |
 | `args` | 기동 인자 파싱 (3.5) | 없음 |
 | `hash` | SHA-256. `wintun.dll` 해시 확인(7장)과 시험 빌드의 `data.tx`, `data.rx`(9장)가 쓴다 | Windows CNG |
@@ -108,7 +107,15 @@
 | `platform/resolve` | 이름을 IPv4 엔드포인트로. 기동 시 한 번 부른다 (3.5) | Win32 |
 | `platform/console_ctrl` | 콘솔 제어 신호를 받아 종료 이벤트를 신호하고 정리 완료를 기다린다 (`concurrency.md` 7장) | Win32 |
 | `platform/record_file` | 실행 파일 폴더 아래 `records` 폴더와 기록 파일을 만들고, 줄 하나를 쓰기 호출 하나로 쓴다. UTC 벽시계와 PID (9장 로컬 기록 파일) | Win32 |
-| `control/control_client` | 제어 평면 HTTP/JSON 호출과 DNS 해석. `[control]` 스레드가 소유한다 (`concurrency.md` 8장 `[control]` 스레드). 연산과 인코딩은 [`control_plane.md`](control_plane.md) | Winsock2 |
+| `control/channel` | `[control]` 스레드와 요청·응답 두 큐, 스레드가 시작할 때 한 번 하는 DNS 해석 (`concurrency.md` 8장 `[control]` 스레드) | 없음 |
+| `control/exchange` | 요청 한 건을 새 TCP 연결로 주고받는다. 블로킹이라 `[control]` 과 `[telemetry]` 스레드만 부른다 | 없음 |
+| `control/http` | HTTP 부분집합의 요청 바이트와 응답 판정. 순수 코드다 ([`control_plane.md`](control_plane.md) 3.3, 3.5) | 없음 |
+| `control/json` | 제어 평면 본문의 최소 JSON. 순수 코드다 | 없음 |
+| `control/ops` | 연산 다섯의 요청 본문과 결과 분류 (`control_plane.md` 4장, 8.3). 순수 코드다 | 없음 |
+| `control/lobby` | 로비와 시도의 상태 기계. 사건을 받아 할 일의 목록을 돌려주는 순수 코드다 | 없음 |
+| `control/runner` | `control/lobby` 가 돌려준 할 일을 `[loop]` 위에서 한다 | 없음 |
+| `platform/tcp` | 제어 평면과 텔레메트리 업로드의 TCP 연결 하나. 연결과 송수신의 시간 제한, 중단 이벤트 확인 (`control_plane.md` 8.2) | Winsock2 |
+| `platform/stdout` | 표준 출력 한 줄. 3.5 의 `ROOM`, `FAIL` 줄을 낸다 | Win32 |
 
 **외부 의존 열은 Windows 구현의 것이다.** Linux 콘솔 클라이언트는 `platform/` 아래 원본만 다르고 그 의존은 POSIX 와 Linux 커널 API 다. 배치는 10장 목표 구조, 결정은 [ADR 0035](decisions/0035-linux-콘솔-클라이언트.md) 가 갖는다.
 
@@ -138,12 +145,12 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 
 ### 3.2 동시성 모델
 
-**터널 상태를 건드리는 모든 코드는 한 스레드에서만 돈다.** 스레드는 `[loop]`, `[telemetry]`,
-`[console]`, `[control]` 넷이고 `[loop]`가 프로세스 주 스레드다. 나머지 셋은 그 일이 있는
-구간에만 있다.
+**터널 상태를 건드리는 모든 코드는 한 스레드(`[loop]`)에서만 돈다.** 다른 스레드는 그 일이
+있는 구간에만 있다. 빌드마다 어떤 스레드가 있고 어느 것이 프로세스 주 스레드인지는
+[`concurrency.md`](concurrency.md) 1장 스레드가 갖는다.
 
 스레드 구성, 대기 집합, 루프 한 바퀴의 순서, 타이머, 상태 소유, 종료 순서, `[control]`
-스레드는 [`concurrency.md`](concurrency.md)가 갖는다.
+스레드는 `concurrency.md` 가 갖는다.
 
 ### 3.3 제어 평면 (Python)
 
@@ -204,7 +211,7 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 | 읽기가 실패했다 | `null` |
 
 **대조에 실패해도 레코드를 저장한다.** 방을 세우기 전에 끝난 실패에는 대조할 방이 없다. 거부하면 실패가 빠져 성공률이
-부풀려진다. 무엇을 거르는지는 아래 CloudWatch 지표 표와 `roadmap.md` Phase 9 의 분석이 정한다.
+부풀려진다. 무엇을 거르는지는 아래 CloudWatch 지표 표와 `tools/tm-analysis` README 의 "무엇을 세는가" 가 정한다.
 
 > **왜 받을 때 보나.** 레코드는 대개 방이 살아 있는 동안이나 만료되고 하루 안에 온다. 제어 평면 항목은 만료 뒤 하루가
 > 지나야 지워진다(`control_plane.md` 6.5 TTL). 분석할 때 보면 그 항목이 이미 없다.
@@ -271,8 +278,8 @@ API 로 채웠는지는 **원본이 있는 디렉터리**가 말하고 둘은 �
 
 - 성공 수는 `SetupTime` 의 표본 수이고 끝난 세션 수는 `SessionDuration` 의 표본 수다
 - 성공률은 `SetupTime` 표본 수를 `Attempts` 합으로 나눈 것이다. 나머지 실패는 `Attempts` 에서 성공과 위 두 실패를 뺀 것이다
-- **이 나머지 실패에는 `room_known` 이 `true` 가 아닌 `OK` 도 든다.** 분석 스크립트는 그 `OK` 를 분모에서 뺀다(`roadmap.md`
-  Phase 9). 그래서 대시보드의 성공률과 분석 스크립트의 성공률은 그 수만큼 다를 수 있다
+- **이 나머지 실패에는 `room_known` 이 `true` 가 아닌 `OK` 도 든다.** 분석 스크립트는 그 `OK` 를 분모에서 뺀다(`tools/tm-analysis`
+  README 의 "무엇을 세는가"). 그래서 대시보드의 성공률과 분석 스크립트의 성공률은 그 수만큼 다를 수 있다
 - 서버는 `OK` 의 `setup_ms` 가 `null` 인지 검사하지 않는다. 그런 플레이어 `establish` 가 `room_known` 이 `true` 이면 `SetupTime` 표본이 없어 대시보드에서는 나머지 실패로
   보이고, 분석 스크립트에서는 수립 시간 분포에서만 빠지고 성공으로 센다
 - `LossRate` 의 평균은 가중치 덕분에 전체 잃은 수를 전체 기대 수로 나눈 값이다. 세션마다의 비율을 그냥 평균하지 않는다
@@ -951,7 +958,7 @@ Windows 라우팅은 가상 어댑터에 `10.100.0.0/24` 경로를 붙여 처리
 
 | 코드 | 단계 | 판정 근거 |
 |------|------|-----------|
-| `STUN_DISCOVERY_FAILED` | 공인 엔드포인트 발견 | STUN 응답 없음 또는 파싱 실패 |
+| `STUN_DISCOVERY_FAILED` | 공인 엔드포인트 발견 | 목록을 다 써도 서로 다른 두 서버의 응답을 얻지 못함. 조건은 3.5 기동 입력의 "서버 선택" 이 갖는다 |
 | `CONTROL_PLANE_EXCHANGE_FAILED` | 후보 교환 | `get_peers` 폴링 마감 초과, 제어 평면 오류, `peer_id` 충돌. 조건 목록은 [`protocol.md`](protocol.md) 9.6 실패 전이가 갖는다 |
 | `HOLE_PUNCH_TIMEOUT` | 홀펀칭 | 펀치 마감까지 `got_ack`와 `sent_ack`가 **둘 다 미성립** |
 | `PEER_HANDSHAKE_FAILED` | 핸드셰이크 | 펀치 마감까지 둘 중 **하나만 성립** |
@@ -1408,6 +1415,8 @@ Phase 2~3의 검증 항목이 "`STUN_DISCOVERY_FAILED` 기록", "로그로 확�
 
 ### 목표 구조
 
+`client/src/` 아래는 원본을 모두 적는다. 디렉터리 안에만 쓰는 `.hpp` 도 포함한다. 그 밖의 디렉터리는 주요 항목만 적는다.
+
 ```text
 Sangtachi/
 +-- client/
@@ -1423,11 +1432,11 @@ Sangtachi/
 |   |   +-- counters.cpp 카운터 표 (9장)
 |   |   +-- record.cpp   로컬 기록 파일의 줄과 쓰기 (9장)
 |   |   +-- platform/    OS 헤더를 포함하는 원본은 여기에만 둔다 (ADR 0010)
-|   |   |   +-- win32/   wsa, udp_socket, wait, console_ctrl, session_end, hash, random, resolve, interfaces, record_file, tun
-|   |   |   +-- posix/   Linux 와 macOS 가 같이 쓸 수 있는 것. wait, udp_socket, tcp, wsa(빈 구현), console_ctrl, session_end, hash, random, resolve, stdout, record_file
-|   |   |   +-- linux/   clock, exe_path, interfaces, tun (ADR 0035)
+|   |   |   +-- win32/   wsa, udp_socket, tcp, wait, console_ctrl, session_end, hash, random, resolve, interfaces, stdout, record_file, tun
+|   |   |   +-- posix/   Linux 와 macOS 가 같이 쓸 수 있는 것. wait, udp_socket, tcp, wsa(빈 구현), console_ctrl, session_end, hash, random, resolve, stdout, record_file, exe_dir, fd_handle
+|   |   |   +-- linux/   clock, exe_path, interfaces, netlink, subnet_check, tun (ADR 0035)
 |   |   +-- network/     endpoint, stun, stun_client
-|   |   +-- peer/        peer, hole_punch, session, epoch, candidates
+|   |   +-- peer/        session, epoch, candidates
 |   |   +-- tunnel/      packet, tunnel, router, replay, data_sender, roster_publisher
 |   |   +-- testbuild/   instrument (시험 빌드에서만)
 |   |   +-- telemetry/   telemetry (레코드와 세션 값), uploader ([telemetry] 스레드) (9장 텔레메트리 업로드)
@@ -1436,24 +1445,39 @@ Sangtachi/
 |   +-- CMakeLists.txt
 +-- control-server/
 |   +-- controlplane/    모듈 책임은 control_plane.md 7.1
+|   |   +-- __main__.py
 |   |   +-- server.py
 |   |   +-- ops.py
 |   |   +-- ids.py
 |   |   +-- candidates.py
 |   |   +-- clock.py
+|   |   +-- constants.py
+|   |   +-- errors.py
+|   |   +-- log.py
 |   |   +-- store.py
 |   +-- tests/
 +-- telemetry-server/
 |   +-- telemetry/       모듈 책임은 3.4. controlplane 을 import 한다
+|   |   +-- __main__.py
 |   |   +-- server.py
 |   |   +-- ingest.py
 |   |   +-- metrics.py
 |   +-- tests/
 +-- tests/
 +-- scripts/
++-- cmake/               Wintun 배포물의 기대값과 받기, 컴파일러 경고 설정
++-- field-test/          실측 절차와 실측 상태 (required-test.md)
 +-- tools/
 |   +-- cp-deploy/       제어 서버와 텔레메트리 서비스의 배포와 확인
+|   +-- docgate/         문서 게이트
+|   +-- nat-lifetime/    NAT 의 UDP 매핑 수명 실측
+|   +-- nat-probe/       NAT 매핑 거동과 UDP 홀펀칭 실측
+|   +-- phase4-capture/  roadmap.md Phase 4 의 패킷 캡처 판정 절차
+|   +-- platformgate/    OS 헤더가 platform/ 밖에 있는지 판정한다 (ADR 0010)
 |   +-- tm-analysis/     텔레메트리 테이블에서 experiments.md 의 표를 낸다 (roadmap.md Phase 9)
+|   +-- tm-plot/         experiments.md 6장의 그래프를 그린다
+|   +-- transfer/        가상 IP 사이의 파일 전송 확인
+|   +-- winprereq/       windows-prereq.md 의 판정 스크립트
 +-- docs/
 |   +-- kor/                 한국어 문서 (이 트리)
 |   |   +-- architecture.md      이 문서
@@ -1464,10 +1488,14 @@ Sangtachi/
 |   |   +-- control_plane.md     제어 평면 확정본
 |   |   +-- concurrency.md       동시성 모델 확정본
 |   |   +-- experiments.md       실측 결과와 그 한계
+|   |   +-- windows-prereq.md    Windows 실행 전제
+|   |   +-- linux-prereq.md      Linux 콘솔 클라이언트의 실행 전제
 |   |   +-- audit-history/       전면 설계 점검 기록 보관소
 |   |   +-- decisions/           설계 결정 기록. ADR 과 first_design.md
 |   |   +-- commit_history/      작업 단위 변경 기록
+|   |   +-- issue_history/       조사가 필요했던 결함과 환경 문제의 기록
 |   +-- eng/                 영어 문서, 동일 구조
+|   +-- assets/              문서가 쓰는 그림
 +-- README.md
 ```
 
@@ -1505,9 +1533,9 @@ Wintun이 제공하지 **않는** 것을 명확히 한다. 피어 발견, STUN, 
 
 - **암호화 및 피어 인증**: 터널 페이로드는 평문이다. 스트레치 목표.
 - **릴레이 폴백 (TURN 유사)**: 직접 연결 실패 시 대안 경로 없음. 스트레치 목표.
-- **완전한 ICE**: 초기에는 최소 연결 수립 절차만. Phase 9에서 ICE 개념과 비교 분석만 수행.
+- **완전한 ICE**: 최소 연결 수립 절차만 둔다.
 - **6명 이상과 플레이어 간 메시**: 한 방은 최대 5명이고 터널은 호스트와 각 플레이어 사이에만
   맺는다 ([`spec.md`](spec.md) FR-4). 6자 이상은 스트레치 목표다.
-- **macOS / 모바일**: 지원하지 않는다. Linux 는 콘솔 클라이언트만 지원한다([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)).
+- **macOS / 모바일**: 지원하지 않는다. 스트레치 목표다([`roadmap.md`](roadmap.md) 스트레치 목표). Linux 는 콘솔 클라이언트만 지원한다([ADR 0035](decisions/0035-linux-콘솔-클라이언트.md)).
   **이식할 때 다시 쓰는 자리는 이음새 다섯으로 고정했다**
   ([ADR 0010](decisions/0010-플랫폼-이식-이음새.md)).

@@ -26,7 +26,7 @@ Each section header states its verification status.
 | **Partly measured** | The command was run, but **the pass condition is not decided yet.** What is missing is stated |
 | **Unverified** | Not run. The reason and what would verify it are stated |
 
-Currently 8 sections are measured, 3 partly measured, 1 unverified, 1 human-checked (section 10).
+Currently 8 sections are measured, 2 partly measured, 1 unverified, 2 human-checked (sections 10 and 13).
 
 **No measurement dates are written in the body.** The raw records of the measurements are in
 `commit_history/` and `field-test/`. This document holds only the current spec and the
@@ -51,8 +51,8 @@ with the adapter on this machine. Each section states what was seen on the real 
 differ per machine. What to compare is not the value itself but the pass criterion. Each
 section states its criterion.
 
-End-to-end verification on a freshly reset PC belongs to Phase 8 demo preparation and is not the
-completion condition of this document. Among the automatic handling by the client, that
+End-to-end verification on a freshly reset PC is not the completion condition of this
+document. Among the automatic handling by the client, that
 of sections 1, 2, 3, 4, 7, 8 and 9 is implemented. The Qt and VC++ runtime bundling of section 4 is done by
 `scripts/package-gui.ps1`.
 
@@ -134,7 +134,7 @@ checked by a person because of section 12.
 ### Checking the default policy
 
 The decision lives in [`tools/winprereq/Test-FirewallPolicy.ps1`](../../tools/winprereq/Test-FirewallPolicy.ps1).
-The 225 cases are inside the script and run with `-SelfTest`.
+The cases are inside the script and run with `-SelfTest`. The case counts are in [`tools/winprereq/README.md`](../../tools/winprereq/README.md).
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\winprereq\Test-FirewallPolicy.ps1
@@ -329,7 +329,9 @@ cleanup follows the paragraph after the table below and has not been seen on the
 Some drivers end without deleting the adapter. The OpenVPN TAP adapter above was left that way.
 Creating the same name again over such a leftover gives a duplicate-creation error.
 
-**Owner: client.** At start it deletes leftovers under its own GUID. The order belongs to
+**Owner: client.** At start-up, right after creating the adapter, it deletes the IPv4 addresses left
+under its own GUID. If an adapter with that GUID already exists, it does not delete it and start-up
+fails (table below). The order belongs to
 [`architecture.md`](architecture.md) chapter 7 Adapter lifetime.
 
 ```powershell
@@ -472,7 +474,7 @@ zip. Comparing the DLL hash against that value means criterion 3 can never hold.
 hash is computed from `bin/amd64/wintun.dll` extracted from a zip whose hash matches the published
 one. Upgrading the version follows the same order.
 
-**The certificate validity period is not judged.** The 0.14.1 signing certificate has already
+**The certificate validity period is not judged.** The signing certificate of 0.14.1, the version observed, has already
 expired, but the signature carries a timestamp, so `Status` is `Valid`. Treating expiry as a failure
 would reject a correct distribution.
 
@@ -481,7 +483,7 @@ Shape check. Running it against this machine's `kernel32.dll` gave `Status: Vali
 to `CN=WireGuard LLC` the comparison gave `False`. **That means a check that looks only at
 `Status` would pass here.**
 
-We downloaded the 0.14.1 release zip and ran the three criteria; all matched the expected values.
+We downloaded the release zip of 0.14.1, the version observed, and ran the three criteria; all matched the expected values.
 PowerShell 7's `Get-AuthenticodeSignature` and Windows PowerShell 5.1's
 `X509Certificate.CreateFromSignedFile` produced the same `Subject` string.
 
@@ -696,7 +698,7 @@ Test-NetConnection -ComputerName <EC2 public address> -Port 8000
 ## 7. Subnet overlap
 
 **Status: measured.** The decision lives in [`tools/winprereq/Test-SubnetOverlap.ps1`](../../tools/winprereq/Test-SubnetOverlap.ps1)
-and it was run on this machine. The 85 cases are inside the script and run with `-SelfTest`. With an
+and it was run on this machine. The cases are inside the script and run with `-SelfTest` (counts in `tools/winprereq/README.md`). With an
 address and route up on our live adapter, `scripts/adapter-check.ps1` ran this script twice. Given
 the GUID it excluded our adapter and gave `proceed`; without it, our own `/24` route gave `pick
 another range`.
@@ -896,7 +898,7 @@ Tailscale       100.102.127.59  Preferred
 `Preferred`. **Do not wait with a fixed delay.** `Start-Sleep 2` breaks on a slow machine and
 wastes time on a fast one. Poll the state.
 
-**There are three ways this ends. Waiting for `Preferred` alone hangs forever.**
+**There are four ways this ends. Waiting for `Preferred` alone hangs forever.**
 
 | Observation | Action |
 |-------------|--------|
@@ -978,7 +980,7 @@ instance and release the Elastic IP too.
 
 ## 11. Minecraft LAN discovery does not work
 
-**Status: unverified (literature basis).** Not actually tried. Confirmed in Phase 8.
+**Status: unverified (literature basis).** There is no record of checking whether the other side's server shows in the "LAN game" list.
 
 "Open to LAN" in Minecraft Java Edition advertises by multicast. The widely quoted value is
 `224.0.2.60:4445`, but **it was not confirmed directly and may differ by edition and version.**
@@ -1041,18 +1043,19 @@ actually disappeared. A verdict command that does not show the verdict is useles
 
 ## 13. SmartScreen and Defender
 
-**Status: partly measured.** Only the policy value was checked. **The pass condition (runs without
-a warning on the demo PC) was not decided.** `client.exe` does not exist yet. Confirmed during
-Phase 8 demo preparation.
+**Status: human-checked (owner report).** The policy value was checked on this machine. The pass
+condition (runs without a warning on the demo PC) was checked by the owner. When `sangtachi_gui.exe` of
+the GUI distribution was run on the friend's PC and the demo PCs, no SmartScreen warning appeared. The
+output of the commands below was not kept.
 
 SmartScreen is **reputation-based.** It does not block unconditionally for lack of a signature; it
 shows "Windows protected your PC" for an executable with no reputation. Files downloaded from the
 internet carry the Mark of the Web and are treated more strictly.
 
-**Our build artefact is at risk of being caught here.** This is an expectation, not an observation.
-`client.exe` does not exist yet. A locally built file usually does not carry MOTW, so whether a
-warning actually appears depends on how the binary was brought onto the demo PC. Confirmed with
-that file in Phase 8.
+**Our build artefact is at risk of being caught here.** It is unsigned. Whether it has built reputation was not checked. That no
+warning appeared on the PCs above is a fact about those PCs and that delivery method. A locally built
+file usually does not carry MOTW, so whether a warning actually appears depends on how the binary was
+brought onto the demo PC.
 
 **Owner: person.**
 
@@ -1072,7 +1075,7 @@ against unsigned executables.** Turning it off without checking the origin creat
 situation SmartScreen was trying to block.
 
 ```powershell
-Get-FileHash .\client.exe -Algorithm SHA256
+Get-FileHash .\sangtachi_gui.exe -Algorithm SHA256
 ```
 
 **Pass condition.** This value **must equal the hash of the artefact I built.** Compare it with the
@@ -1083,8 +1086,8 @@ demo PC is the build machine, this step is unnecessary.
 downloaded file.**
 
 ```powershell
-Unblock-File -LiteralPath .\client.exe
-Get-Item -LiteralPath .\client.exe -Stream Zone.Identifier -ErrorAction SilentlyContinue
+Unblock-File -LiteralPath .\sangtachi_gui.exe
+Get-Item -LiteralPath .\sangtachi_gui.exe -Stream Zone.Identifier -ErrorAction SilentlyContinue
 ```
 
 If the second command prints nothing, **that file** has no MOTW. Alternate data streams are an
@@ -1120,7 +1123,7 @@ If the binary was changed right before the demo, run it once more with that file
 |---|------|-----|------|
 | 1 | Administrator rights. Release builds have the manifest ask for UAC consent | person | every run |
 | 2 | Firewall rules (the client creates and verifies, a person removes) | client + person | right after adapter creation |
-| 3 | Leftover cleanup | client | at start. The GUI does it after showing the window |
+| 3 | Leftover address cleanup | client | at start-up, right after creating the adapter. The GUI does it after showing the window |
 | 4 | Bundling the Wintun, Qt, and VC++ runtimes. Checking the Wintun signature | build + client (check at run time) | when making the distribution and at run time |
 | 5 | `server.properties` | person | when first setting up the server |
 | 6 | EC2 security group and bind address | person | when setting up the instance |

@@ -1,7 +1,7 @@
 # Concurrency Model
 
 **Project:** Direct-First P2P Virtual Network for Multiplayer Games
-**Target platform:** Windows 10 / 11 x64 (client)
+**Target platform:** Windows 10 / 11 x64 and Ubuntu 24.04 or later x64 console (client, [`spec.md`](spec.md) C-1)
 **Requirements:** [`spec.md`](spec.md) NFR-1, NFR-2, NFR-3
 **Design:** [`architecture.md`](architecture.md) 3.1 Client / **Protocol:** [`protocol.md`](protocol.md) chapter 11 Timers
 **Schedule:** [`roadmap.md`](roadmap.md) Phase 1
@@ -439,7 +439,7 @@ list.
   - The telemetry interval (`TELEMETRY_INTERVAL_S`) is one session timer outside the table in `protocol.md` chapter 11. It sends
     nothing on the wire. Its value and start time are in [`architecture.md`](architecture.md) chapter 9 Telemetry Upload
   - That timer is set and removed in this timer set, one per session, by the attempt runner, not by the session object. Its name is
-    `telemetry.interval.<peer_id>`. When the expiry is processed, the next 60 seconds are set again
+    `telemetry.interval.<peer_id>`. When the expiry is processed, the next `TELEMETRY_INTERVAL_S` is set again
 - `protocol.md` chapter 11 Timers defines the deadline comparison as `deadline <= now` and defines
   priority by dequeue time. Receive events dequeued in the same iteration are processed before
   that iteration's timers. **This loop order, drain receives first and run timers after, is the
@@ -748,7 +748,7 @@ Control plane TCP calls and DNS resolution are not done in `[loop]`. `getaddrinf
 synchronous call and sits in the same place.
 
 > **Why.** If the control server is dead, a TCP `connect` burns tens of seconds in SYN retries.
-> Phase 4 verification creates that situation deliberately. If that time passes in `[loop]`,
+> The "control server is down" item of `roadmap.md` Phase 3 verification creates that situation deliberately. If that time passes in `[loop]`,
 > `HELLO` retransmission (200ms), keepalive (15s), and response to the shutdown event all stop.
 > It is the reason chapter 6 Telemetry Isolation discarded the 4-thread design coming back through
 > another door, and a violation of [`spec.md`](spec.md) NFR-3.
@@ -814,8 +814,8 @@ classification) may be done by `[control]`. The result is a value, not shared st
 received candidates is done by `[loop]`.** The own-subnet row uses `[loop]`'s own-subnet set (chapter 5 State
 Ownership).
 
-**It is not merged with `[telemetry]`.** Telemetry upload tolerates loss and does not report
-failure. A control request needs a response, and its failure is `CONTROL_PLANE_EXCHANGE_FAILED`.
+**It is not merged with `[telemetry]`.** Telemetry upload tolerates loss and does not return
+failure as an attempt result. It leaves only a counter and a log line (`architecture.md` 6.3). A control request needs a response, and its failure is `CONTROL_PLANE_EXCHANGE_FAILED`.
 Mixing the two natures in one thread lets a telemetry service outage delay control requests and
 eat into the `get_peers` deadline (60s). That would undo, inside the client, the reason the two
 services were split (`architecture.md` 3.4 Telemetry Service).

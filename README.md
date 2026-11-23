@@ -17,6 +17,7 @@ CSP400 Project
 - Windows 10 / 11 x64
 - Visual Studio 2022 이상, **C++ 데스크톱 개발 워크로드**. CMake 와 Ninja 가 같이 설치됩니다
 - 첫 빌드에는 네트워크가 필요합니다. 시험 프레임워크를 내려받습니다
+- Linux 콘솔 클라이언트의 요구사항과 빌드는 [`docs/kor/linux-prereq.md`](docs/kor/linux-prereq.md) 1절 대상과 빌드에 있습니다
 
 ### 빌드
 

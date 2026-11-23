@@ -132,9 +132,9 @@ Copy-Item -LiteralPath $qtLicense -Destination (Join-Path $outDir 'LICENSE-Qt.tx
     # 수집 항목 안내 (README.md 텔레메트리 절, architecture.md 6.3).
     'Telemetry: if this build has a telemetry service address built in, it sends connection quality records:',
     'connection result and setup time, three NAT observations (true, false, or empty), RTT, jitter, packet loss,',
-    'byte counts, session duration, room code, peer id, role, OS, build type, a random value made at each start,',
-    'and attempt and sequence numbers. It does not send IP addresses, ports, connection candidates, display names,',
-    'network information, or device identifiers.'
+    'byte counts, session duration, room code, peer id, role, OS, UI kind (GUI or console), build type,',
+    'a random value made at each start, and attempt and sequence numbers. It does not send IP addresses, ports,',
+    'connection candidates, display names, network information, or device identifiers.'
 ) | Set-Content -LiteralPath (Join-Path $outDir 'NOTICE.txt') -Encoding ascii
 
 $files = Get-ChildItem -LiteralPath $outDir -Recurse -File

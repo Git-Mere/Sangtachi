@@ -689,7 +689,7 @@ AddressResult TunDevice::assign_address(std::uint32_t ip) {
     }
     address_ = ip;
 
-    // Preferred 를 기다린다. 끝나는 조건이 셋이다 (windows-prereq.md 9절).
+    // Preferred 를 기다린다. 끝나는 조건이 넷이다 (windows-prereq.md 9절).
     const ULONGLONG deadline = ::GetTickCount64() + kPreferredCapMs;
     for (;;) {
         MIB_UNICASTIPADDRESS_ROW probe;

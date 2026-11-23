@@ -8,7 +8,7 @@
 | 축 | 출처 | 지금 |
 |----|------|------|
 | 구현 | [`roadmap.md`](roadmap.md) | Phase 9 |
-| 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | Phase 9 묶음 다시 재기 |
+| 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 없음 |
 | 대기 | 이 파일 "대기 중인 것" | 없음 |
 | 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 없음 |
@@ -17,8 +17,7 @@
 
 | 무엇 | 누가 | 메모 |
 |------|------|------|
-| Phase 9 묶음 다시 재기 | 소유자 | 손실 집계를 고친 빌드로 잰다([ADR 0041](decisions/0041-손실-집계는-상대의-연결-신호부터-센다.md)). 묶음과 조건은 `field-test/required-test.md` 가 갖는다 |
-| `experiments.md` 의 Phase 9 장 | 에이전트 | 다시 잰 묶음으로 쓴다. 분석 결과는 git 이 무시하는 `tools/tm-analysis/local/report.md`, CloudWatch 1분 해상도 값은 같은 폴더의 `cw-*.json` 이다. 에뮬레이션은 통제된 실패와 따로 적는다([ADR 0040](decisions/0040-목적지-의존-매핑-에뮬레이션.md)) |
+| `experiments.md` 의 Phase 9 장 | 에이전트 | 손실 집계를 고친 빌드로 다시 잰 묶음으로 쓴다([ADR 0041](decisions/0041-손실-집계는-상대의-연결-신호부터-센다.md)). 분석 결과는 git 이 무시하는 `tools/tm-analysis/local/report.md` 다. CloudWatch 1분 해상도 값은 같은 폴더의 `cw-*.json` 인데 옛 묶음의 날짜뿐이다. 그래프에 쓰려면 다시 잰 날짜의 값을 소유자가 CloudShell 에서 받는다. 에뮬레이션은 통제된 실패와 따로 적는다([ADR 0040](decisions/0040-목적지-의존-매핑-에뮬레이션.md)) |
 
 ## 시험 기기 `mere-galaxy`
 

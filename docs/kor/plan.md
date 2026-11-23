@@ -10,7 +10,6 @@
 | 구현 | [`roadmap.md`](roadmap.md) | Phase 1~9 는 끝났다. 남은 것은 스트레치 목표다 |
 | 실측 | [`field-test/required-test.md`](../../field-test/required-test.md) | 없음 |
 | 대기 | 이 파일 "대기 중인 것" | 없음 |
-| 구현 때 같이 볼 자리 | 이 파일 같은 이름의 절 | `roadmap.md` 에 없는 것만 둔다 |
 | 문서 부채 | 이 파일 "문서 부채" 절 | 루트 `README.md` 자리 표시 문구 |
 
 ## 다음에 할 일
@@ -34,17 +33,6 @@ Linux 시험 기기는 `mere-galaxy`(Ubuntu 26.04, `ssh mere@mere-galaxy`)다([A
 ## 대기 중인 것
 
 없음.
-
-## 구현 때 같이 볼 자리
-
-표의 "언제" 가 오면 같이 고칠 자리다. `roadmap.md` 에 이미 걸린 작업은 여기에 다시 적지 않는다.
-
-| 자리 | 무엇 | 언제 |
-|------|------|------|
-| `control-server/tests/mutate.py` 의 시간 초과(`telemetry-server/tests/mutate.py` 도 이 실행기를 쓴다) | 상한에 걸리면 pytest 프로세스만 죽인다. 그 시험이 띄운 서버 프로세스가 남을 수 있다. 손자까지 거두려면 Windows Job Object 가 필요하다 | 변이 실행기를 다시 고칠 때 |
-| `pending_pings` 상한 | 상한 분기(`protocol.md` 5.5 의 "그래도 가득 차면 새 `PING`을 보내지 않는다")를 밟는 시험이 없다. PING 간격과 항목 수명이 둘 다 5초라 지금 구성으로는 표가 둘 이상 차지 않는다 | 11장 PING 간격이나 5.5 항목 수명을 바꿀 때 |
-| 콘솔 `send` 의 송신 버퍼 | 소켓 송신 버퍼가 차면 `WSAEWOULDBLOCK` 으로 작업을 끝낸다. 576·1452바이트는 한 번에 45~133개만 나간다. 다음 루프 바퀴에 이어 보내면 정한 개수를 채운다. 바이트 대조는 이것에 기대지 않는다(ADR 0032) | 콘솔 `send` 로 개수를 채워야 하는 시험이 생길 때 |
-| `is_valid_name` 의 자리 | `control_plane.md` 2.7 검사가 `tunnel/packet.hpp` 에 있어 기동 인자와 제어 평면 코드가 터널 패킷 모듈을 포함한다. 중립 헤더로 옮기고 `packet.hpp` 가 그것을 쓰는 편이 의존 방향이 맞다 | 다음에 그 헤더를 고칠 때. GUI 의 이름 칸 검사가 그 계기일 수 있다 |
 
 ## 문서 부채
 

@@ -103,7 +103,7 @@ TEST_CASE("timer: elapsed is measured from the previous firing", "[timer]") {
     REQUIRE(fired[1].elapsed_ms == 250);  // 250 에서 500 까지다
 }
 
-// --- 아래는 Phase 2 가 부르는 자리다 (plan.md "구현 때 같이 볼 자리"). --------------
+// --- 아래는 Phase 2 가 부르는 자리다. ---------------------------------------------
 // 값의 출처는 protocol.md 11장 타이머의 STUN 재시도(500ms, 1s, 2s)와 STUN 마감(5s)이다.
 
 TEST_CASE("timer: adding a duplicate name is rejected, not overwritten", "[timer]") {

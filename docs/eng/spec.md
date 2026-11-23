@@ -139,7 +139,7 @@ must be absent from the link list of the product targets. On the Python side the
 must not import it.
 
 **The professor accepted the split between product and test-only dependencies.** [ADR 0005](decisions/0005-test-framework-catch2.md) owns the
-reasoning and its cost. Putting analysis tools in the same kind is the repository owner's judgment ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)).
+reasoning and its cost. The professor also allowed putting analysis tools in the same kind ([ADR 0042](decisions/0042-experiment-graphs-drawn-by-analysis-tool.md)).
 
 **What NFR-10 does not cover.** Resource isolation is not part of this requirement. While the
 two services share one instance, shared resource exhaustion **remains a risk.** The isolation mechanisms only lower the bound on
